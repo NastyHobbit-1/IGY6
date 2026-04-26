@@ -1,0 +1,5 @@
+{
+  "phase": "0",
+  "collections": [],
+  "note": "Qdrant runs in Phase 0 for readiness only. Embedding collections are created in a later phase."
+}
