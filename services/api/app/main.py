@@ -5,6 +5,7 @@ from app.evidence import router as evidence_router
 from app.feedback import router as feedback_router
 from app.health import router as health_router
 from app.outcomes import router as outcomes_router
+from app.reports import router as reports_router
 from app.sources import router as sources_router
 from app.work_items import router as work_items_router
 
@@ -24,6 +25,7 @@ app.include_router(approvals_router)
 app.include_router(evidence_router)
 app.include_router(feedback_router)
 app.include_router(outcomes_router)
+app.include_router(reports_router)
 
 
 @app.get("/")

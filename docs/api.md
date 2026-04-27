@@ -35,6 +35,9 @@ GET /feedback/{feedback_id}
 GET /outcomes
 POST /outcomes
 GET /outcomes/{outcome_id}
+GET /reports
+POST /reports
+GET /reports/{report_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -70,5 +73,8 @@ Outcome endpoints record what happened after a prediction, recommendation, work
 item, hypothesis, pattern, or report. Outcome creation emits an audit event but
 does not update prediction/recommendation status or start self-improvement.
 
-Future endpoints for chat, reports, patterns, predictions, and self-improvement
-are intentionally not implemented yet.
+Report endpoints record report metadata and emit audit events. They do not
+render reports, write artifacts, or create exports.
+
+Future endpoints for chat, patterns, predictions, and self-improvement are
+intentionally not implemented yet.
