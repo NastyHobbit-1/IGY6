@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.approvals import router as approvals_router
+from app.evidence import router as evidence_router
 from app.health import router as health_router
 from app.sources import router as sources_router
 from app.work_items import router as work_items_router
@@ -18,6 +19,7 @@ app.include_router(health_router)
 app.include_router(sources_router)
 app.include_router(work_items_router)
 app.include_router(approvals_router)
+app.include_router(evidence_router)
 
 
 @app.get("/")

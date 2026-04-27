@@ -23,6 +23,12 @@ GET /approvals
 POST /approvals
 GET /approvals/{approval_id}
 POST /approvals/{approval_id}/decision
+GET /evidence/documents
+GET /evidence/documents/{document_id}
+GET /evidence/items
+GET /evidence/items/{evidence_item_id}
+GET /evidence/claims
+GET /evidence/claims/{claim_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -45,5 +51,10 @@ execute worker jobs.
 Approval endpoints record approval requests and decisions with audit events.
 Approval decisions do not execute work or trigger worker jobs.
 
-Future endpoints for evidence, chat, reports, patterns, predictions, outcomes,
-and self-improvement are intentionally not implemented yet.
+Evidence endpoints are read-only inspection routes for normalized documents,
+evidence items, and claims already present in PostgreSQL. They do not create
+evidence, run collectors, normalize artifacts, embed content, or perform
+retrieval ranking.
+
+Future endpoints for chat, reports, patterns, predictions, outcomes, and
+self-improvement are intentionally not implemented yet.
