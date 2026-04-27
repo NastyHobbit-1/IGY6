@@ -27,6 +27,8 @@ GET /evidence/documents
 GET /evidence/documents/{document_id}
 GET /evidence/items
 GET /evidence/items/{evidence_item_id}
+GET /evidence/chunks
+GET /evidence/chunks/{chunk_id}
 GET /evidence/claims
 GET /evidence/claims/{claim_id}
 GET /feedback
@@ -71,8 +73,8 @@ Approval endpoints record approval requests and decisions with audit events.
 Approval decisions do not execute work or trigger worker jobs.
 
 Evidence endpoints are read-only inspection routes for normalized documents,
-evidence items, and claims already present in PostgreSQL. They do not create
-evidence, run collectors, normalize artifacts, embed content, or perform
+chunks, evidence items, and claims already present in PostgreSQL. They do not
+create evidence, run collectors, normalize artifacts, embed content, or perform
 retrieval ranking.
 
 Feedback endpoints record user labels for existing records and emit audit

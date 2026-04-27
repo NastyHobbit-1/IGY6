@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Claim, EvidenceItem, NormalizedDocument
+from app.models import Chunk, Claim, EvidenceItem, NormalizedDocument
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 
@@ -37,6 +37,20 @@ class EvidenceItemRead(BaseModel):
     statement: str
     observed_at: datetime | None
     confidence: int | None
+    metadata_json: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChunkRead(BaseModel):
+    id: str
+    document_id: str
+    chunk_index: int
+    text_content: str
+    location_json: dict[str, Any]
+    embedding_status: str
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
@@ -84,6 +98,20 @@ def get_evidence_item(evidence_item_id: str, db: Session = Depends(get_db)) -> E
     if evidence_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evidence item not found")
     return evidence_item
+
+
+@router.get("/chunks", response_model=list[ChunkRead])
+def list_chunks(db: Session = Depends(get_db)) -> list[Chunk]:
+    statement = select(Chunk).order_by(Chunk.created_at.desc())
+    return list(db.scalars(statement).all())
+
+
+@router.get("/chunks/{chunk_id}", response_model=ChunkRead)
+def get_chunk(chunk_id: str, db: Session = Depends(get_db)) -> Chunk:
+    chunk = db.get(Chunk, chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found")
+    return chunk
 
 
 @router.get("/claims", response_model=list[ClaimRead])
