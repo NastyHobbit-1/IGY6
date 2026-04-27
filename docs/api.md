@@ -46,6 +46,8 @@ GET /analysis/predictions
 GET /analysis/predictions/{prediction_id}
 GET /analysis/recommendations
 GET /analysis/recommendations/{recommendation_id}
+GET /audit-events
+GET /audit-events/{audit_event_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -87,6 +89,9 @@ render reports, write artifacts, or create exports.
 Analysis endpoints are read-only inspection routes for existing patterns,
 hypotheses, predictions, and recommendations. They do not generate new records,
 score confidence, create recommendations, or update outcomes.
+
+Audit endpoints are read-only inspection routes for audit events already present
+in PostgreSQL. They do not create, modify, or delete audit records.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.
