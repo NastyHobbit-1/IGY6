@@ -38,6 +38,14 @@ GET /outcomes/{outcome_id}
 GET /reports
 POST /reports
 GET /reports/{report_id}
+GET /analysis/patterns
+GET /analysis/patterns/{pattern_id}
+GET /analysis/hypotheses
+GET /analysis/hypotheses/{hypothesis_id}
+GET /analysis/predictions
+GET /analysis/predictions/{prediction_id}
+GET /analysis/recommendations
+GET /analysis/recommendations/{recommendation_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -76,5 +84,9 @@ does not update prediction/recommendation status or start self-improvement.
 Report endpoints record report metadata and emit audit events. They do not
 render reports, write artifacts, or create exports.
 
-Future endpoints for chat, patterns, predictions, and self-improvement are
-intentionally not implemented yet.
+Analysis endpoints are read-only inspection routes for existing patterns,
+hypotheses, predictions, and recommendations. They do not generate new records,
+score confidence, create recommendations, or update outcomes.
+
+Future endpoints for chat and self-improvement are intentionally not implemented
+yet.
