@@ -50,6 +50,8 @@ GET /analysis/recommendations
 GET /analysis/recommendations/{recommendation_id}
 GET /audit-events
 GET /audit-events/{audit_event_id}
+GET /artifacts
+GET /artifacts/{artifact_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -94,6 +96,10 @@ score confidence, create recommendations, or update outcomes.
 
 Audit endpoints are read-only inspection routes for audit events already present
 in PostgreSQL. They do not create, modify, or delete audit records.
+
+Artifact endpoints are read-only inspection routes for raw artifact metadata
+already present in PostgreSQL. They do not read artifact files, write artifacts,
+or create exports.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.
