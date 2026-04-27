@@ -32,6 +32,9 @@ GET /evidence/claims/{claim_id}
 GET /feedback
 POST /feedback
 GET /feedback/{feedback_id}
+GET /outcomes
+POST /outcomes
+GET /outcomes/{outcome_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -63,5 +66,9 @@ Feedback endpoints record user labels for existing records and emit audit
 events. Feedback creation does not trigger outcome evaluation, ranking changes,
 or self-improvement jobs.
 
-Future endpoints for chat, reports, patterns, predictions, outcomes, and
-self-improvement are intentionally not implemented yet.
+Outcome endpoints record what happened after a prediction, recommendation, work
+item, hypothesis, pattern, or report. Outcome creation emits an audit event but
+does not update prediction/recommendation status or start self-improvement.
+
+Future endpoints for chat, reports, patterns, predictions, and self-improvement
+are intentionally not implemented yet.
