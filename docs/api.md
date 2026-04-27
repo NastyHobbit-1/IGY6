@@ -17,6 +17,10 @@ POST /sources/{source_id}/permissions
 GET /work-items
 POST /work-items
 GET /work-items/{work_item_id}
+GET /approvals
+POST /approvals
+GET /approvals/{approval_id}
+POST /approvals/{approval_id}/decision
 ```
 
 `/health/live` confirms the API process is running.
@@ -36,5 +40,8 @@ Work item endpoints record proposed work and intent-verification context. New
 work items are created with `pending_intent_verification` status and do not
 execute worker jobs.
 
-Future endpoints for approvals, evidence, chat, reports, patterns, predictions,
-outcomes, and self-improvement are intentionally not implemented yet.
+Approval endpoints record approval requests and decisions with audit events.
+Approval decisions do not execute work or trigger worker jobs.
+
+Future endpoints for evidence, chat, reports, patterns, predictions, outcomes,
+and self-improvement are intentionally not implemented yet.
