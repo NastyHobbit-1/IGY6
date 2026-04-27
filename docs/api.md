@@ -14,6 +14,9 @@ POST /sources
 GET /sources/{source_id}
 GET /sources/{source_id}/permissions
 POST /sources/{source_id}/permissions
+GET /work-items
+POST /work-items
+GET /work-items/{work_item_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -29,6 +32,9 @@ models, or start worker jobs.
 Source registry requests validate known source types, sensitivity labels,
 allowed operations, and external model policy values before database writes.
 
-Future endpoints for approvals, work items, evidence, chat, reports, patterns,
-predictions, outcomes, and self-improvement are intentionally not implemented
-yet.
+Work item endpoints record proposed work and intent-verification context. New
+work items are created with `pending_intent_verification` status and do not
+execute worker jobs.
+
+Future endpoints for approvals, evidence, chat, reports, patterns, predictions,
+outcomes, and self-improvement are intentionally not implemented yet.
