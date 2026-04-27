@@ -29,6 +29,9 @@ GET /evidence/items
 GET /evidence/items/{evidence_item_id}
 GET /evidence/claims
 GET /evidence/claims/{claim_id}
+GET /feedback
+POST /feedback
+GET /feedback/{feedback_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -55,6 +58,10 @@ Evidence endpoints are read-only inspection routes for normalized documents,
 evidence items, and claims already present in PostgreSQL. They do not create
 evidence, run collectors, normalize artifacts, embed content, or perform
 retrieval ranking.
+
+Feedback endpoints record user labels for existing records and emit audit
+events. Feedback creation does not trigger outcome evaluation, ranking changes,
+or self-improvement jobs.
 
 Future endpoints for chat, reports, patterns, predictions, outcomes, and
 self-improvement are intentionally not implemented yet.
