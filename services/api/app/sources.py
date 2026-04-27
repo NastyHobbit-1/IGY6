@@ -3,7 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -12,6 +12,39 @@ from app.models import AuditEvent, Source, SourcePermission
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
+SOURCE_TYPES = {
+    "manual_upload",
+    "local_project",
+    "local_pc_diagnostics",
+    "web_public",
+    "web_authorized_account",
+    "router_network",
+    "user_observation",
+    "conversation_history",
+}
+
+ALLOWED_OPERATIONS = {
+    "dry_run",
+    "read",
+    "collect",
+    "normalize",
+    "classify_sensitivity",
+    "extract_metadata",
+}
+
+SENSITIVITY_LABELS = {
+    "public",
+    "internal",
+    "sensitive",
+    "secret",
+}
+
+EXTERNAL_MODEL_POLICIES = {
+    "blocked",
+    "metadata_only",
+    "allowed_with_approval",
+}
+
 
 class SourcePermissionCreate(BaseModel):
     scope_json: dict[str, Any] = Field(default_factory=dict)
@@ -19,6 +52,21 @@ class SourcePermissionCreate(BaseModel):
     external_model_policy: str = "blocked"
     approval_required: bool = True
     created_by_actor_id: str = "local-owner"
+
+    @field_validator("allowed_operations")
+    @classmethod
+    def validate_allowed_operations(cls, value: list[str]) -> list[str]:
+        unknown = [operation for operation in value if operation not in ALLOWED_OPERATIONS]
+        if unknown:
+            raise ValueError(f"Unknown allowed operations: {', '.join(sorted(unknown))}")
+        return value
+
+    @field_validator("external_model_policy")
+    @classmethod
+    def validate_external_model_policy(cls, value: str) -> str:
+        if value not in EXTERNAL_MODEL_POLICIES:
+            raise ValueError(f"Unknown external model policy: {value}")
+        return value
 
 
 class SourcePermissionRead(SourcePermissionCreate):
@@ -40,6 +88,20 @@ class SourceCreate(BaseModel):
     enabled: bool = True
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     permission: SourcePermissionCreate | None = None
+
+    @field_validator("source_type")
+    @classmethod
+    def validate_source_type(cls, value: str) -> str:
+        if value not in SOURCE_TYPES:
+            raise ValueError(f"Unknown source type: {value}")
+        return value
+
+    @field_validator("sensitivity")
+    @classmethod
+    def validate_sensitivity(cls, value: str) -> str:
+        if value not in SENSITIVITY_LABELS:
+            raise ValueError(f"Unknown sensitivity label: {value}")
+        return value
 
 
 class SourceRead(BaseModel):

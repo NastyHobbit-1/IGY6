@@ -26,6 +26,9 @@ Creating sources or permissions writes audit events. These endpoints do not run
 collectors, perform dry-runs, write artifacts, normalize content, call external
 models, or start worker jobs.
 
+Source registry requests validate known source types, sensitivity labels,
+allowed operations, and external model policy values before database writes.
+
 Future endpoints for approvals, work items, evidence, chat, reports, patterns,
 predictions, outcomes, and self-improvement are intentionally not implemented
 yet.
