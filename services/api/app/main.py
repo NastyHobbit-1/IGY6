@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.analysis import router as analysis_router
+from app.collection_runs import router as collection_runs_router
 from app.approvals import router as approvals_router
 from app.audit import router as audit_router
 from app.artifacts import router as artifacts_router
@@ -32,6 +33,7 @@ app.include_router(reports_router)
 app.include_router(analysis_router)
 app.include_router(audit_router)
 app.include_router(artifacts_router)
+app.include_router(collection_runs_router)
 
 
 @app.get("/")

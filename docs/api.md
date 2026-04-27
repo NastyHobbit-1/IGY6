@@ -52,6 +52,9 @@ GET /audit-events
 GET /audit-events/{audit_event_id}
 GET /artifacts
 GET /artifacts/{artifact_id}
+GET /collection-runs
+POST /collection-runs
+GET /collection-runs/{collection_run_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -100,6 +103,10 @@ in PostgreSQL. They do not create, modify, or delete audit records.
 Artifact endpoints are read-only inspection routes for raw artifact metadata
 already present in PostgreSQL. They do not read artifact files, write artifacts,
 or create exports.
+
+Collection-run endpoints record dry-run planning metadata only. They do not
+execute collectors, create raw artifacts, normalize content, or start worker
+jobs.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.
