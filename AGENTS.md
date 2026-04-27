@@ -1,4 +1,33 @@
-# AGENT.md
+# AGENTS.md
+
+## Automatic Codex Entrypoint
+
+Codex and other coding agents must treat this file as the automatic project
+instruction entrypoint.
+
+Before editing, agents must inspect:
+
+- Current git status.
+- Current git diff.
+- This `AGENTS.md` file.
+- `docs/diffs`.
+- `docs/agents`.
+
+This repository follows a strict DIFF-governed workflow. No code change is valid
+unless it is inside the active DIFF scope. DIFF-000 is baseline/facts-only and
+must not contain code changes. DIFF-001 and later are change-bearing. Locked
+DIFFs are never edited. There may be only one active DIFF at a time.
+
+Agents must not perform renames, refactors, behavior changes, rewiring, or
+redesign unless the active DIFF explicitly allows that work. Code changes must
+be tagged with DIFF IDs when applicable.
+
+See:
+
+- `docs/diffs/DIFF_PROCESS.md`
+- `docs/diffs/DIFF_TEMPLATE.md`
+- `docs/agents/AGENT_PROMPT.md`
+- `docs/agents/AGENT_PROMPT_CODING.md`
 
 ## Project: Adaptive Intelligence System
 
