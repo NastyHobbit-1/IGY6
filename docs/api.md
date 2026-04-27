@@ -1,7 +1,9 @@
 # API
 
-Phase 0 exposes health and skeleton metadata. Phase 1 starts the source
-registry API without implementing collection or ingestion.
+The API currently exposes health checks plus Phase 1 foundation endpoints for
+source registry records, work item intent records, and approval records. It does
+not implement collection, ingestion, evidence review, chat, prediction, or
+self-improvement execution yet.
 
 ## Endpoints
 

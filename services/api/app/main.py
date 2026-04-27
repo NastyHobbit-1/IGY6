@@ -7,8 +7,11 @@ from app.work_items import router as work_items_router
 
 app = FastAPI(
     title="IGY6 Adaptive Intelligence API",
-    version="0.0.0-phase0",
-    description="Phase 0 local-first skeleton. No ingestion, chat, prediction, or experiments.",
+    version="0.1.0-phase1-foundation",
+    description=(
+        "Local-first Phase 1 foundation with health, source registry, work item intent, "
+        "and approval record APIs. No collection, chat, prediction, or experiments."
+    ),
 )
 
 app.include_router(health_router)
@@ -21,6 +24,6 @@ app.include_router(approvals_router)
 def root() -> dict[str, str]:
     return {
         "service": "igy6-api",
-        "phase": "0",
-        "status": "skeleton",
+        "phase": "1",
+        "status": "foundation",
     }
