@@ -54,6 +54,7 @@ GET /artifacts
 GET /artifacts/{artifact_id}
 GET /collection-runs
 POST /collection-runs
+POST /collection-runs/dry-run
 GET /collection-runs/{collection_run_id}
 ```
 
@@ -107,6 +108,10 @@ or create exports.
 Collection-run endpoints record dry-run planning metadata only. They do not
 execute collectors, create raw artifacts, normalize content, or start worker
 jobs.
+
+The `POST /collection-runs/dry-run` route records a metadata-only dry-run
+preview for a source and permission pair. It does not execute collection or
+queue work.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.
