@@ -11,6 +11,7 @@ from app.contracts import (
     SourcePermissionRef,
     SourceRef,
 )
+from app.normalization import build_normalized_document_ref, classify_sensitivity_label
 
 
 @dataclass(frozen=True)
@@ -48,10 +49,16 @@ class ManualUploadConnector:
         raise NotImplementedError("manual_upload collection is not implemented in this scaffold")
 
     def normalize(self, raw: RawArtifactRef) -> NormalizedDocumentRef:
-        raise NotImplementedError("manual_upload normalization is not implemented in this scaffold")
+        return build_normalized_document_ref(
+            raw,
+            metadata={
+                "connector_name": self.name,
+                "source_type": self.source_type,
+            },
+        )
 
     def classify_sensitivity(self, doc: NormalizedDocumentRef) -> str:
-        return doc.sensitivity
+        return classify_sensitivity_label(doc.sensitivity)
 
     def extract_metadata(self, raw: RawArtifactRef, doc: NormalizedDocumentRef) -> MetadataResult:
         return MetadataResult(
