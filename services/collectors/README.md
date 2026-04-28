@@ -1,12 +1,12 @@
 # Collectors
 
-DIFF: `DIFF-003`
+DIFF: `DIFF-019`
 
-No real collectors are implemented yet.
+Collector contracts live in `app/contracts.py`. A manual-upload connector
+scaffold lives in `app/manual_upload.py`.
 
-Collector contracts live in `app/contracts.py`. Future connectors must be
-read-only by default, require a registered source and permission scope, support
-dry-run, and emit audit events before collection behavior is added.
+The current scaffold validates scope and produces dry-run metadata only. It does
+not perform real collection or normalization yet.
 
 The contract defines the expected connector methods:
 
