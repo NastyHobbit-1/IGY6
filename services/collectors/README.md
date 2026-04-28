@@ -1,9 +1,10 @@
 # Collectors
 
-DIFF: `DIFF-019`
+DIFF: `DIFF-020`
 
-Collector contracts live in `app/contracts.py`. A manual-upload connector
-scaffold lives in `app/manual_upload.py`.
+Collector contracts live in `app/contracts.py`. Manual-upload and local-project
+connector scaffolds live in `app/manual_upload.py` and
+`app/local_project.py`.
 
 The current scaffold validates scope and produces dry-run metadata only. It does
 not perform real collection or normalization yet.
