@@ -26,6 +26,23 @@ class ChunkVectorUpsertResult(BaseModel):
     chunks_upserted: int
 
 
+class ChunkVectorSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+
+class ChunkVectorSearchHit(BaseModel):
+    chunk_id: str | None = None
+    document_id: str | None = None
+    score: float
+    payload: dict[str, Any]
+
+
+class ChunkVectorSearchResult(BaseModel):
+    query: str
+    hits: list[ChunkVectorSearchHit]
+
+
 def qdrant_collection_payload(vector_size: int) -> dict[str, Any]:
     return {
         "vectors": {
@@ -60,6 +77,15 @@ def qdrant_points_payload(points: list[dict[str, Any]]) -> dict[str, Any]:
     return {"points": points}
 
 
+def qdrant_search_payload(vector: list[float], limit: int) -> dict[str, Any]:
+    return {
+        "vector": vector,
+        "limit": limit,
+        "with_payload": True,
+        "with_vector": False,
+    }
+
+
 def _collection_url(settings: Settings) -> str:
     base_url = settings.qdrant_url.rstrip("/")
     return f"{base_url}/collections/{settings.qdrant_chunk_collection}"
@@ -67,6 +93,10 @@ def _collection_url(settings: Settings) -> str:
 
 def _points_url(settings: Settings) -> str:
     return f"{_collection_url(settings)}/points"
+
+
+def _search_url(settings: Settings) -> str:
+    return f"{_points_url(settings)}/search"
 
 
 def get_qdrant_collection_status(settings: Settings) -> VectorCollectionStatus:
@@ -157,6 +187,38 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
     return ChunkVectorUpsertResult(chunks_selected=len(chunks), chunks_upserted=len(points))
 
 
+def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) -> ChunkVectorSearchResult:
+    if payload.limit < 1 or payload.limit > 50:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="limit must be between 1 and 50")
+
+    query_vector = embed_text_local(payload.query, settings.qdrant_chunk_vector_size)
+    try:
+        response = httpx.post(
+            _search_url(settings),
+            json=qdrant_search_payload(query_vector, payload.limit),
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=response.text)
+
+    results = response.json().get("result", [])
+    hits: list[ChunkVectorSearchHit] = []
+    for result in results:
+        result_payload = result.get("payload") or {}
+        hits.append(
+            ChunkVectorSearchHit(
+                chunk_id=result_payload.get("chunk_id"),
+                document_id=result_payload.get("document_id"),
+                score=float(result.get("score", 0.0)),
+                payload=result_payload,
+            )
+        )
+    return ChunkVectorSearchResult(query=payload.query, hits=hits)
+
+
 @router.get("/chunks", response_model=VectorCollectionStatus)
 def get_chunk_vector_collection(
     settings: Settings = Depends(get_settings),
@@ -177,3 +239,11 @@ def upsert_chunk_vector_points(
     settings: Settings = Depends(get_settings),
 ) -> ChunkVectorUpsertResult:
     return upsert_chunk_vectors(db, settings)
+
+
+@router.post("/chunks/search", response_model=ChunkVectorSearchResult)
+def search_chunk_vector_points(
+    payload: ChunkVectorSearchRequest,
+    settings: Settings = Depends(get_settings),
+) -> ChunkVectorSearchResult:
+    return search_chunk_vectors(settings, payload)
