@@ -66,6 +66,7 @@ POST /memory/vector/chunks/ensure
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
+GET /memory/graph/nodes/{node_label}/{node_id}/relationships
 ```
 
 `/health/live` confirms the API process is running.
@@ -154,7 +155,8 @@ Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
 for future source, artifact, document, chunk, and evidence nodes. They do not
 infer relationships, generate patterns, or call models. The lineage sync route
 upserts only deterministic source/artifact/document/chunk/evidence provenance
-links already present in PostgreSQL.
+links already present in PostgreSQL. Relationship inspection is read-only and
+bounded to deterministic graph node labels.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.

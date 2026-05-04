@@ -22,6 +22,23 @@ class GraphLineageSyncResult(BaseModel):
     relationships: int
 
 
+class GraphRelationshipRead(BaseModel):
+    direction: str
+    relationship_type: str
+    neighbor_label: str | None
+    neighbor_id: str | None
+
+
+class GraphRelationshipList(BaseModel):
+    node_label: str
+    node_id: str
+    relationships: list[GraphRelationshipRead]
+
+
+def allowed_graph_node_labels() -> set[str]:
+    return {"Source", "RawArtifact", "Document", "Chunk", "EvidenceItem"}
+
+
 def lineage_relationship_types() -> list[str]:
     return [
         "SOURCE_HAS_ARTIFACT",
@@ -185,6 +202,51 @@ def ensure_graph_constraints(settings: Settings) -> GraphSchemaStatus:
     return list_graph_constraints(settings)
 
 
+def list_node_relationships(
+    *,
+    settings: Settings,
+    node_label: str,
+    node_id: str,
+    limit: int = 100,
+) -> GraphRelationshipList:
+    if node_label not in allowed_graph_node_labels():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported graph node label")
+
+    statement = f"""
+    MATCH (node:{node_label} {{id: $node_id}})
+    OPTIONAL MATCH (node)-[outgoing]->(out_neighbor)
+    WITH node, collect({{
+        direction: 'outgoing',
+        relationship_type: type(outgoing),
+        neighbor_label: labels(out_neighbor)[0],
+        neighbor_id: out_neighbor.id
+    }}) AS outgoing_relationships
+    OPTIONAL MATCH (in_neighbor)-[incoming]->(node)
+    WITH outgoing_relationships + collect({{
+        direction: 'incoming',
+        relationship_type: type(incoming),
+        neighbor_label: labels(in_neighbor)[0],
+        neighbor_id: in_neighbor.id
+    }}) AS relationships
+    UNWIND relationships AS relationship
+    WITH relationship
+    WHERE relationship.relationship_type IS NOT NULL
+    RETURN relationship
+    LIMIT $limit
+    """
+    try:
+        with _driver(settings) as driver:
+            result = driver.execute_query(statement, {"node_id": node_id, "limit": limit})
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    return GraphRelationshipList(
+        node_label=node_label,
+        node_id=node_id,
+        relationships=[GraphRelationshipRead(**record["relationship"]) for record in result.records],
+    )
+
+
 @router.get("/schema", response_model=GraphSchemaStatus)
 def get_graph_schema(settings: Settings = Depends(get_settings)) -> GraphSchemaStatus:
     return list_graph_constraints(settings)
@@ -201,3 +263,12 @@ def sync_lineage_graph(
     settings: Settings = Depends(get_settings),
 ) -> GraphLineageSyncResult:
     return sync_graph_lineage(db, settings)
+
+
+@router.get("/nodes/{node_label}/{node_id}/relationships", response_model=GraphRelationshipList)
+def get_node_relationships(
+    node_label: str,
+    node_id: str,
+    settings: Settings = Depends(get_settings),
+) -> GraphRelationshipList:
+    return list_node_relationships(settings=settings, node_label=node_label, node_id=node_id)
