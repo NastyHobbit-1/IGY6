@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://redis:6379/0"
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_chunk_collection: str = "igy6_chunks"
+    qdrant_chunk_vector_size: int = 384
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "change-me-local-only"

@@ -24,7 +24,9 @@ POST /approvals
 GET /approvals/{approval_id}
 POST /approvals/{approval_id}/decision
 GET /evidence/documents
+POST /evidence/documents
 GET /evidence/documents/{document_id}
+POST /evidence/documents/{document_id}/chunks
 GET /evidence/items
 GET /evidence/items/{evidence_item_id}
 GET /evidence/chunks
@@ -51,11 +53,18 @@ GET /analysis/recommendations/{recommendation_id}
 GET /audit-events
 GET /audit-events/{audit_event_id}
 GET /artifacts
+POST /artifacts
 GET /artifacts/{artifact_id}
 GET /collection-runs
 POST /collection-runs
 POST /collection-runs/dry-run
+POST /collection-runs/manual-upload
+POST /collection-runs/local-project
 GET /collection-runs/{collection_run_id}
+GET /memory/vector/chunks
+POST /memory/vector/chunks/ensure
+GET /memory/graph/schema
+POST /memory/graph/schema/ensure
 ```
 
 `/health/live` confirms the API process is running.
@@ -78,10 +87,17 @@ execute worker jobs.
 Approval endpoints record approval requests and decisions with audit events.
 Approval decisions do not execute work or trigger worker jobs.
 
-Evidence endpoints are read-only inspection routes for normalized documents,
-chunks, evidence items, and claims already present in PostgreSQL. They do not
-create evidence, run collectors, normalize artifacts, embed content, or perform
+Evidence document read endpoints inspect normalized documents already present in
+PostgreSQL. `POST /evidence/documents` creates a normalized UTF-8 text document
+from an existing raw artifact in the local artifact store. Evidence item
+endpoints can create or inspect immutable evidence items. These routes do not
+run collectors, create chunks, embed content, write graph records, or perform
 retrieval ranking.
+
+`POST /evidence/documents/{document_id}/chunks` deterministically splits an
+existing normalized document into text chunks and creates one evidence item per
+chunk. Generated chunks are not embedded and are rejected if chunks already
+exist for the document.
 
 Feedback endpoints record user labels for existing records and emit audit
 events. Feedback creation does not trigger outcome evaluation, ranking changes,
@@ -101,17 +117,41 @@ score confidence, create recommendations, or update outcomes.
 Audit endpoints are read-only inspection routes for audit events already present
 in PostgreSQL. They do not create, modify, or delete audit records.
 
-Artifact endpoints are read-only inspection routes for raw artifact metadata
-already present in PostgreSQL. They do not read artifact files, write artifacts,
-or create exports.
+Artifact endpoints list, inspect, and create raw artifact metadata. `POST
+/artifacts` accepts base64 content, stores bytes in the local content-addressed
+artifact store, records PostgreSQL metadata, and emits an audit event. Artifact
+read routes remain metadata-only; they do not read artifact files or create
+exports.
 
 Collection-run endpoints record dry-run planning metadata only. They do not
-execute collectors, create raw artifacts, normalize content, or start worker
-jobs.
+create raw artifacts, normalize content, or start worker jobs.
 
-The `POST /collection-runs/dry-run` route records a metadata-only dry-run
-preview for a source and permission pair. It does not execute collection or
-queue work.
+The `POST /collection-runs/dry-run` route runs connector-backed dry-run
+validation for a source and permission pair, then records the preview result.
+The route rejects disabled sources and permissions that do not allow dry-run or
+read preview. It does not execute collection, read source content, write
+artifacts, normalize records, or queue work.
+
+The `POST /collection-runs/manual-upload` route accepts base64 content for a
+registered `manual_upload` source, stores it in the local content-addressed
+artifact store, creates a completed collection-run record, records raw artifact
+metadata, and emits audit events. It does not normalize content, generate
+chunks/evidence, or enqueue worker jobs.
+
+The `POST /collection-runs/local-project` route reads only files covered by
+explicit `scope_json.paths` for a registered `local_project` source. It rejects
+disabled or mismatched sources, skips symlinks and non-files, enforces file
+count and size limits, stores collected bytes in the local content-addressed
+artifact store, and records raw artifact metadata. It does not normalize
+content, generate chunks/evidence, or enqueue worker jobs.
+
+Vector memory endpoints inspect and create the configured Qdrant chunk
+collection. They do not generate embeddings, upsert vectors, run semantic
+search, or read chunk text.
+
+Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
+for future source, artifact, document, chunk, and evidence nodes. They do not
+sync PostgreSQL records into Neo4j or write relationships.
 
 Future endpoints for chat and self-improvement are intentionally not implemented
 yet.

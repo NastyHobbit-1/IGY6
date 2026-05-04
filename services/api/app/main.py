@@ -7,10 +7,12 @@ from app.audit import router as audit_router
 from app.artifacts import router as artifacts_router
 from app.evidence import router as evidence_router
 from app.feedback import router as feedback_router
+from app.graph_memory import router as graph_memory_router
 from app.health import router as health_router
 from app.outcomes import router as outcomes_router
 from app.reports import router as reports_router
 from app.sources import router as sources_router
+from app.vector_memory import router as vector_memory_router
 from app.work_items import router as work_items_router
 
 app = FastAPI(
@@ -34,6 +36,8 @@ app.include_router(analysis_router)
 app.include_router(audit_router)
 app.include_router(artifacts_router)
 app.include_router(collection_runs_router)
+app.include_router(vector_memory_router)
+app.include_router(graph_memory_router)
 
 
 @app.get("/")
