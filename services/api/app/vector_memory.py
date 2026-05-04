@@ -1,3 +1,5 @@
+from hashlib import blake2b
+from math import sqrt
 from typing import Any
 
 import httpx
@@ -22,6 +24,27 @@ def qdrant_collection_payload(vector_size: int) -> dict[str, Any]:
             "distance": "Cosine",
         }
     }
+
+
+def embed_text_local(text: str, vector_size: int) -> list[float]:
+    if vector_size < 1:
+        raise ValueError("vector_size must be at least 1")
+
+    vector = [0.0 for _ in range(vector_size)]
+    tokens = text.lower().split()
+    if not tokens:
+        return vector
+
+    for token in tokens:
+        digest = blake2b(token.encode("utf-8"), digest_size=16).digest()
+        index = int.from_bytes(digest[:8], "big") % vector_size
+        sign = 1.0 if digest[8] % 2 == 0 else -1.0
+        vector[index] += sign
+
+    magnitude = sqrt(sum(value * value for value in vector))
+    if magnitude == 0:
+        return vector
+    return [value / magnitude for value in vector]
 
 
 def _collection_url(settings: Settings) -> str:
