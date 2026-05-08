@@ -186,6 +186,13 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.statusText {
+  color: #52616f;
+  font-size: 0.85rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .table {
   display: grid;
   gap: 1px;
@@ -282,6 +289,53 @@ h3 {
   background: #fbfcfd;
 }
 
+.previewForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.previewForm label {
+  display: grid;
+  gap: 6px;
+  color: #52616f;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.previewForm textarea,
+.previewForm input {
+  width: 100%;
+  border: 1px solid #ccd5df;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #17202a;
+  font: inherit;
+}
+
+.previewForm button {
+  min-height: 42px;
+  border: 1px solid #1f5f8b;
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #256f9f;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.previewNote {
+  margin-top: 10px;
+  color: #52616f;
+  font-size: 0.88rem;
+}
+
+.previewResults {
+  margin-top: 14px;
+}
+
 @media (max-width: 760px) {
   .header {
     align-items: flex-start;
@@ -295,6 +349,10 @@ h3 {
   }
 
   .item {
+    grid-template-columns: 1fr;
+  }
+
+  .previewForm {
     grid-template-columns: 1fr;
   }
 

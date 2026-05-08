@@ -194,6 +194,108 @@ function EmptyState({ label }: { label: string }) {
   return <p className="empty">{label}</p>;
 }
 
+function ChatRetrievalPreview() {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+  const script = `
+(() => {
+  const form = document.querySelector("[data-chat-preview-form]");
+  const message = document.querySelector("[data-chat-preview-message]");
+  const limit = document.querySelector("[data-chat-preview-limit]");
+  const status = document.querySelector("[data-chat-preview-status]");
+  const results = document.querySelector("[data-chat-preview-results]");
+  const apiBaseUrl = form?.getAttribute("data-api-base-url");
+
+  if (!form || !message || !limit || !status || !results || !apiBaseUrl) {
+    return;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    status.textContent = "Retrieving context";
+    results.replaceChildren();
+
+    try {
+      const response = await fetch(apiBaseUrl + "/chat/retrieval-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: message.value,
+          limit: Number(limit.value || 5)
+        })
+      });
+
+      if (!response.ok) {
+        status.textContent = "Error: " + response.status + " " + response.statusText;
+        return;
+      }
+
+      const payload = await response.json();
+      const hits = payload.retrieval_context?.hits ?? [];
+      status.textContent = "answer_status: " + payload.answer_status + " | hits: " + hits.length;
+
+      if (hits.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No retrieval context returned.";
+        results.appendChild(empty);
+        return;
+      }
+
+      for (const hit of hits) {
+        const item = document.createElement("article");
+        item.className = "item evidenceItem";
+
+        const left = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = hit.document?.title || hit.chunk?.id || "retrieval hit";
+        const detail = document.createElement("span");
+        detail.textContent = "score " + hit.score + " | chunk " + (hit.chunk?.id || "unknown");
+        left.append(title, detail);
+
+        const right = document.createElement("div");
+        const evidence = document.createElement("span");
+        evidence.textContent = (hit.evidence_items?.length ?? 0) + " evidence items";
+        const source = document.createElement("span");
+        source.textContent = "source " + (hit.source?.name || hit.source?.id || "none");
+        right.append(evidence, source);
+
+        item.append(left, right);
+        results.appendChild(item);
+      }
+    } catch (error) {
+      status.textContent = "Error: " + (error instanceof Error ? error.message : "Unknown error");
+    }
+  });
+})();
+`;
+
+  return (
+    <section className="panel">
+      <div className="panelHeader">
+        <h2>Chat Retrieval Preview</h2>
+        <span className="statusText" data-chat-preview-status>answer_status: not_generated</span>
+      </div>
+      <form className="previewForm" data-chat-preview-form data-api-base-url={browserApiBaseUrl}>
+        <label>
+          <span>Message</span>
+          <textarea data-chat-preview-message name="message" rows={3} defaultValue="What does the system know?" />
+        </label>
+        <label>
+          <span>Limit</span>
+          <input data-chat-preview-limit name="limit" type="number" min="1" max="50" defaultValue="5" />
+        </label>
+        <button type="submit">Preview Retrieval Context</button>
+      </form>
+      <div className="previewNote">
+        This preview returns retrieval context only. It does not generate an answer, persist a conversation, call a model, or trigger an action.
+      </div>
+      <div className="stack previewResults" data-chat-preview-results />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 export default async function Home() {
   const [
     health,
@@ -623,6 +725,8 @@ export default async function Home() {
           </div>
         </section>
       </section>
+
+      <ChatRetrievalPreview />
     </main>
   );
 }
