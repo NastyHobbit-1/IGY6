@@ -67,6 +67,7 @@ POST /memory/vector/chunks/upsert
 POST /memory/vector/chunks/search
 POST /retrieval/chunks/search
 GET /retrieval/chunks/{chunk_id}/trail
+POST /chat/retrieval-preview
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
@@ -182,6 +183,16 @@ metadata, and linked evidence item metadata for the chunk and document. The
 route is read-only metadata inspection only. It does not read artifact contents,
 search Qdrant, traverse Neo4j, generate answers, or plan retrieval.
 
+Chat retrieval preview accepts a user `message` and optional bounded `limit`,
+then reuses hydrated semantic retrieval to return retrieval context for the
+message. `POST /chat/retrieval-preview` returns `answer_status:
+"not_generated"` with the original message and hydrated context containing
+chunk metadata, normalized document metadata, optional source metadata, optional
+raw artifact metadata, linked evidence item metadata, vector scores, and stored
+Qdrant payloads. The route does not call models, generate answers, persist
+conversations, trigger actions, read artifact contents, traverse Neo4j, or
+write to PostgreSQL, Qdrant, Neo4j, or artifact storage.
+
 Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
 for future source, artifact, document, chunk, and evidence nodes. They do not
 infer relationships, generate patterns, or call models. The lineage sync route
@@ -189,5 +200,5 @@ upserts only deterministic source/artifact/document/chunk/evidence provenance
 links already present in PostgreSQL. Relationship inspection is read-only and
 bounded to deterministic graph node labels.
 
-Future endpoints for chat and self-improvement are intentionally not implemented
-yet.
+Future endpoints for answer-generating chat and self-improvement are
+intentionally not implemented yet.

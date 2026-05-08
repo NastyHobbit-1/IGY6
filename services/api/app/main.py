@@ -5,6 +5,7 @@ from app.collection_runs import router as collection_runs_router
 from app.approvals import router as approvals_router
 from app.audit import router as audit_router
 from app.artifacts import router as artifacts_router
+from app.chat import router as chat_router
 from app.evidence import router as evidence_router
 from app.feedback import router as feedback_router
 from app.graph_memory import router as graph_memory_router
@@ -21,7 +22,8 @@ app = FastAPI(
     version="0.1.0-phase1-foundation",
     description=(
         "Local-first Phase 1 foundation with health, source registry, work item intent, "
-        "and approval record APIs. No collection, chat, prediction, or experiments."
+        "approval record APIs, and a retrieval-only chat preview. No answer generation, "
+        "prediction, or experiments."
     ),
 )
 
@@ -40,6 +42,7 @@ app.include_router(collection_runs_router)
 app.include_router(retrieval_router)
 app.include_router(vector_memory_router)
 app.include_router(graph_memory_router)
+app.include_router(chat_router)
 
 
 @app.get("/")
