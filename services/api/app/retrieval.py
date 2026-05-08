@@ -6,8 +6,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Chunk, EvidenceItem, NormalizedDocument, RawArtifact, Source
+from app.vector_memory import (
+    CHUNK_VECTOR_SEARCH_MAX_LIMIT,
+    ChunkVectorSearchRequest,
+    search_chunk_vectors,
+)
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
@@ -96,6 +102,26 @@ class RetrievalTrailRead(BaseModel):
     evidence_items: list[RetrievalEvidenceItemRead] = Field(default_factory=list)
 
 
+class HydratedChunkSearchRequest(BaseModel):
+    query: str
+    limit: int = Field(default=10, ge=1, le=CHUNK_VECTOR_SEARCH_MAX_LIMIT)
+
+
+class HydratedChunkSearchHit(BaseModel):
+    score: float
+    qdrant_payload: dict[str, Any]
+    chunk: RetrievalChunkRead
+    document: RetrievalDocumentRead
+    source: RetrievalSourceRead | None = None
+    raw_artifact: RetrievalRawArtifactRead | None = None
+    evidence_items: list[RetrievalEvidenceItemRead] = Field(default_factory=list)
+
+
+class HydratedChunkSearchResult(BaseModel):
+    query: str
+    hits: list[HydratedChunkSearchHit]
+
+
 def get_retrieval_chunk_trail(db: Session, chunk_id: str) -> RetrievalTrailRead:
     chunk = db.get(Chunk, chunk_id)
     if chunk is None:
@@ -142,6 +168,49 @@ def get_retrieval_chunk_trail(db: Session, chunk_id: str) -> RetrievalTrailRead:
     )
 
 
+def search_hydrated_chunks(
+    db: Session,
+    settings: Settings,
+    payload: HydratedChunkSearchRequest,
+) -> HydratedChunkSearchResult:
+    vector_results = search_chunk_vectors(
+        settings,
+        ChunkVectorSearchRequest(query=payload.query, limit=payload.limit),
+    )
+
+    hits: list[HydratedChunkSearchHit] = []
+    for vector_hit in vector_results.hits[: payload.limit]:
+        if vector_hit.chunk_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Vector search hit missing chunk_id",
+            )
+
+        trail = get_retrieval_chunk_trail(db, vector_hit.chunk_id)
+        hits.append(
+            HydratedChunkSearchHit(
+                score=vector_hit.score,
+                qdrant_payload=vector_hit.payload,
+                chunk=trail.chunk,
+                document=trail.document,
+                source=trail.source,
+                raw_artifact=trail.raw_artifact,
+                evidence_items=trail.evidence_items,
+            )
+        )
+
+    return HydratedChunkSearchResult(query=vector_results.query, hits=hits)
+
+
 @router.get("/chunks/{chunk_id}/trail", response_model=RetrievalTrailRead)
 def get_chunk_retrieval_trail(chunk_id: str, db: Session = Depends(get_db)) -> RetrievalTrailRead:
     return get_retrieval_chunk_trail(db, chunk_id)
+
+
+@router.post("/chunks/search", response_model=HydratedChunkSearchResult)
+def search_retrieval_chunks(
+    payload: HydratedChunkSearchRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HydratedChunkSearchResult:
+    return search_hydrated_chunks(db, settings, payload)

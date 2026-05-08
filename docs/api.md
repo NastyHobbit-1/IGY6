@@ -65,6 +65,7 @@ GET /memory/vector/chunks
 POST /memory/vector/chunks/ensure
 POST /memory/vector/chunks/upsert
 POST /memory/vector/chunks/search
+POST /retrieval/chunks/search
 GET /retrieval/chunks/{chunk_id}/trail
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
@@ -163,6 +164,16 @@ The response returns the original `query` plus bounded `hits` containing
 `chunk_id`, `document_id`, `score`, and the stored Qdrant `payload`. The route
 does not call external embedding models, generate answers, perform retrieval
 planning, traverse Neo4j, or read artifact content.
+
+Retrieval chunk search accepts a request `query` and optional bounded `limit`,
+delegates semantic matching to the existing Qdrant-backed chunk vector search,
+then hydrates each returned chunk ID from PostgreSQL. `POST
+/retrieval/chunks/search` returns the original `query` plus bounded `results`
+containing each vector `score`, stored Qdrant `payload`, chunk metadata,
+normalized document metadata, optional source metadata, optional raw artifact
+metadata, and linked evidence item metadata. The route does not generate
+answers, traverse Neo4j, read artifact content, or perform broader retrieval
+planning.
 
 Retrieval trail endpoints inspect existing PostgreSQL metadata for a known
 chunk. `GET /retrieval/chunks/{chunk_id}/trail` returns the chunk metadata, its
