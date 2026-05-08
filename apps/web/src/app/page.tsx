@@ -79,6 +79,51 @@ type ClaimRecord = {
   created_at: string;
 };
 
+type VectorCollectionStatus = {
+  collection_name: string;
+  exists: boolean;
+};
+
+type GraphSchemaStatus = {
+  constraints: Array<Record<string, unknown>>;
+};
+
+type PatternRecord = {
+  id: string;
+  pattern_type: string;
+  status: string;
+  summary: string;
+  confidence: number | null;
+  created_at: string;
+};
+
+type HypothesisRecord = {
+  id: string;
+  hypothesis_text: string;
+  status: string;
+  confidence: number | null;
+  created_at: string;
+};
+
+type PredictionRecord = {
+  id: string;
+  prediction_text: string;
+  expected_result: string;
+  status: string;
+  confidence: number | null;
+  created_at: string;
+};
+
+type RecommendationRecord = {
+  id: string;
+  recommendation_text: string;
+  risk_level: string;
+  approval_required: boolean;
+  status: string;
+  confidence: number | null;
+  created_at: string;
+};
+
 type ApiResult<T> = {
   data: T;
   error: string | null;
@@ -150,7 +195,22 @@ function EmptyState({ label }: { label: string }) {
 }
 
 export default async function Home() {
-  const [health, sources, collectionRuns, artifacts, documents, chunks, evidenceItems, claims] = await Promise.all([
+  const [
+    health,
+    sources,
+    collectionRuns,
+    artifacts,
+    documents,
+    chunks,
+    evidenceItems,
+    claims,
+    vectorCollection,
+    graphSchema,
+    patterns,
+    hypotheses,
+    predictions,
+    recommendations
+  ] = await Promise.all([
     getJson<HealthResponse>("/health/ready", { status: "error" }),
     getJson<SourceRecord[]>("/sources", []),
     getJson<CollectionRunRecord[]>("/collection-runs", []),
@@ -158,7 +218,13 @@ export default async function Home() {
     getJson<NormalizedDocumentRecord[]>("/evidence/documents", []),
     getJson<ChunkRecord[]>("/evidence/chunks", []),
     getJson<EvidenceItemRecord[]>("/evidence/items", []),
-    getJson<ClaimRecord[]>("/evidence/claims", [])
+    getJson<ClaimRecord[]>("/evidence/claims", []),
+    getJson<VectorCollectionStatus>("/memory/vector/chunks", { collection_name: "unknown", exists: false }),
+    getJson<GraphSchemaStatus>("/memory/graph/schema", { constraints: [] }),
+    getJson<PatternRecord[]>("/analysis/patterns", []),
+    getJson<HypothesisRecord[]>("/analysis/hypotheses", []),
+    getJson<PredictionRecord[]>("/analysis/predictions", []),
+    getJson<RecommendationRecord[]>("/analysis/recommendations", [])
   ]);
 
   const checks = health.data.checks ?? {};
@@ -168,6 +234,10 @@ export default async function Home() {
   const recentChunks = chunks.data.slice(0, 5);
   const recentEvidence = evidenceItems.data.slice(0, 5);
   const recentClaims = claims.data.slice(0, 5);
+  const recentPatterns = patterns.data.slice(0, 4);
+  const recentHypotheses = hypotheses.data.slice(0, 4);
+  const recentPredictions = predictions.data.slice(0, 4);
+  const recentRecommendations = recommendations.data.slice(0, 4);
 
   return (
     <main className="shell">
@@ -402,6 +472,154 @@ export default async function Home() {
               ))}
             </div>
             {recentClaims.length === 0 ? <EmptyState label="No claims recorded yet." /> : null}
+          </div>
+        </section>
+      </section>
+
+      <section className="panel">
+        <div className="panelHeader">
+          <h2>Memory And Analysis</h2>
+          {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
+            <span className="errorText">Some memory or analysis endpoints returned errors.</span>
+          ) : null}
+        </div>
+        <section className="metrics compact" aria-label="Memory and analysis totals">
+          <article>
+            <span>Vector collection</span>
+            <strong>{vectorCollection.data.exists ? "Ready" : "Missing"}</strong>
+          </article>
+          <article>
+            <span>Graph constraints</span>
+            <strong>{graphSchema.data.constraints.length}</strong>
+          </article>
+          <article>
+            <span>Patterns</span>
+            <strong>{patterns.data.length}</strong>
+          </article>
+          <article>
+            <span>Recommendations</span>
+            <strong>{recommendations.data.length}</strong>
+          </article>
+        </section>
+        <section className="split">
+          <div className="memoryStatus">
+            <div className="subHeader">
+              <h3>Vector Memory</h3>
+              {vectorCollection.error ? <span className="errorText">{vectorCollection.error}</span> : null}
+            </div>
+            <article className="item evidenceItem">
+              <div>
+                <strong>{vectorCollection.data.collection_name}</strong>
+                <span>Configured chunk collection</span>
+              </div>
+              <div>
+                <StatusPill state={vectorCollection.data.exists ? "enabled" : "missing"} />
+              </div>
+            </article>
+          </div>
+          <div className="memoryStatus">
+            <div className="subHeader">
+              <h3>Graph Memory</h3>
+              {graphSchema.error ? <span className="errorText">{graphSchema.error}</span> : null}
+            </div>
+            <article className="item evidenceItem">
+              <div>
+                <strong>{graphSchema.data.constraints.length} constraints</strong>
+                <span>Schema inspection only</span>
+              </div>
+              <div>
+                <StatusPill state={graphSchema.error ? "error" : "ok"} />
+              </div>
+            </article>
+          </div>
+        </section>
+        <section className="quad analysisGrid">
+          <div>
+            <div className="subHeader">
+              <h3>Patterns</h3>
+              {patterns.error ? <span className="errorText">{patterns.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentPatterns.map((pattern) => (
+                <article className="item evidenceItem" key={pattern.id}>
+                  <div>
+                    <strong>{pattern.pattern_type}</strong>
+                    <span>{excerpt(pattern.summary)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={pattern.status} />
+                    <span>{pattern.confidence === null ? "unscored" : `${pattern.confidence}%`}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentPatterns.length === 0 ? <EmptyState label="No patterns recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Hypotheses</h3>
+              {hypotheses.error ? <span className="errorText">{hypotheses.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentHypotheses.map((hypothesis) => (
+                <article className="item evidenceItem" key={hypothesis.id}>
+                  <div>
+                    <strong>{compactId(hypothesis.id)}</strong>
+                    <span>{excerpt(hypothesis.hypothesis_text)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={hypothesis.status} />
+                    <span>{hypothesis.confidence === null ? "unscored" : `${hypothesis.confidence}%`}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Predictions</h3>
+              {predictions.error ? <span className="errorText">{predictions.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentPredictions.map((prediction) => (
+                <article className="item evidenceItem" key={prediction.id}>
+                  <div>
+                    <strong>{excerpt(prediction.prediction_text, 80)}</strong>
+                    <span>{excerpt(prediction.expected_result, 90)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={prediction.status} />
+                    <span>{prediction.confidence === null ? "unscored" : `${prediction.confidence}%`}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentPredictions.length === 0 ? <EmptyState label="No predictions recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Recommendations</h3>
+              {recommendations.error ? <span className="errorText">{recommendations.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentRecommendations.map((recommendation) => (
+                <article className="item evidenceItem" key={recommendation.id}>
+                  <div>
+                    <strong>{recommendation.risk_level}</strong>
+                    <span>{excerpt(recommendation.recommendation_text)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={recommendation.status} />
+                    <span>{recommendation.approval_required ? "approval" : "no approval"}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
           </div>
         </section>
       </section>

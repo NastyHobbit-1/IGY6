@@ -172,7 +172,8 @@ h3 {
 
 .pill[data-state="error"],
 .pill[data-state="failed"],
-.pill[data-state="disabled"] {
+.pill[data-state="disabled"],
+.pill[data-state="missing"] {
   border-color: #f3c6bd;
   background: #fff1ed;
   color: #9a3412;
@@ -231,6 +232,14 @@ h3 {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.memoryStatus {
+  margin-top: 4px;
+}
+
+.analysisGrid {
+  margin-top: 18px;
 }
 
 .stack {
