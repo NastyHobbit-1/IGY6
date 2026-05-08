@@ -124,6 +124,63 @@ type RecommendationRecord = {
   created_at: string;
 };
 
+type WorkItemRecord = {
+  id: string;
+  work_type: string;
+  status: string;
+  requested_by_actor_id: string;
+  error_message: string | null;
+  created_at: string;
+};
+
+type ApprovalRecord = {
+  id: string;
+  request_type: string;
+  status: string;
+  requested_by_actor_id: string;
+  decided_by_actor_id: string | null;
+  decision_reason: string | null;
+  created_at: string;
+};
+
+type FeedbackRecord = {
+  id: string;
+  target_type: string;
+  target_id: string;
+  label: string;
+  actor_id: string;
+  note: string | null;
+  created_at: string;
+};
+
+type OutcomeRecord = {
+  id: string;
+  target_type: string;
+  target_id: string;
+  outcome_status: string;
+  summary: string | null;
+  created_at: string;
+};
+
+type ReportRecord = {
+  id: string;
+  title: string;
+  report_type: string;
+  status: string;
+  requested_by_actor_id: string;
+  created_at: string;
+};
+
+type AuditEventRecord = {
+  id: number;
+  actor_id: string;
+  event_type: string;
+  decision: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  created_at: string;
+};
+
 type ApiResult<T> = {
   data: T;
   error: string | null;
@@ -311,7 +368,13 @@ export default async function Home() {
     patterns,
     hypotheses,
     predictions,
-    recommendations
+    recommendations,
+    workItems,
+    approvals,
+    feedback,
+    outcomes,
+    reports,
+    auditEvents
   ] = await Promise.all([
     getJson<HealthResponse>("/health/ready", { status: "error" }),
     getJson<SourceRecord[]>("/sources", []),
@@ -326,7 +389,13 @@ export default async function Home() {
     getJson<PatternRecord[]>("/analysis/patterns", []),
     getJson<HypothesisRecord[]>("/analysis/hypotheses", []),
     getJson<PredictionRecord[]>("/analysis/predictions", []),
-    getJson<RecommendationRecord[]>("/analysis/recommendations", [])
+    getJson<RecommendationRecord[]>("/analysis/recommendations", []),
+    getJson<WorkItemRecord[]>("/work-items", []),
+    getJson<ApprovalRecord[]>("/approvals", []),
+    getJson<FeedbackRecord[]>("/feedback", []),
+    getJson<OutcomeRecord[]>("/outcomes", []),
+    getJson<ReportRecord[]>("/reports", []),
+    getJson<AuditEventRecord[]>("/audit-events", [])
   ]);
 
   const checks = health.data.checks ?? {};
@@ -340,6 +409,12 @@ export default async function Home() {
   const recentHypotheses = hypotheses.data.slice(0, 4);
   const recentPredictions = predictions.data.slice(0, 4);
   const recentRecommendations = recommendations.data.slice(0, 4);
+  const recentWorkItems = workItems.data.slice(0, 4);
+  const recentApprovals = approvals.data.slice(0, 4);
+  const recentFeedback = feedback.data.slice(0, 4);
+  const recentOutcomes = outcomes.data.slice(0, 4);
+  const recentReports = reports.data.slice(0, 4);
+  const recentAuditEvents = auditEvents.data.slice(0, 4);
 
   return (
     <main className="shell">
@@ -722,6 +797,166 @@ export default async function Home() {
               ))}
             </div>
             {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
+          </div>
+        </section>
+      </section>
+
+      <section className="panel">
+        <div className="panelHeader">
+          <h2>Review And Operations</h2>
+          {[workItems.error, approvals.error, feedback.error, outcomes.error, reports.error, auditEvents.error].filter(Boolean).length > 0 ? (
+            <span className="errorText">Some review or operations endpoints returned errors.</span>
+          ) : null}
+        </div>
+        <section className="metrics compact" aria-label="Review and operations totals">
+          <article>
+            <span>Work items</span>
+            <strong>{workItems.data.length}</strong>
+          </article>
+          <article>
+            <span>Approvals</span>
+            <strong>{approvals.data.length}</strong>
+          </article>
+          <article>
+            <span>Feedback</span>
+            <strong>{feedback.data.length}</strong>
+          </article>
+          <article>
+            <span>Audit events</span>
+            <strong>{auditEvents.data.length}</strong>
+          </article>
+        </section>
+        <section className="quad analysisGrid">
+          <div>
+            <div className="subHeader">
+              <h3>Work Items</h3>
+              {workItems.error ? <span className="errorText">{workItems.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentWorkItems.map((workItem) => (
+                <article className="item evidenceItem" key={workItem.id}>
+                  <div>
+                    <strong>{workItem.work_type}</strong>
+                    <span>{workItem.error_message ?? `requested by ${workItem.requested_by_actor_id}`}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={workItem.status} />
+                    <span>{formatDate(workItem.created_at)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Approvals</h3>
+              {approvals.error ? <span className="errorText">{approvals.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentApprovals.map((approval) => (
+                <article className="item evidenceItem" key={approval.id}>
+                  <div>
+                    <strong>{approval.request_type}</strong>
+                    <span>{approval.decision_reason ?? `requested by ${approval.requested_by_actor_id}`}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={approval.status} />
+                    <span>{approval.decided_by_actor_id ?? "undecided"}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentApprovals.length === 0 ? <EmptyState label="No approvals recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Feedback</h3>
+              {feedback.error ? <span className="errorText">{feedback.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentFeedback.map((event) => (
+                <article className="item evidenceItem" key={event.id}>
+                  <div>
+                    <strong>{event.label}</strong>
+                    <span>{event.note ?? `${event.target_type} ${compactId(event.target_id)}`}</span>
+                  </div>
+                  <div>
+                    <span>{event.actor_id}</span>
+                    <span>{formatDate(event.created_at)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentFeedback.length === 0 ? <EmptyState label="No feedback recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Outcomes</h3>
+              {outcomes.error ? <span className="errorText">{outcomes.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentOutcomes.map((outcome) => (
+                <article className="item evidenceItem" key={outcome.id}>
+                  <div>
+                    <strong>{outcome.target_type}</strong>
+                    <span>{outcome.summary ?? compactId(outcome.target_id)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={outcome.outcome_status} />
+                    <span>{formatDate(outcome.created_at)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentOutcomes.length === 0 ? <EmptyState label="No outcomes recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Reports</h3>
+              {reports.error ? <span className="errorText">{reports.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentReports.map((report) => (
+                <article className="item evidenceItem" key={report.id}>
+                  <div>
+                    <strong>{report.title}</strong>
+                    <span>{report.report_type}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={report.status} />
+                    <span>{report.requested_by_actor_id}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentReports.length === 0 ? <EmptyState label="No reports recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Audit Events</h3>
+              {auditEvents.error ? <span className="errorText">{auditEvents.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentAuditEvents.map((event) => (
+                <article className="item evidenceItem" key={event.id}>
+                  <div>
+                    <strong>{event.event_type}</strong>
+                    <span>{event.resource_type ?? "resource"} {compactId(event.resource_id)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={event.decision ?? "recorded"} />
+                    <span>{event.actor_id}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentAuditEvents.length === 0 ? <EmptyState label="No audit events recorded yet." /> : null}
           </div>
         </section>
       </section>
