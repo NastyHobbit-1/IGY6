@@ -65,6 +65,7 @@ GET /memory/vector/chunks
 POST /memory/vector/chunks/ensure
 POST /memory/vector/chunks/upsert
 POST /memory/vector/chunks/search
+GET /retrieval/chunks/{chunk_id}/trail
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
@@ -162,6 +163,13 @@ The response returns the original `query` plus bounded `hits` containing
 `chunk_id`, `document_id`, `score`, and the stored Qdrant `payload`. The route
 does not call external embedding models, generate answers, perform retrieval
 planning, traverse Neo4j, or read artifact content.
+
+Retrieval trail endpoints inspect existing PostgreSQL metadata for a known
+chunk. `GET /retrieval/chunks/{chunk_id}/trail` returns the chunk metadata, its
+normalized document metadata, optional source metadata, optional raw artifact
+metadata, and linked evidence item metadata for the chunk and document. The
+route is read-only metadata inspection only. It does not read artifact contents,
+search Qdrant, traverse Neo4j, generate answers, or plan retrieval.
 
 Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
 for future source, artifact, document, chunk, and evidence nodes. They do not
