@@ -40,6 +40,45 @@ type RawArtifactRecord = {
   created_at: string;
 };
 
+type NormalizedDocumentRecord = {
+  id: string;
+  raw_artifact_id: string | null;
+  source_id: string | null;
+  title: string | null;
+  document_type: string;
+  language: string | null;
+  sensitivity: string;
+  created_at: string;
+};
+
+type ChunkRecord = {
+  id: string;
+  document_id: string;
+  chunk_index: number;
+  embedding_status: string;
+  created_at: string;
+};
+
+type EvidenceItemRecord = {
+  id: string;
+  source_id: string | null;
+  document_id: string | null;
+  chunk_id: string | null;
+  evidence_type: string;
+  statement: string;
+  confidence: number | null;
+  created_at: string;
+};
+
+type ClaimRecord = {
+  id: string;
+  claim_text: string;
+  claim_type: string;
+  status: string;
+  confidence: number | null;
+  created_at: string;
+};
+
 type ApiResult<T> = {
   data: T;
   error: string | null;
@@ -95,6 +134,13 @@ function formatBytes(value: number | null): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function excerpt(value: string, maxLength = 110): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
 function StatusPill({ state }: { state: string }) {
   return <span className="pill" data-state={state}>{state}</span>;
 }
@@ -104,16 +150,24 @@ function EmptyState({ label }: { label: string }) {
 }
 
 export default async function Home() {
-  const [health, sources, collectionRuns, artifacts] = await Promise.all([
+  const [health, sources, collectionRuns, artifacts, documents, chunks, evidenceItems, claims] = await Promise.all([
     getJson<HealthResponse>("/health/ready", { status: "error" }),
     getJson<SourceRecord[]>("/sources", []),
     getJson<CollectionRunRecord[]>("/collection-runs", []),
-    getJson<RawArtifactRecord[]>("/artifacts", [])
+    getJson<RawArtifactRecord[]>("/artifacts", []),
+    getJson<NormalizedDocumentRecord[]>("/evidence/documents", []),
+    getJson<ChunkRecord[]>("/evidence/chunks", []),
+    getJson<EvidenceItemRecord[]>("/evidence/items", []),
+    getJson<ClaimRecord[]>("/evidence/claims", [])
   ]);
 
   const checks = health.data.checks ?? {};
   const recentRuns = collectionRuns.data.slice(0, 6);
   const recentArtifacts = artifacts.data.slice(0, 6);
+  const recentDocuments = documents.data.slice(0, 5);
+  const recentChunks = chunks.data.slice(0, 5);
+  const recentEvidence = evidenceItems.data.slice(0, 5);
+  const recentClaims = claims.data.slice(0, 5);
 
   return (
     <main className="shell">
@@ -140,6 +194,10 @@ export default async function Home() {
         <article>
           <span>Raw artifacts</span>
           <strong>{artifacts.data.length}</strong>
+        </article>
+        <article>
+          <span>Evidence items</span>
+          <strong>{evidenceItems.data.length}</strong>
         </article>
       </section>
 
@@ -229,6 +287,122 @@ export default async function Home() {
             ))}
           </div>
           {recentArtifacts.length === 0 ? <EmptyState label="No raw artifacts recorded yet." /> : null}
+        </section>
+      </section>
+
+      <section className="panel">
+        <div className="panelHeader">
+          <h2>Evidence Explorer</h2>
+          {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
+            <span className="errorText">Some evidence endpoints returned errors.</span>
+          ) : null}
+        </div>
+        <section className="metrics compact" aria-label="Evidence totals">
+          <article>
+            <span>Documents</span>
+            <strong>{documents.data.length}</strong>
+          </article>
+          <article>
+            <span>Chunks</span>
+            <strong>{chunks.data.length}</strong>
+          </article>
+          <article>
+            <span>Evidence items</span>
+            <strong>{evidenceItems.data.length}</strong>
+          </article>
+          <article>
+            <span>Claims</span>
+            <strong>{claims.data.length}</strong>
+          </article>
+        </section>
+        <section className="quad">
+          <div>
+            <div className="subHeader">
+              <h3>Documents</h3>
+              {documents.error ? <span className="errorText">{documents.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentDocuments.map((document) => (
+                <article className="item evidenceItem" key={document.id}>
+                  <div>
+                    <strong>{document.title ?? compactId(document.id)}</strong>
+                    <span>{document.document_type} · {document.sensitivity}</span>
+                  </div>
+                  <div>
+                    <span>{formatDate(document.created_at)}</span>
+                    <span>source {compactId(document.source_id)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentDocuments.length === 0 ? <EmptyState label="No normalized documents recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Chunks</h3>
+              {chunks.error ? <span className="errorText">{chunks.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentChunks.map((chunk) => (
+                <article className="item evidenceItem" key={chunk.id}>
+                  <div>
+                    <strong>{compactId(chunk.id)}</strong>
+                    <span>document {compactId(chunk.document_id)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={chunk.embedding_status} />
+                    <span>index {chunk.chunk_index}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentChunks.length === 0 ? <EmptyState label="No chunks generated yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Evidence Items</h3>
+              {evidenceItems.error ? <span className="errorText">{evidenceItems.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentEvidence.map((item) => (
+                <article className="item evidenceItem" key={item.id}>
+                  <div>
+                    <strong>{item.evidence_type}</strong>
+                    <span>{excerpt(item.statement)}</span>
+                  </div>
+                  <div>
+                    <span>{item.confidence === null ? "unscored" : `${item.confidence}%`}</span>
+                    <span>chunk {compactId(item.chunk_id)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentEvidence.length === 0 ? <EmptyState label="No evidence items recorded yet." /> : null}
+          </div>
+
+          <div>
+            <div className="subHeader">
+              <h3>Claims</h3>
+              {claims.error ? <span className="errorText">{claims.error}</span> : null}
+            </div>
+            <div className="stack">
+              {recentClaims.map((claim) => (
+                <article className="item evidenceItem" key={claim.id}>
+                  <div>
+                    <strong>{claim.claim_type}</strong>
+                    <span>{excerpt(claim.claim_text)}</span>
+                  </div>
+                  <div>
+                    <StatusPill state={claim.status} />
+                    <span>{claim.confidence === null ? "unscored" : `${claim.confidence}%`}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {recentClaims.length === 0 ? <EmptyState label="No claims recorded yet." /> : null}
+          </div>
         </section>
       </section>
     </main>
