@@ -14,6 +14,8 @@ from app.models import Chunk
 
 router = APIRouter(prefix="/memory/vector", tags=["memory-vector"])
 
+CHUNK_VECTOR_SEARCH_MAX_LIMIT = 50
+
 
 class VectorCollectionStatus(BaseModel):
     collection_name: str
@@ -78,9 +80,10 @@ def qdrant_points_payload(points: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def qdrant_search_payload(vector: list[float], limit: int) -> dict[str, Any]:
+    bounded_limit = min(max(limit, 1), CHUNK_VECTOR_SEARCH_MAX_LIMIT)
     return {
         "vector": vector,
-        "limit": limit,
+        "limit": bounded_limit,
         "with_payload": True,
         "with_vector": False,
     }
@@ -188,8 +191,11 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
 
 
 def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) -> ChunkVectorSearchResult:
-    if payload.limit < 1 or payload.limit > 50:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="limit must be between 1 and 50")
+    if payload.limit < 1 or payload.limit > CHUNK_VECTOR_SEARCH_MAX_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"limit must be between 1 and {CHUNK_VECTOR_SEARCH_MAX_LIMIT}",
+        )
 
     query_vector = embed_text_local(payload.query, settings.qdrant_chunk_vector_size)
     try:
@@ -204,7 +210,7 @@ def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) 
     if response.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=response.text)
 
-    results = response.json().get("result", [])
+    results = response.json().get("result", [])[: payload.limit]
     hits: list[ChunkVectorSearchHit] = []
     for result in results:
         result_payload = result.get("payload") or {}

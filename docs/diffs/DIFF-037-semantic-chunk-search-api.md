@@ -1,6 +1,6 @@
 # DIFF-037: Semantic Chunk Search API
 
-Status: Active
+Status: Locked
 
 ## Type
 
@@ -69,6 +69,12 @@ python3 -m compileall services/api services/worker services/collectors packages/
 docker compose -f infra/docker-compose.yml --env-file .env.example config
 PYTHONPATH=services/api python3 -c "from app.vector_memory import qdrant_search_payload; print(qdrant_search_payload([0.1, 0.2], 3)['limit'])"
 ```
+
+Results:
+
+- Passed: `python3 -m compileall services/api services/worker services/collectors packages/policy`
+- Passed: `docker compose -f infra/docker-compose.yml --env-file .env.example config`
+- Blocked: `PYTHONPATH=services/api python3 -c "from app.vector_memory import qdrant_search_payload; print(qdrant_search_payload([0.1, 0.2], 3)['limit'])"` because the host Python environment does not have `httpx` installed
 
 ## Completion Criteria
 

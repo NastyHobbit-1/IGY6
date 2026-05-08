@@ -64,6 +64,7 @@ GET /collection-runs/{collection_run_id}
 GET /memory/vector/chunks
 POST /memory/vector/chunks/ensure
 POST /memory/vector/chunks/upsert
+POST /memory/vector/chunks/search
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
@@ -149,9 +150,18 @@ artifact store, and records raw artifact metadata. It does not normalize
 content, generate chunks/evidence, or enqueue worker jobs.
 
 Vector memory endpoints inspect and create the configured Qdrant chunk
-collection and can upsert existing chunk text using the deterministic local
-embedding helper. They do not call external embedding models, run semantic
-search, or perform retrieval planning.
+collection, upsert existing chunk text using the deterministic local embedding
+helper, and run direct semantic chunk search against the Qdrant-backed chunk
+vector collection.
+
+`POST /memory/vector/chunks/search` embeds the request `query` locally with the
+same deterministic embedding helper used for chunk vector upserts, then queries
+Qdrant for nearest chunk vectors. The request body accepts `query` and an
+optional `limit`, which defaults to `10` and is bounded to `1` through `50`.
+The response returns the original `query` plus bounded `hits` containing
+`chunk_id`, `document_id`, `score`, and the stored Qdrant `payload`. The route
+does not call external embedding models, generate answers, perform retrieval
+planning, traverse Neo4j, or read artifact content.
 
 Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
 for future source, artifact, document, chunk, and evidence nodes. They do not
