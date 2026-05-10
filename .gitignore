@@ -19,6 +19,13 @@ storage/artifacts/*
 !storage/artifacts/.gitkeep
 storage/exports/*
 !storage/exports/.gitkeep
+storage/env_backups/
+storage/postgres/
+storage/qdrant/
+storage/neo4j/
+storage/mlflow/
+storage/phoenix/
+IGY6_Data/
 
 mlruns/
 *.sqlite

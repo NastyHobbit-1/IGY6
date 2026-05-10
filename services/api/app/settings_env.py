@@ -21,6 +21,7 @@ router = APIRouter(prefix="/settings/env", tags=["settings"])
 
 MASKED_VALUE = "********"
 READ_ONLY_KEYS = {"ENV_FILE_PATH", "ENV_BACKUP_DIR"}
+DEFAULT_IGY6_DATA_ROOT = "../IGY6_Data"
 SECRET_KEYS = {"POSTGRES_PASSWORD", "DATABASE_URL", "NEO4J_PASSWORD"}
 BOOLEAN_KEYS = {"SINGLE_USER_MODE", "APPROVAL_REQUIRED_DEFAULT"}
 PORT_KEYS = {
@@ -45,6 +46,7 @@ URL_KEYS = {
     "PHOENIX_COLLECTOR_ENDPOINT",
 }
 STORAGE_KEYS = {"ARTIFACT_STORE_PATH", "EXPORT_STORE_PATH", "ENV_FILE_PATH", "ENV_BACKUP_DIR"}
+HOST_PATH_KEYS = {"IGY6_DATA_ROOT"}
 EXTERNAL_MODEL_POLICIES = {"blocked", "metadata_only", "allowed_with_approval"}
 AUDIT_LOG_LEVELS = {"debug", "info", "warning", "error"}
 RESTART_KEYS = {
@@ -88,6 +90,7 @@ RESTART_KEYS = {
     "APPROVAL_REQUIRED_DEFAULT",
     "ENV_FILE_PATH",
     "ENV_BACKUP_DIR",
+    "IGY6_DATA_ROOT",
 }
 SAFE_ENV_FILE_PATH = Path("/workspace/project/.env")
 SAFE_BACKUP_ROOT = Path("/workspace/storage")
@@ -141,6 +144,14 @@ SETTING_DEFINITIONS: list[dict[str, str]] = [
     {"key": "EXPORT_STORE_PATH", "group": "storage", "description": "Container path for report/export output."},
     {"key": "ENV_FILE_PATH", "group": "storage", "description": "Controlled container path to the mounted local .env file."},
     {"key": "ENV_BACKUP_DIR", "group": "storage", "description": "Controlled backup directory for .env backups."},
+    {
+        "key": "IGY6_DATA_ROOT",
+        "group": "storage",
+        "description": (
+            "Host-side folder where IGY6 stores database, vector, graph, artifact, "
+            "report, backup, MLflow, and Phoenix runtime data."
+        ),
+    },
     {"key": "EXTERNAL_MODEL_POLICY_DEFAULT", "group": "policy", "description": "Default external model policy."},
     {"key": "SINGLE_USER_MODE", "group": "policy", "description": "Local single-user mode toggle."},
     {"key": "AUDIT_LOG_LEVEL", "group": "policy", "description": "Audit logging verbosity label."},
@@ -344,6 +355,7 @@ def _base_values(parsed: ParsedEnv, settings: Settings) -> dict[str, str]:
     defaults = {
         "ENV_FILE_PATH": str(env_path),
         "ENV_BACKUP_DIR": str(backup_dir),
+        "IGY6_DATA_ROOT": settings.igy6_data_root,
     }
     for key, value in defaults.items():
         values.setdefault(key, value)
@@ -442,6 +454,30 @@ def _storage_path_is_safe(value: str) -> bool:
     return path.is_absolute() and ".." not in path.parts
 
 
+def _host_data_root_issue(value: str) -> str | None:
+    stripped = value.strip()
+    if not stripped:
+        return "IGY6_DATA_ROOT must not be empty."
+    normalized = stripped.replace("\\", "/")
+    if normalized == DEFAULT_IGY6_DATA_ROOT:
+        return None
+    if normalized in {"/", "~"}:
+        return "IGY6_DATA_ROOT must point to a dedicated folder, not a filesystem root."
+    windows_drive_root = len(normalized) == 3 and normalized[1:] == ":/" and normalized[0].isalpha()
+    if windows_drive_root:
+        return "IGY6_DATA_ROOT must not be a drive root such as C:/ or D:/."
+    if "\\" in stripped:
+        return "Use forward slashes in IGY6_DATA_ROOT, for example D:/Projects/IGY6_Data."
+    windows_absolute = len(normalized) > 3 and normalized[1:3] == ":/" and normalized[0].isalpha()
+    linux_absolute = normalized.startswith("/")
+    if not windows_absolute and not linux_absolute and normalized != DEFAULT_IGY6_DATA_ROOT:
+        return "Use ../IGY6_Data or an absolute path such as D:/Projects/IGY6_Data or /home/user/IGY6_Data."
+    parts = [part for part in normalized.split("/") if part]
+    if ".." in parts:
+        return "IGY6_DATA_ROOT must not contain path traversal, except for the default ../IGY6_Data."
+    return None
+
+
 def _compose_validate(candidate: dict[str, str], unmanaged: dict[str, str]) -> dict[str, Any]:
     docker_path = shutil.which("docker")
     compose_path = Path("/workspace/project/infra/docker-compose.yml")
@@ -462,7 +498,15 @@ def _compose_validate(candidate: dict[str, str], unmanaged: dict[str, str]) -> d
         temp_path = handle.name
     try:
         result = subprocess.run(
-            [docker_path, "compose", "-f", str(compose_path), "--env-file", temp_path, "config"],
+            [
+                docker_path,
+                "compose",
+                "-f",
+                str(compose_path),
+                "--env-file",
+                temp_path,
+                "config",
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -567,6 +611,11 @@ def validate_candidate(candidate: dict[str, str], unmanaged: dict[str, str], cha
         if value and not _storage_path_is_safe(value):
             errors.append(EnvValidationIssue(key=key, message="Storage path must be absolute and must not contain traversal."))
 
+    for key in HOST_PATH_KEYS:
+        issue = _host_data_root_issue(candidate.get(key, ""))
+        if issue is not None:
+            errors.append(EnvValidationIssue(key=key, message=issue))
+
     if not _is_configured_env_path_safe(Path(candidate.get("ENV_FILE_PATH", "")), Path(candidate.get("ENV_BACKUP_DIR", ""))):
         errors.append(
             EnvValidationIssue(
@@ -608,6 +657,19 @@ def validate_candidate(candidate: dict[str, str], unmanaged: dict[str, str], cha
         restart_notes.append(
             "Changed keys likely requiring Docker stack restart/recreate: " + ", ".join(restart_changed)
         )
+    if "IGY6_DATA_ROOT" in changed_keys:
+        warnings.append(
+            EnvValidationIssue(
+                key="IGY6_DATA_ROOT",
+                message="Changing IGY6_DATA_ROOT requires Docker stack restart/recreate and does not migrate existing data.",
+            )
+        )
+        warnings.append(
+            EnvValidationIssue(
+                key="IGY6_DATA_ROOT",
+                message="The target data folder must already exist or be creatable by Docker.",
+            )
+        )
 
     if restart_required:
         for key in restart_changed:
@@ -623,6 +685,8 @@ def validate_candidate(candidate: dict[str, str], unmanaged: dict[str, str], cha
                 warnings.append(EnvValidationIssue(key=key, message="Reserved service changes may require stack restart."))
             elif key in STORAGE_KEYS:
                 warnings.append(EnvValidationIssue(key=key, message="Storage path changes may require mounted volume review."))
+            elif key in HOST_PATH_KEYS:
+                warnings.append(EnvValidationIssue(key=key, message="Host data-root changes may require moving data manually while the stack is stopped."))
 
     compose_validation = _compose_validate(candidate, unmanaged)
     if compose_validation.get("passed") is False:

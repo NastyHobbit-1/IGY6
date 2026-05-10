@@ -8,7 +8,9 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/postgres
+        target: /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -30,7 +32,9 @@ services:
     ports:
       - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/qdrant
+        target: /qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
       interval: 10s
@@ -48,8 +52,12 @@ services:
       - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
       - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/neo4j/data
+        target: /data
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/neo4j/logs
+        target: /logs
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
       interval: 10s
@@ -72,7 +80,9 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
-      - mlflow_data:/mlflow
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/mlflow
+        target: /mlflow
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000', timeout=3)\""]
       interval: 10s
@@ -84,7 +94,9 @@ services:
     ports:
       - "127.0.0.1:${PHOENIX_PORT:-6006}:6006"
     volumes:
-      - phoenix_data:/mnt/data
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/phoenix
+        target: /mnt/data
     healthcheck:
       test: ["CMD", "/usr/bin/python3.13", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006', timeout=3)"]
       interval: 10s
@@ -112,6 +124,7 @@ services:
       EXPORT_STORE_PATH: ${EXPORT_STORE_PATH}
       ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
       ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
+      IGY6_DATA_ROOT: ${IGY6_DATA_ROOT}
       EXTERNAL_MODEL_POLICY_DEFAULT: ${EXTERNAL_MODEL_POLICY_DEFAULT}
       SINGLE_USER_MODE: ${SINGLE_USER_MODE}
       AUDIT_LOG_LEVEL: ${AUDIT_LOG_LEVEL}
@@ -119,8 +132,12 @@ services:
     ports:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
-      - ../storage:/workspace/storage
-      - ..:/workspace/project
+      - type: bind
+        source: ${IGY6_DATA_ROOT}
+        target: /workspace/storage
+      - type: bind
+        source: ..
+        target: /workspace/project
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,7 +170,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ../storage:/workspace/storage
+      - type: bind
+        source: ${IGY6_DATA_ROOT}
+        target: /workspace/storage
 
   beat:
     build:
@@ -170,6 +189,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}
+        target: /workspace/storage
 
   web:
     build:
@@ -180,11 +203,3 @@ services:
       - "127.0.0.1:3000:3000"
     depends_on:
       - api
-
-volumes:
-  postgres_data:
-  qdrant_data:
-  neo4j_data:
-  neo4j_logs:
-  mlflow_data:
-  phoenix_data:

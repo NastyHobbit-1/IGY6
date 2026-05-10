@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     export_store_path: str = "/workspace/storage/exports"
     env_file_path: str = "/workspace/project/.env"
     env_backup_dir: str = "/workspace/storage/env_backups"
+    igy6_data_root: str = "../IGY6_Data"
 
 
 @lru_cache

@@ -499,6 +499,13 @@ const TERM_HELP: Record<string, TermHelpContent> = {
     purpose: "It gives IGY6 a local place for user-exportable outputs.",
     warning: "Export behavior is still limited to current report/artifact workflows."
   },
+  IGY6_DATA_ROOT: {
+    title: "IGY6_DATA_ROOT",
+    explanation: "IGY6_DATA_ROOT is the host-side folder where IGY6 stores database, vector, graph, artifact, report, backup, MLflow, and Phoenix runtime data.",
+    manage: "Edit it in Settings and verify dry-run before saving. Windows absolute paths should use forward slashes, such as D:/Projects/IGY6_Data.",
+    purpose: "It keeps private runtime data portable and outside the code repository while containers still use /workspace/storage.",
+    warning: "Changing it requires Docker stack restart/recreate and does not migrate existing data."
+  },
   ENV_FILE_PATH: {
     title: "ENV_FILE_PATH",
     explanation: "ENV_FILE_PATH is the controlled container path to the mounted local .env file.",
@@ -638,6 +645,7 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
   const settingHelpTerms: Record<string, keyof typeof TERM_HELP> = {
     ENV_FILE_PATH: "ENV_FILE_PATH",
     ENV_BACKUP_DIR: "ENV_BACKUP_DIR",
+    IGY6_DATA_ROOT: "IGY6_DATA_ROOT",
     QDRANT_CHUNK_VECTOR_SIZE: "QDRANT_CHUNK_VECTOR_SIZE",
     EXTERNAL_MODEL_POLICY_DEFAULT: "EXTERNAL_MODEL_POLICY_DEFAULT",
     APPROVAL_REQUIRED_DEFAULT: "APPROVAL_REQUIRED_DEFAULT",

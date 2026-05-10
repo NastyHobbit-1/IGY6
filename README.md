@@ -76,6 +76,83 @@ Default local endpoints:
 
 The Compose file binds published service ports to `127.0.0.1`.
 
+## Storage Model
+
+The repository is intended to hold code, configuration, and documentation.
+Runtime/private/persistent data lives in a separate data folder controlled by
+`IGY6_DATA_ROOT`.
+
+Default:
+
+```text
+IGY6_DATA_ROOT=../IGY6_Data
+```
+
+Docker Compose bind-mounts `IGY6_DATA_ROOT` into the API, worker, and beat
+containers as `/workspace/storage`, so the app can keep using stable container
+paths:
+
+```text
+ARTIFACT_STORE_PATH=/workspace/storage/artifacts
+EXPORT_STORE_PATH=/workspace/storage/exports
+ENV_BACKUP_DIR=/workspace/storage/env_backups
+ENV_FILE_PATH=/workspace/project/.env
+```
+
+Persistent service data is also stored under `IGY6_DATA_ROOT`. IGY6 no longer
+uses Docker named volumes for app persistent data.
+
+Expected data folder contents:
+
+```text
+IGY6_Data/
+  artifacts/
+  exports/
+  env_backups/
+  postgres/
+  qdrant/
+  neo4j/
+    data/
+    logs/
+  mlflow/
+  phoenix/
+```
+
+Recommended Windows layout:
+
+```text
+D:/Projects/IGY6
+D:/Projects/IGY6_Data
+```
+
+`.env` example:
+
+```text
+IGY6_DATA_ROOT=D:/Projects/IGY6_Data
+```
+
+Use forward slashes in `.env` paths on Windows. Do not use backslash paths.
+
+Backup and move rules:
+
+- Stop the Docker stack before copying, moving, zipping, syncing, or backing up
+  runtime data.
+- Copy both the repo folder and the `IGY6_DATA_ROOT` folder when moving IGY6 to
+  another machine or drive.
+- Do not put the live data folder inside OneDrive, iCloud, Dropbox, Google
+  Drive, or another sync tool.
+- Do not commit runtime data.
+
+Existing users:
+
+- Before DIFF-079, data may have lived in Docker named volumes.
+- This change does not migrate old named-volume data automatically.
+- Starting with a fresh `IGY6_DATA_ROOT` can look like a fresh system.
+- If old named-volume data needs migration, do it in a separate manual
+  procedure or future DIFF.
+- Do not delete old Docker named volumes until you confirm the data is no
+  longer needed.
+
 ## Run Locally
 
 Prerequisites:
@@ -97,10 +174,28 @@ cd IGY6
 cp .env.example .env
 ```
 
-3. Review `.env`.
+3. Review `.env` and choose the data root.
 
 The checked-in example uses local-only placeholder values such as
 `change-me-local-only`. Keep secrets local and do not commit `.env`.
+
+For the default sibling data folder:
+
+```bash
+mkdir -p ../IGY6_Data
+```
+
+PowerShell equivalent:
+
+```powershell
+New-Item -ItemType Directory -Force -Path ..\IGY6_Data
+```
+
+On Windows, an absolute `.env` value should use forward slashes:
+
+```text
+IGY6_DATA_ROOT=D:/Projects/IGY6_Data
+```
 
 The settings editor expects the API container to see the project `.env` at
 `ENV_FILE_PATH=/workspace/project/.env` and to place backups under
@@ -112,6 +207,10 @@ defined in `.env.example` and mounted by Docker Compose.
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 ```
+
+Relative `IGY6_DATA_ROOT` values are resolved by Docker Compose from the
+Compose file location. Use an absolute forward-slash path when you want a
+specific folder outside the repository, especially on Windows.
 
 5. Open the web UI.
 
@@ -439,9 +538,10 @@ have bubbles because they are already clear in context.
 
 Exact technical keys remain visible where needed, especially in Settings. For
 example, `ENV_FILE_PATH`, `ENV_BACKUP_DIR`,
-`QDRANT_CHUNK_VECTOR_SIZE`, `EXTERNAL_MODEL_POLICY_DEFAULT`, and
-`APPROVAL_REQUIRED_DEFAULT` keep their exact names while explaining what they
-control and what restart or safety limits apply.
+`IGY6_DATA_ROOT`, `QDRANT_CHUNK_VECTOR_SIZE`,
+`EXTERNAL_MODEL_POLICY_DEFAULT`, and `APPROVAL_REQUIRED_DEFAULT` keep their
+exact names while explaining what they control and what restart or safety
+limits apply.
 
 ## Settings Page
 
@@ -469,6 +569,9 @@ Dry-run validates:
 
 - Unknown keys are not editable. Existing unknown `.env` keys are shown as
   read-only unmanaged keys and preserved.
+- `IGY6_DATA_ROOT` is not empty, is not a filesystem or drive root, does not use
+  Windows backslashes, and does not contain traversal except the default
+  `../IGY6_Data`.
 - Required allowlisted keys are present.
 - Ports are valid integers from `1` to `65535`.
 - Boolean values parse for `SINGLE_USER_MODE` and
@@ -481,6 +584,9 @@ Dry-run validates:
 - External model policy and audit log level values are constrained.
 - Qdrant vector size is a positive integer, with a warning that changing it can
   require rebuilding vector storage.
+- Changing `IGY6_DATA_ROOT` warns that Docker stack restart/recreate is required,
+  existing data is not migrated, and the target folder must exist or be
+  creatable by Docker.
 - Docker Compose config validation is attempted from the API runtime only when
   Docker CLI and the Compose file are available. If unavailable, dry-run returns
   a warning instead of failing solely for that reason.
@@ -491,6 +597,7 @@ structurally valid. It does not guarantee every service will work after restart.
 Saved settings are written to `.env`; they are not applied to running
 containers. Restart or recreate the Docker stack before expecting changed values
 to take effect. No automatic restart or container recreate is implemented.
+Saving a new `IGY6_DATA_ROOT` does not move existing data.
 
 Backups are written to `ENV_BACKUP_DIR`. Automatic rollback is not implemented
 in this DIFF. Manual rollback is:
@@ -517,6 +624,7 @@ Use the actual backup path returned by the Settings save response.
 | No evidence answer is returned | There may be no ingested, chunked, and vector-upserted evidence yet, or matching evidence may belong to a disabled source. |
 | Settings dry-run passes but services fail after restart | Dry-run validates structure, not live service availability. Review the changed keys and Docker logs after restart. |
 | Settings save fails because `.env` is not writable | Confirm Docker Compose mounted the repository at `/workspace/project` and that the local `.env` file exists and is writable. |
+| Fresh system after changing storage | `IGY6_DATA_ROOT` may point at an empty data folder. This DIFF does not migrate old Docker named-volume data automatically. |
 | `npm --prefix apps/web run lint` is unavailable | The web package currently defines `dev`, `build`, and `start`, but no `lint` script. Use `npm --prefix apps/web run build` for web build verification. |
 
 ## Verification
