@@ -150,6 +150,12 @@ def _merge_evidence_relationships(
     return relationship_count
 
 
+def chunk_evidence_relationship_parameters(evidence_item: EvidenceItem) -> dict[str, str] | None:
+    if evidence_item.chunk_id is None:
+        return None
+    return {"chunk_id": evidence_item.chunk_id, "evidence_id": evidence_item.id}
+
+
 def sync_graph_lineage(db: Session, settings: Settings) -> GraphLineageSyncResult:
     sources = list(db.scalars(select(Source)).all())
     artifacts = list(db.scalars(select(RawArtifact)).all())
@@ -231,6 +237,18 @@ def sync_graph_lineage(db: Session, settings: Settings) -> GraphLineageSyncResul
                         MERGE (document)-[:DOCUMENT_HAS_EVIDENCE]->(evidence)
                         """,
                         {"document_id": evidence_item.document_id, "evidence_id": evidence_item.id},
+                    )
+                    relationship_count += 1
+                chunk_evidence_parameters = chunk_evidence_relationship_parameters(evidence_item)
+                if chunk_evidence_parameters is not None:
+                    _run_write(
+                        driver,
+                        """
+                        MATCH (chunk:Chunk {id: $chunk_id})
+                        MATCH (evidence:EvidenceItem {id: $evidence_id})
+                        MERGE (chunk)-[:CHUNK_HAS_EVIDENCE]->(evidence)
+                        """,
+                        chunk_evidence_parameters,
                     )
                     relationship_count += 1
 
@@ -321,17 +339,6 @@ def sync_graph_lineage(db: Session, settings: Settings) -> GraphLineageSyncResul
                         MERGE (target)-[:{relationship_type}]->(outcome)
                         """,
                         {"target_id": outcome.target_id, "outcome_id": outcome.id},
-                    )
-                    relationship_count += 1
-                if evidence_item.chunk_id is not None:
-                    _run_write(
-                        driver,
-                        """
-                        MATCH (chunk:Chunk {id: $chunk_id})
-                        MATCH (evidence:EvidenceItem {id: $evidence_id})
-                        MERGE (chunk)-[:CHUNK_HAS_EVIDENCE]->(evidence)
-                        """,
-                        {"chunk_id": evidence_item.chunk_id, "evidence_id": evidence_item.id},
                     )
                     relationship_count += 1
     except Exception as exc:

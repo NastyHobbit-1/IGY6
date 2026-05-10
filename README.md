@@ -18,12 +18,19 @@ production self-improvement execution, or system-changing actions.
 - API: FastAPI, bound to `127.0.0.1:8000`
 - Worker: Celery worker
 - Beat: Celery Beat scheduler
+- Web UI action console: source setup, approvals, dry-runs, manual uploads,
+  work dispatch, evidence answers, review actions, pattern detection, and
+  report rendering through FastAPI only
 - PostgreSQL: state, audit, foundational control tables
 - Redis: Celery broker/result backend
 - Qdrant: vector memory service for deterministic chunk embeddings
 - Neo4j: graph memory service for deterministic lineage relationships
 - MLflow: experiment tracking service reserved for controlled experiments
 - Phoenix: observability service reserved for trace review
+
+The worker and beat services receive database, artifact store, and Qdrant
+settings from the same `.env` file as the API, including the chunk collection
+name and vector size used by deterministic local embeddings.
 
 ## Run Locally
 

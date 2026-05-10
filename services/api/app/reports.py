@@ -7,8 +7,25 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.artifact_store import ArtifactStoreError, store_artifact_bytes
+from app.config import get_settings
 from app.db import get_db
-from app.models import AuditEvent, Report, WorkItem
+from app.models import (
+    Approval,
+    AuditEvent,
+    CollectionRun,
+    EvidenceItem,
+    ExperimentRun,
+    FeedbackEvent,
+    ImprovementItem,
+    Outcome,
+    Pattern,
+    RawArtifact,
+    Recommendation,
+    Report,
+    Source,
+    WorkItem,
+)
 from app.work_items import WorkItemRead
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -85,6 +102,11 @@ class ReportWorkItemCreate(BaseModel):
     notes: str | None = None
 
 
+class ReportRenderRequest(BaseModel):
+    actor_id: str = "local-owner"
+    notes: str | None = None
+
+
 def _audit_report_created(db: Session, report: Report) -> None:
     db.add(
         AuditEvent(
@@ -146,6 +168,103 @@ def _audit_report_work_item_created(db: Session, work_item: WorkItem, report: Re
             },
         )
     )
+
+
+def _audit_report_rendered(
+    db: Session,
+    *,
+    actor_id: str,
+    report: Report,
+    artifact: RawArtifact,
+    content_already_existed: bool,
+) -> None:
+    db.add(
+        AuditEvent(
+            actor_id=actor_id,
+            event_type="report.rendered",
+            decision="ready",
+            resource_type="report",
+            resource_id=report.id,
+            correlation_id=artifact.id,
+            details_json={
+                "artifact_id": artifact.id,
+                "artifact_path": artifact.storage_path,
+                "content_hash": artifact.content_hash,
+                "content_already_existed": content_already_existed,
+            },
+        )
+    )
+
+
+def _latest_titles(records: list[Any], label: str, field_name: str) -> list[str]:
+    lines: list[str] = []
+    for record in records[:5]:
+        value = getattr(record, field_name)
+        status_value = getattr(record, "status", None)
+        suffix = f" [{status_value}]" if status_value is not None else ""
+        lines.append(f"- {label}: {value}{suffix}")
+    return lines
+
+
+def build_report_markdown(report: Report, counts: dict[str, int], sections: list[str], notes: str | None) -> str:
+    lines = [
+        f"# {report.title}",
+        "",
+        f"- Report ID: `{report.id}`",
+        f"- Report type: `{report.report_type}`",
+        f"- Requested by: `{report.requested_by_actor_id}`",
+        f"- Status before render: `{report.status}`",
+        "",
+        "## Inventory Counts",
+        "",
+    ]
+    for key in sorted(counts):
+        lines.append(f"- {key}: {counts[key]}")
+    lines.extend(["", "## Recent Records", ""])
+    lines.extend(sections or ["- No recent records available."])
+    lines.extend(
+        [
+            "",
+            "## Boundaries",
+            "",
+            "- This report is generated from local metadata records only.",
+            "- It does not read raw artifact contents.",
+            "- It does not call external models or execute actions.",
+        ]
+    )
+    if notes:
+        lines.extend(["", "## Notes", "", notes])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_report_content(db: Session, report: Report, notes: str | None) -> str:
+    sources = list(db.scalars(select(Source).order_by(Source.created_at.desc()).limit(5)).all())
+    evidence = list(db.scalars(select(EvidenceItem).order_by(EvidenceItem.created_at.desc()).limit(5)).all())
+    patterns = list(db.scalars(select(Pattern).order_by(Pattern.created_at.desc()).limit(5)).all())
+    recommendations = list(db.scalars(select(Recommendation).order_by(Recommendation.created_at.desc()).limit(5)).all())
+
+    counts = {
+        "approvals": len(list(db.scalars(select(Approval.id)).all())),
+        "artifacts": len(list(db.scalars(select(RawArtifact.id)).all())),
+        "collection_runs": len(list(db.scalars(select(CollectionRun.id)).all())),
+        "evidence_items": len(list(db.scalars(select(EvidenceItem.id)).all())),
+        "experiments": len(list(db.scalars(select(ExperimentRun.id)).all())),
+        "feedback_events": len(list(db.scalars(select(FeedbackEvent.id)).all())),
+        "improvement_items": len(list(db.scalars(select(ImprovementItem.id)).all())),
+        "outcomes": len(list(db.scalars(select(Outcome.id)).all())),
+        "patterns": len(list(db.scalars(select(Pattern.id)).all())),
+        "recommendations": len(list(db.scalars(select(Recommendation.id)).all())),
+        "sources": len(list(db.scalars(select(Source.id)).all())),
+        "work_items": len(list(db.scalars(select(WorkItem.id)).all())),
+    }
+    sections = [
+        *_latest_titles(sources, "source", "name"),
+        *_latest_titles(evidence, "evidence", "statement"),
+        *_latest_titles(patterns, "pattern", "summary"),
+        *_latest_titles(recommendations, "recommendation", "recommendation_text"),
+    ]
+    return build_report_markdown(report, counts, sections, notes)
 
 
 @router.get("", response_model=list[ReportRead])
@@ -229,6 +348,58 @@ def create_report_work_item(
     db.commit()
     db.refresh(work_item)
     return work_item
+
+
+@router.post("/{report_id}/render", response_model=ReportRead)
+def render_report(
+    report_id: str,
+    payload: ReportRenderRequest,
+    db: Session = Depends(get_db),
+) -> Report:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    content = _build_report_content(db, report, payload.notes).encode("utf-8")
+    try:
+        stored = store_artifact_bytes(content, get_settings().artifact_store_path)
+    except ArtifactStoreError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    artifact = RawArtifact(
+        id=str(uuid4()),
+        source_id=None,
+        collection_run_id=None,
+        content_hash=stored.content_hash,
+        storage_path=stored.storage_path,
+        mime_type="text/markdown",
+        size_bytes=stored.size_bytes,
+        metadata_json={
+            "generated_by": "DIFF-067",
+            "artifact_kind": "report",
+            "report_id": report.id,
+            "report_type": report.report_type,
+            "filename": f"{report.id}.md",
+        },
+    )
+    db.add(artifact)
+    report.status = "ready"
+    report.artifact_path = stored.storage_path
+    report.metadata_json = {
+        **(report.metadata_json or {}),
+        "rendered_artifact_id": artifact.id,
+        "rendered_mime_type": "text/markdown",
+    }
+    _audit_report_rendered(
+        db,
+        actor_id=payload.actor_id,
+        report=report,
+        artifact=artifact,
+        content_already_existed=stored.existed,
+    )
+    db.commit()
+    db.refresh(report)
+    return report
 
 
 @router.get("/{report_id}", response_model=ReportRead)

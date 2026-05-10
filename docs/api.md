@@ -21,6 +21,7 @@ GET /sources/{source_id}/permissions
 POST /sources/{source_id}/permissions
 GET /work-items
 POST /work-items
+POST /work-items/{work_item_id}/dispatch
 POST /work-items/{work_item_id}/status
 GET /work-items/{work_item_id}
 GET /approvals
@@ -47,10 +48,12 @@ GET /reports
 POST /reports
 POST /reports/{report_id}/status
 POST /reports/{report_id}/work-item
+POST /reports/{report_id}/render
 GET /reports/{report_id}
 GET /analysis/patterns
 POST /analysis/patterns
 POST /analysis/patterns/{pattern_id}/review
+POST /analysis/patterns/detect-baseline
 GET /analysis/patterns/{pattern_id}
 GET /analysis/hypotheses
 POST /analysis/hypotheses
@@ -79,6 +82,7 @@ POST /memory/vector/chunks/search
 POST /retrieval/chunks/search
 GET /retrieval/chunks/{chunk_id}/trail
 POST /chat/retrieval-preview
+POST /chat/evidence-answer
 GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
@@ -113,6 +117,13 @@ execute worker jobs.
 within the local allowlist and records an audit event with previous and new
 status. It does not dispatch workers or execute queued work.
 
+`POST /work-items/{work_item_id}/dispatch` sends a queued, allowlisted work
+item to an existing Celery task and records dispatch metadata plus an audit
+event. Supported work types are `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`. The route does not create new
+work items, bypass worker validation, approve work, or execute unsupported task
+types.
+
 Approval endpoints record approval requests and decisions with audit events.
 Approval decisions do not execute work or trigger worker jobs.
 
@@ -133,10 +144,11 @@ events. Source-target feedback labels `trusted`, `noisy`, and `rejected` also
 update the target source: `trusted` sets source `trust_level` to `trusted`,
 `noisy` sets source `trust_level` to `noisy`, and `rejected` sets source
 `trust_level` to `rejected` and disables the source. These source trust side
-effects require the source to exist and emit a source audit event. Other
-feedback labels and non-source targets remain record-only. Feedback creation
+effects require the source to exist and emit a source audit event. Weak
+non-source feedback labels `not_useful`, `wrong`, `incomplete`, and `rejected`
+create proposed improvement items and audit that proposal. Feedback creation
 does not trigger outcome evaluation, ranking changes, graph or vector updates,
-worker jobs, or self-improvement jobs.
+worker jobs, experiment execution, or production method changes.
 
 Outcome endpoints record what happened after a prediction, recommendation, work
 item, hypothesis, pattern, or report. `POST /outcomes` validates that
@@ -145,8 +157,10 @@ before inserting the outcome. Optional `evidence_ids` must reference existing
 immutable evidence items; duplicate IDs are deduplicated in first-seen order.
 Validation failures return `422` and do not create an outcome or audit event.
 Outcome creation emits an audit event but does not update
-prediction/recommendation status, mutate the target record, create feedback,
-update graph or vector memory, enqueue workers, or start self-improvement.
+graph or vector memory, enqueue workers, or start self-improvement. For target
+records that expose review status and metadata, outcome creation updates the
+target's status and latest-outcome metadata, and audits that local review-state
+change.
 
 Report endpoints record report metadata and emit audit events. They do not
 render reports, write artifacts, or create exports.
@@ -160,6 +174,13 @@ work item marker for an existing report and records an audit event. The work
 item payload is marked scaffold-only and non-executing. The route does not
 render report content, write artifacts, create exports, dispatch workers, or
 call Celery.
+
+`POST /reports/{report_id}/render` creates a deterministic Markdown report from
+existing local metadata records, stores it in the content-addressed artifact
+store, records raw artifact metadata, marks the report `ready`, attaches the
+artifact path, and writes an audit event. It does not read raw artifact
+contents, call external models, use template engines, dispatch workers, or
+execute actions.
 
 Analysis endpoints support explicit record entry and inspection for patterns,
 hypotheses, predictions, and recommendations. Create routes are human/API entry
@@ -178,6 +199,13 @@ reviewed. Review returns the updated pattern and writes an audit event with the
 previous status, new status, reviewer actor, and review note. It does not
 update outcomes, feedback, graph records, vector records, worker queues, or
 self-improvement state.
+
+Baseline pattern detection at `POST /analysis/patterns/detect-baseline` creates
+candidate patterns from existing local evidence using deterministic rules for
+recurrence, repeated statements across multiple sources, and missing evidence.
+It avoids duplicate detector keys and audits created candidates. It does not
+call external models, run advanced ML, write graph/vector memory, generate
+predictions or recommendations, dispatch workers, or change reviewed patterns.
 
 Hypothesis creation accepts `hypothesis_text`, `supporting_evidence_ids`,
 optional `status`, optional `missing_evidence_json`, optional `confidence`,
@@ -213,8 +241,9 @@ dispatch Celery jobs from the API, or execute worker jobs.
 
 The `POST /collection-runs/dry-run` route runs connector-backed dry-run
 validation for a source and permission pair, then records the preview result.
-The route rejects disabled sources and permissions that do not allow dry-run or
-read preview. It does not execute collection, read source content, write
+The route rejects disabled sources and permissions that do not explicitly allow
+dry-run or read preview. Empty operation lists are not permissive. It does not
+execute collection, read source content, write
 artifacts, normalize records, or queue work.
 
 The `POST /collection-runs/manual-upload` route accepts base64 content for a
@@ -223,7 +252,11 @@ artifact store, creates a completed collection-run record, records raw artifact
 metadata, records a queued `collection_normalization` work item with the raw
 artifact ID, and emits audit events. It does not normalize content, generate
 chunks/evidence, dispatch Celery work from the API, or execute worker jobs. The
-collection summary exposes `normalization_work_item_id`.
+collection summary exposes `normalization_work_item_id`. The route requires
+the source permission to explicitly allow collection or read. When the
+permission has `approval_required: true`, the request must include an approved
+approval ID whose optional payload metadata matches the source, permission, and
+`manual_upload_collection` operation.
 
 The `POST /collection-runs/local-project` route reads only files covered by
 explicit `scope_json.paths` for a registered `local_project` source. It rejects
@@ -233,24 +266,30 @@ artifact store, records raw artifact metadata, records a queued
 `collection_normalization` work item with collected raw artifact IDs, and emits
 audit events. It does not normalize content, generate chunks/evidence, dispatch
 Celery work from the API, or execute worker jobs. The collection summary
-exposes `normalization_work_item_id`.
+exposes `normalization_work_item_id`. The route requires the source permission
+to explicitly allow collection or read. When the permission has
+`approval_required: true`, the request must include an approved approval ID
+whose optional payload metadata matches the source, permission, and
+`local_project_collection` operation.
 
 The worker exposes `collection.normalize_collection_run` for queued
 `collection_normalization` work items. It validates the work item, collection
 run, and raw artifact IDs, reads only referenced artifact bytes, decodes UTF-8
 text, creates normalized document rows, skips already-normalized raw artifacts,
-updates work item state, and emits completion or failure audit events. It does
-not create chunks/evidence, upsert vector or graph memory, generate reports,
-call external models, or trigger self-improvement.
+updates work item state, creates a queued `document_chunking` work item when
+new documents were created, and emits completion or failure audit events. It
+does not dispatch the chained work item automatically, upsert vector or graph
+memory, generate reports, call external models, or trigger self-improvement.
 
 The worker also exposes `evidence.generate_document_chunks` for existing
 normalized documents. It deterministically splits document text into fixed-size
 chunks, creates one evidence item per chunk, skips already-chunked documents,
-optionally updates a supplied `document_chunking` work item, and emits
+optionally updates a supplied `document_chunking` work item, creates a queued
+`chunk_vector_upsert` work item when new chunks were created, and emits
 completion or failure audit events. This worker task is manually invokable or
-queue-targeted only; the API does not dispatch it automatically. It does not
-embed chunks, write Qdrant or Neo4j records, call external models, generate
-reports, or trigger self-improvement.
+queue-targeted only; the API dispatch bridge can dispatch the queued work item
+when requested. It does not embed chunks itself, write Qdrant or Neo4j records,
+call external models, generate reports, or trigger self-improvement.
 
 The worker exposes `memory.vector.upsert_chunks` for worker-backed chunk vector
 upserts. It selects chunks whose `embedding_status` is not `completed`, embeds
@@ -260,6 +299,11 @@ chunk/document metadata, marks successfully upserted chunks completed, and
 emits completion or failure audit events. It does not call external embedding
 models, perform semantic search, update Neo4j, plan retrieval, generate chat
 answers, dispatch itself from the API, or trigger self-improvement.
+
+Docker Compose passes worker runtime settings explicitly, including
+`DATABASE_URL`, `ARTIFACT_STORE_PATH`, `QDRANT_URL`,
+`QDRANT_CHUNK_COLLECTION`, and `QDRANT_CHUNK_VECTOR_SIZE`, so worker execution
+uses the same local service configuration declared in the environment file.
 
 Vector memory endpoints inspect and create the configured Qdrant chunk
 collection, upsert existing chunk text using the deterministic local embedding
@@ -302,12 +346,23 @@ Qdrant payloads. The route does not call models, generate answers, persist
 conversations, trigger actions, read artifact contents, traverse Neo4j, or
 write to PostgreSQL, Qdrant, Neo4j, or artifact storage.
 
+Chat evidence answer accepts a user `message` and optional bounded `limit`,
+then reuses hydrated semantic retrieval to return a deterministic answer packet
+with facts, assumptions, inferences, uncertainty, missing-information notes,
+source trails, and the underlying retrieval context. Every fact and inference
+carries evidence item or chunk citations. `POST /chat/evidence-answer` does not
+call external models, persist conversations, execute tools, trigger actions,
+read artifact contents, traverse Neo4j, or write to PostgreSQL, Qdrant, Neo4j,
+or artifact storage.
+
 Graph memory endpoints inspect and create Neo4j uniqueness constraints for
 source, artifact, document, chunk, evidence, claim, analysis, outcome, and
 report nodes. They do not infer relationships, generate patterns, or call
 models. The lineage sync route upserts deterministic provenance, evidence
 support, and outcome relationships already present in PostgreSQL. Relationship
 inspection is read-only and bounded to deterministic graph node labels.
+Chunk-evidence lineage is derived directly from each evidence item's stored
+`chunk_id`.
 
 Improvement endpoints create and inspect self-improvement queue items for
 parsing, retrieval, scoring, prediction, reporting, reasoning, and safety

@@ -100,6 +100,8 @@ services:
       APP_PORT: ${APP_PORT}
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       QDRANT_URL: ${QDRANT_URL}
       NEO4J_URI: ${NEO4J_URI}
       NEO4J_USER: ${NEO4J_USER}
@@ -136,6 +138,11 @@ services:
     environment:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      DATABASE_URL: ${DATABASE_URL}
+      ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_CHUNK_COLLECTION: ${QDRANT_CHUNK_COLLECTION}
+      QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE}
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
     depends_on:
       redis:
@@ -151,6 +158,11 @@ services:
     environment:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      DATABASE_URL: ${DATABASE_URL}
+      ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_CHUNK_COLLECTION: ${QDRANT_CHUNK_COLLECTION}
+      QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE}
     command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO"]
     depends_on:
       redis:

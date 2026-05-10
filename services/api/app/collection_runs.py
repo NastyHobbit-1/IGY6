@@ -14,9 +14,15 @@ from app.collector_dry_run import DryRunResult, run_connector_dry_run
 from app.config import get_settings
 from app.db import get_db
 from app.local_project_collection import LocalProjectCollectionError, collect_local_project_files
-from app.models import AuditEvent, CollectionRun, RawArtifact, Source, SourcePermission, WorkItem
+from app.models import Approval, AuditEvent, CollectionRun, RawArtifact, Source, SourcePermission, WorkItem
 
 router = APIRouter(prefix="/collection-runs", tags=["collection-runs"])
+
+COLLECTION_APPROVAL_REQUEST_TYPES = {
+    "source_collection",
+    "manual_upload_collection",
+    "local_project_collection",
+}
 
 
 class CollectionRunCreate(BaseModel):
@@ -36,6 +42,7 @@ class CollectionDryRunPreviewCreate(BaseModel):
 class ManualUploadCollectionCreate(BaseModel):
     source_id: str
     source_permission_id: str
+    approval_id: str | None = None
     content_base64: str
     filename: str | None = None
     mime_type: str | None = None
@@ -46,6 +53,7 @@ class ManualUploadCollectionCreate(BaseModel):
 class LocalProjectCollectionCreate(BaseModel):
     source_id: str
     source_permission_id: str
+    approval_id: str | None = None
     requested_by_actor_id: str = "local-owner"
 
 
@@ -189,6 +197,54 @@ def _decode_content_base64(content_base64: str) -> bytes:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid base64 content") from exc
 
 
+def _require_permission_operation(permission: SourcePermission, allowed: set[str], action_label: str) -> None:
+    if not set(permission.allowed_operations).intersection(allowed):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Source permission does not allow {action_label}",
+        )
+
+
+def _require_collection_approval(
+    db: Session,
+    *,
+    approval_id: str | None,
+    source: Source,
+    permission: SourcePermission,
+    operation: str,
+) -> Approval | None:
+    if not permission.approval_required:
+        return None
+    if approval_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Collection requires an approved approval record",
+        )
+
+    approval = db.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    if approval.status != "approved":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approval is not approved")
+    if approval.request_type not in COLLECTION_APPROVAL_REQUEST_TYPES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval is not for source collection")
+
+    payload = approval.request_payload_json or {}
+    expected_values = {
+        "source_id": source.id,
+        "source_permission_id": permission.id,
+        "operation": operation,
+    }
+    for key, expected_value in expected_values.items():
+        actual_value = payload.get(key)
+        if actual_value is not None and actual_value != expected_value:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Approval {key} does not match requested collection",
+            )
+    return approval
+
+
 def _build_dry_run_summary(
     source: Source,
     permission: SourcePermission,
@@ -310,11 +366,7 @@ def create_collection_dry_run_preview(
             status_code=status.HTTP_409_CONFLICT,
             detail="Source permission does not belong to the source",
         )
-    if permission.allowed_operations and not {"dry_run", "read"}.intersection(permission.allowed_operations):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Source permission does not allow dry-run preview",
-        )
+    _require_permission_operation(permission, {"dry_run", "read"}, "dry-run preview")
 
     try:
         result = run_connector_dry_run(
@@ -373,11 +425,14 @@ def create_manual_upload_collection(
             status_code=status.HTTP_409_CONFLICT,
             detail="Source permission does not belong to the source",
         )
-    if permission.allowed_operations and not {"collect", "read"}.intersection(permission.allowed_operations):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Source permission does not allow manual upload collection",
-        )
+    _require_permission_operation(permission, {"collect", "read"}, "manual upload collection")
+    approval = _require_collection_approval(
+        db,
+        approval_id=payload.approval_id,
+        source=source,
+        permission=permission,
+        operation="manual_upload_collection",
+    )
 
     content = _decode_content_base64(payload.content_base64)
     try:
@@ -401,6 +456,7 @@ def create_manual_upload_collection(
             "content_already_existed": stored.existed,
             "would_normalize": True,
             "would_enqueue_worker": False,
+            "approval_id": approval.id if approval else None,
         },
         error_message=None,
     )
@@ -416,6 +472,7 @@ def create_manual_upload_collection(
             **payload.metadata_json,
             "filename": payload.filename,
             "source_permission_id": permission.id,
+            "approval_id": approval.id if approval else None,
         },
     )
 
@@ -467,11 +524,14 @@ def create_local_project_collection(
             status_code=status.HTTP_409_CONFLICT,
             detail="Source permission does not belong to the source",
         )
-    if permission.allowed_operations and not {"collect", "read"}.intersection(permission.allowed_operations):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Source permission does not allow local project collection",
-        )
+    _require_permission_operation(permission, {"collect", "read"}, "local project collection")
+    approval = _require_collection_approval(
+        db,
+        approval_id=payload.approval_id,
+        source=source,
+        permission=permission,
+        operation="local_project_collection",
+    )
 
     try:
         result = collect_local_project_files(
@@ -496,6 +556,7 @@ def create_local_project_collection(
             "skipped_files": result.skipped_files,
             "would_normalize": True,
             "would_enqueue_worker": False,
+            "approval_id": approval.id if approval else None,
         },
         error_message=None,
     )
@@ -514,6 +575,7 @@ def create_local_project_collection(
             size_bytes=collected_file.artifact.size_bytes,
             metadata_json={
                 "source_permission_id": permission.id,
+                "approval_id": approval.id if approval else None,
                 "source_path": collected_file.source_path,
                 "relative_path": collected_file.relative_path,
                 "content_already_existed": collected_file.artifact.existed,

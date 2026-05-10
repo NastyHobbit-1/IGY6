@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
     )
     redis_url: str = "redis://redis:6379/0"
+    celery_broker_url: str = "redis://redis:6379/0"
+    celery_result_backend: str = "redis://redis:6379/1"
     qdrant_url: str = "http://qdrant:6333"
     qdrant_chunk_collection: str = "igy6_chunks"
     qdrant_chunk_vector_size: int = 384

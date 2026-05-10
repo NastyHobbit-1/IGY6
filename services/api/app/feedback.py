@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import AuditEvent, FeedbackEvent, Source
+from app.models import AuditEvent, FeedbackEvent, ImprovementItem, Source
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -40,6 +40,20 @@ SOURCE_TRUST_FEEDBACK = {
     "trusted": {"trust_level": "trusted", "enabled": True},
     "noisy": {"trust_level": "noisy", "enabled": True},
     "rejected": {"trust_level": "rejected", "enabled": False},
+}
+
+WEAK_FEEDBACK_LABELS = {"not_useful", "wrong", "incomplete", "rejected"}
+
+IMPROVEMENT_TARGET_AREAS = {
+    "document": "parsing",
+    "evidence_item": "retrieval",
+    "claim": "reasoning",
+    "pattern": "reasoning",
+    "hypothesis": "reasoning",
+    "prediction": "prediction",
+    "recommendation": "reasoning",
+    "report": "reporting",
+    "work_item": "safety",
 }
 
 
@@ -130,6 +144,51 @@ def _apply_source_trust_feedback(db: Session, feedback: FeedbackEvent) -> None:
     )
 
 
+def improvement_target_area(target_type: str) -> str:
+    return IMPROVEMENT_TARGET_AREAS.get(target_type, "reasoning")
+
+
+def _create_improvement_from_weak_feedback(db: Session, feedback: FeedbackEvent) -> None:
+    if feedback.label not in WEAK_FEEDBACK_LABELS or feedback.target_type == "source":
+        return
+
+    item = ImprovementItem(
+        id=str(uuid4()),
+        target_area=improvement_target_area(feedback.target_type),
+        status="proposed",
+        objective=(
+            f"Investigate {feedback.label} feedback for "
+            f"{feedback.target_type} {feedback.target_id}."
+        ),
+        proposed_by_actor_id=feedback.actor_id,
+        priority="normal",
+        metadata_json={
+            "generated_by": "DIFF-068",
+            "feedback_id": feedback.id,
+            "feedback_label": feedback.label,
+            "target_type": feedback.target_type,
+            "target_id": feedback.target_id,
+            "note": feedback.note,
+        },
+    )
+    db.add(item)
+    db.add(
+        AuditEvent(
+            actor_id=feedback.actor_id,
+            event_type="improvement_item.created",
+            decision="proposed",
+            resource_type="improvement_item",
+            resource_id=item.id,
+            correlation_id=feedback.id,
+            details_json={
+                "target_area": item.target_area,
+                "priority": item.priority,
+                "source_feedback_id": feedback.id,
+            },
+        )
+    )
+
+
 @router.get("", response_model=list[FeedbackRead])
 def list_feedback(db: Session = Depends(get_db)) -> list[FeedbackEvent]:
     statement = select(FeedbackEvent).order_by(FeedbackEvent.created_at.desc())
@@ -150,6 +209,7 @@ def create_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)) -> F
     db.add(feedback)
     _audit_feedback_created(db, feedback)
     _apply_source_trust_feedback(db, feedback)
+    _create_improvement_from_weak_feedback(db, feedback)
     db.commit()
     db.refresh(feedback)
     return feedback

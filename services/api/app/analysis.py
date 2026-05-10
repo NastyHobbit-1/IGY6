@@ -1,4 +1,5 @@
 from datetime import datetime
+from collections import defaultdict
 from typing import Any
 from uuid import uuid4
 
@@ -41,6 +42,11 @@ class PatternReview(BaseModel):
     status: str = Field(min_length=1, max_length=64)
     reviewed_by_actor_id: str = "local-owner"
     review_note: str | None = None
+
+
+class BaselinePatternDetectRequest(BaseModel):
+    actor_id: str = "local-owner"
+    recurrence_threshold: int = Field(default=3, ge=2, le=20)
 
 
 class HypothesisRead(BaseModel):
@@ -185,6 +191,73 @@ def _audit_pattern_reviewed(
     )
 
 
+def _normalize_statement(value: str) -> str:
+    return " ".join(value.lower().split())[:240]
+
+
+def baseline_pattern_candidates(
+    evidence_items: list[EvidenceItem],
+    *,
+    recurrence_threshold: int,
+) -> list[dict[str, Any]]:
+    if not evidence_items:
+        return [
+            {
+                "pattern_type": "missing_information_gap",
+                "summary": "No evidence items exist yet, so the system cannot detect grounded patterns.",
+                "evidence_ids": [],
+                "confidence": 100,
+                "detector_key": "missing_information_gap:no_evidence",
+            }
+        ]
+
+    candidates: list[dict[str, Any]] = []
+    by_type: dict[str, list[EvidenceItem]] = defaultdict(list)
+    by_statement: dict[str, list[EvidenceItem]] = defaultdict(list)
+    for item in evidence_items:
+        by_type[item.evidence_type].append(item)
+        by_statement[_normalize_statement(item.statement)].append(item)
+
+    for evidence_type, items in sorted(by_type.items()):
+        if len(items) >= recurrence_threshold:
+            candidates.append(
+                {
+                    "pattern_type": "recurrence",
+                    "summary": f"{len(items)} evidence items share evidence type `{evidence_type}`.",
+                    "evidence_ids": [item.id for item in items[:10]],
+                    "confidence": min(90, 50 + len(items) * 5),
+                    "detector_key": f"recurrence:evidence_type:{evidence_type}",
+                }
+            )
+
+    for normalized_statement, items in sorted(by_statement.items()):
+        source_ids = {item.source_id for item in items if item.source_id is not None}
+        if len(source_ids) >= 2:
+            candidates.append(
+                {
+                    "pattern_type": "cross_source_conflict",
+                    "summary": (
+                        "Multiple sources contain the same normalized evidence statement; "
+                        "review whether they agree, duplicate, or conflict."
+                    ),
+                    "evidence_ids": [item.id for item in items[:10]],
+                    "confidence": 60,
+                    "detector_key": f"cross_source_statement:{normalized_statement}",
+                }
+            )
+
+    return candidates
+
+
+def _existing_detector_keys(db: Session) -> set[str]:
+    rows = db.scalars(select(Pattern)).all()
+    return {
+        pattern.metadata_json.get("detector_key")
+        for pattern in rows
+        if isinstance(pattern.metadata_json, dict) and pattern.metadata_json.get("detector_key")
+    }
+
+
 @router.get("/patterns", response_model=list[PatternRead])
 def list_patterns(db: Session = Depends(get_db)) -> list[Pattern]:
     statement = select(Pattern).order_by(Pattern.created_at.desc())
@@ -248,6 +321,48 @@ def review_pattern(
     db.commit()
     db.refresh(pattern)
     return pattern
+
+
+@router.post("/patterns/detect-baseline", response_model=list[PatternRead], status_code=status.HTTP_201_CREATED)
+def detect_baseline_patterns(
+    payload: BaselinePatternDetectRequest,
+    db: Session = Depends(get_db),
+) -> list[Pattern]:
+    evidence_items = list(db.scalars(select(EvidenceItem).order_by(EvidenceItem.created_at.desc())).all())
+    existing_keys = _existing_detector_keys(db)
+    created_patterns: list[Pattern] = []
+    for candidate in baseline_pattern_candidates(evidence_items, recurrence_threshold=payload.recurrence_threshold):
+        detector_key = candidate["detector_key"]
+        if detector_key in existing_keys:
+            continue
+        pattern = Pattern(
+            id=str(uuid4()),
+            pattern_type=candidate["pattern_type"],
+            status="candidate",
+            summary=candidate["summary"],
+            evidence_ids=candidate["evidence_ids"],
+            confidence=candidate["confidence"],
+            metadata_json={
+                "generated_by": "DIFF-069",
+                "detector": "baseline_local_v1",
+                "detector_key": detector_key,
+            },
+        )
+        db.add(pattern)
+        _audit_analysis_created(
+            db,
+            actor_id=payload.actor_id,
+            resource_type="pattern",
+            resource_id=pattern.id,
+            evidence_ids=pattern.evidence_ids,
+        )
+        created_patterns.append(pattern)
+        existing_keys.add(detector_key)
+
+    db.commit()
+    for pattern in created_patterns:
+        db.refresh(pattern)
+    return created_patterns
 
 
 @router.get("/patterns/{pattern_id}", response_model=PatternRead)

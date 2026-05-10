@@ -336,6 +336,88 @@ h3 {
   margin-top: 14px;
 }
 
+.actionConsole {
+  margin-bottom: 28px;
+}
+
+.actionGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.actionBox {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #e1e6ed;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 14px;
+}
+
+.actionBox.wide {
+  grid-column: span 2;
+}
+
+.actionBox input,
+.actionBox select,
+.actionBox textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cfd7e3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 8px 10px;
+}
+
+.actionBox textarea {
+  resize: vertical;
+}
+
+.actionBox button {
+  min-height: 36px;
+  border: 1px solid #1f6feb;
+  border-radius: 6px;
+  background: #1f6feb;
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.checkLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #34495e;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.checkLine input {
+  width: auto;
+}
+
+.actionOutput {
+  min-height: 180px;
+  margin: 14px 0 0;
+  overflow: auto;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #17202a;
+  color: #f8fafc;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 760px) {
   .header {
     align-items: flex-start;
@@ -344,8 +426,13 @@ h3 {
 
   .metrics,
   .split,
-  .quad {
+  .quad,
+  .actionGrid {
     grid-template-columns: 1fr;
+  }
+
+  .actionBox.wide {
+    grid-column: span 1;
   }
 
   .item {

@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.analysis import router as analysis_router
 from app.collection_runs import router as collection_runs_router
@@ -27,6 +28,19 @@ app = FastAPI(
         "review, worker, improvement, and experiment metadata APIs. Answer generation, "
         "self-improvement execution, and production method changes are not implemented."
     ),
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["content-type"],
 )
 
 app.include_router(health_router)

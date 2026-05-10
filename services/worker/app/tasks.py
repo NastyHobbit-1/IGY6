@@ -239,6 +239,62 @@ def _audit(
     )
 
 
+def _chained_document_chunking_payload(document_ids: list[str], parent_work_item_id: str) -> dict[str, Any]:
+    return {
+        "document_ids": document_ids,
+        "chunk_size": 1000,
+        "parent_work_item_id": parent_work_item_id,
+        "worker_task_name": "evidence.generate_document_chunks",
+        "generated_by": "DIFF-066",
+    }
+
+
+def _chained_vector_upsert_payload(chunk_ids: list[str], parent_work_item_id: str | None) -> dict[str, Any]:
+    return {
+        "chunk_ids": chunk_ids,
+        "limit": max(len(chunk_ids), 1),
+        "parent_work_item_id": parent_work_item_id,
+        "worker_task_name": "memory.vector.upsert_chunks",
+        "generated_by": "DIFF-066",
+    }
+
+
+def _create_chained_work_item(
+    connection,
+    *,
+    actor_id: str,
+    work_type: str,
+    payload: dict[str, Any],
+    correlation_id: str,
+) -> str:
+    work_item_id = str(uuid4())
+    connection.execute(
+        insert(work_items).values(
+            id=work_item_id,
+            work_type=work_type,
+            status="queued",
+            requested_by_actor_id=actor_id,
+            payload_json=payload,
+            error_message=None,
+        )
+    )
+    _audit(
+        connection,
+        actor_id=actor_id,
+        event_type="work_item.created",
+        decision="queued",
+        resource_type="work_item",
+        resource_id=work_item_id,
+        correlation_id=correlation_id,
+        details={
+            "work_type": work_type,
+            "parent_work_item_id": payload.get("parent_work_item_id"),
+            "generated_by": "DIFF-066",
+        },
+    )
+    return work_item_id
+
+
 @celery_app.task(name="phase0.health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "worker", "phase": "0"}
@@ -269,6 +325,7 @@ def normalize_collection_run(
     engine = _engine()
     created_document_ids: list[str] = []
     skipped_raw_artifact_ids: list[str] = []
+    document_chunking_work_item_id: str | None = None
     actor_id = "worker"
 
     with engine.begin() as connection:
@@ -356,6 +413,14 @@ def normalize_collection_run(
                 .where(work_items.c.id == work_item_id)
                 .values(status="completed", error_message=None, updated_at=func.now())
             )
+            if created_document_ids:
+                document_chunking_work_item_id = _create_chained_work_item(
+                    connection,
+                    actor_id=actor_id,
+                    work_type="document_chunking",
+                    payload=_chained_document_chunking_payload(created_document_ids, work_item_id),
+                    correlation_id=work_item_id,
+                )
             _audit(
                 connection,
                 actor_id=actor_id,
@@ -368,6 +433,7 @@ def normalize_collection_run(
                     "collection_run_id": collection_run_id,
                     "created_document_ids": created_document_ids,
                     "skipped_raw_artifact_ids": skipped_raw_artifact_ids,
+                    "document_chunking_work_item_id": document_chunking_work_item_id,
                 },
             )
     except Exception as exc:
@@ -404,6 +470,7 @@ def normalize_collection_run(
         "collection_run_id": collection_run_id,
         "created_document_ids": created_document_ids,
         "skipped_raw_artifact_ids": skipped_raw_artifact_ids,
+        "document_chunking_work_item_id": document_chunking_work_item_id,
     }
 
 
@@ -421,6 +488,7 @@ def generate_document_chunks(
     created_chunk_ids: list[str] = []
     created_evidence_ids: list[str] = []
     skipped_document_ids: list[str] = []
+    chunk_vector_upsert_work_item_id: str | None = None
 
     if work_item_id is not None:
         with engine.begin() as connection:
@@ -516,6 +584,14 @@ def generate_document_chunks(
                     .where(work_items.c.id == work_item_id)
                     .values(status="completed", error_message=None, updated_at=func.now())
                 )
+            if created_chunk_ids:
+                chunk_vector_upsert_work_item_id = _create_chained_work_item(
+                    connection,
+                    actor_id=actor_id,
+                    work_type="chunk_vector_upsert",
+                    payload=_chained_vector_upsert_payload(created_chunk_ids, work_item_id),
+                    correlation_id=work_item_id or document_ids[0],
+                )
             _audit(
                 connection,
                 actor_id=actor_id,
@@ -529,6 +605,7 @@ def generate_document_chunks(
                     "chunk_count": len(created_chunk_ids),
                     "evidence_count": len(created_evidence_ids),
                     "skipped_document_ids": skipped_document_ids,
+                    "chunk_vector_upsert_work_item_id": chunk_vector_upsert_work_item_id,
                 },
             )
     except Exception as exc:
@@ -566,6 +643,7 @@ def generate_document_chunks(
         "created_chunk_ids": created_chunk_ids,
         "created_evidence_ids": created_evidence_ids,
         "skipped_document_ids": skipped_document_ids,
+        "chunk_vector_upsert_work_item_id": chunk_vector_upsert_work_item_id,
     }
 
 
@@ -577,6 +655,7 @@ def upsert_chunk_vectors(limit: int = 100, work_item_id: str | None = None) -> d
     engine = _engine()
     actor_id = "worker"
     settings = get_settings()
+    requested_chunk_ids: list[str] | None = None
 
     if work_item_id is not None:
         with engine.begin() as connection:
@@ -587,6 +666,9 @@ def upsert_chunk_vectors(limit: int = 100, work_item_id: str | None = None) -> d
                 raise RuntimeError("Work item not found")
             if work_item["work_type"] != "chunk_vector_upsert":
                 raise RuntimeError("Work item is not a chunk_vector_upsert item")
+            payload = work_item["payload_json"] or {}
+            if isinstance(payload.get("chunk_ids"), list):
+                requested_chunk_ids = list(payload["chunk_ids"])
             actor_id = work_item["requested_by_actor_id"]
             connection.execute(
                 update(work_items)
@@ -596,12 +678,10 @@ def upsert_chunk_vectors(limit: int = 100, work_item_id: str | None = None) -> d
 
     try:
         with engine.begin() as connection:
-            rows = connection.execute(
-                select(chunks)
-                .where(chunks.c.embedding_status != "completed")
-                .order_by(chunks.c.id.asc())
-                .limit(limit)
-            ).mappings().all()
+            statement = select(chunks).where(chunks.c.embedding_status != "completed").order_by(chunks.c.id.asc())
+            if requested_chunk_ids is not None:
+                statement = statement.where(chunks.c.id.in_(requested_chunk_ids))
+            rows = connection.execute(statement.limit(limit)).mappings().all()
             selected_chunks = [dict(row) for row in rows]
 
         points: list[dict[str, Any]] = []

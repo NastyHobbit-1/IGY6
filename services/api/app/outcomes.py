@@ -121,6 +121,50 @@ def _validate_target_exists(db: Session, target_type: str, target_id: str) -> No
         )
 
 
+def outcome_target_status(outcome_status: str) -> str:
+    if outcome_status in {"correct", "useful", "confirmed"}:
+        return outcome_status
+    if outcome_status in {"wrong", "not_useful", "disconfirmed"}:
+        return outcome_status
+    if outcome_status in {"partial", "inconclusive"}:
+        return outcome_status
+    return "reviewed"
+
+
+def _apply_outcome_to_target(db: Session, outcome: Outcome) -> None:
+    target_model = TARGET_MODELS[outcome.target_type]
+    target = db.get(target_model, outcome.target_id)
+    if target is None:
+        return
+
+    previous_status = getattr(target, "status", None)
+    new_status = outcome_target_status(outcome.outcome_status)
+    if hasattr(target, "status"):
+        target.status = new_status
+    if hasattr(target, "metadata_json"):
+        target.metadata_json = {
+            **(target.metadata_json or {}),
+            "latest_outcome_id": outcome.id,
+            "latest_outcome_status": outcome.outcome_status,
+        }
+
+    db.add(
+        AuditEvent(
+            actor_id="local-owner",
+            event_type="outcome.target_updated",
+            decision=new_status,
+            resource_type=outcome.target_type,
+            resource_id=outcome.target_id,
+            correlation_id=outcome.id,
+            details_json={
+                "previous_status": previous_status,
+                "new_status": getattr(target, "status", previous_status),
+                "outcome_status": outcome.outcome_status,
+            },
+        )
+    )
+
+
 def _validated_evidence_ids(db: Session, evidence_ids: list[str]) -> list[str]:
     unique_ids = list(dict.fromkeys(evidence_ids))
     if not unique_ids:
@@ -162,6 +206,7 @@ def create_outcome(payload: OutcomeCreate, db: Session = Depends(get_db)) -> Out
     )
     db.add(outcome)
     _audit_outcome_created(db, outcome)
+    _apply_outcome_to_target(db, outcome)
     db.commit()
     db.refresh(outcome)
     return outcome
