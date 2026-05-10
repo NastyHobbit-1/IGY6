@@ -1,91 +1,441 @@
 # IGY6
 
-Local-first foundation for the Adaptive Intelligence System.
+IGY6 is a local-first adaptive intelligence foundation for collecting authorized
+information, preserving evidence, and reviewing what the system knows through
+auditable local workflows.
 
-This repository is intentionally local-first. The current foundation includes
-the monorepo structure, Docker Compose wiring, health checks, PostgreSQL state
-and audit tables, source and approval metadata, artifact and collection
-metadata, evidence records, deterministic chunking, local deterministic
-embedding scaffolds, Qdrant and Neo4j memory foundations, retrieval previews,
-review metadata, worker tasks for normalization/chunking/vector upsert, report
-metadata, and self-improvement queue/experiment metadata. It does not implement
-LLM-generated answers, autonomous collection dispatch, browser automation,
-production self-improvement execution, or system-changing actions. Deterministic
-evidence-summary packets are available from stored local evidence only; they do
-not use hidden reasoning, external model calls, or autonomous actions.
+It is not a finished autonomous agent, not ComfyUI, not a generic chatbot, and
+not a local AI-stack model manager. The current implementation does not generate
+LLM answers and does not call external models. It supports deterministic local
+evidence, retrieval, metadata, reporting, and review workflows. System-changing
+actions are not implemented, and the system is read-only or scaffolded by
+default unless a current endpoint explicitly records local metadata.
+
+## Current Capabilities
+
+Implemented or scaffolded behavior in the current repository:
+
+| Area | Current behavior |
+| --- | --- |
+| Local stack | Docker Compose starts the web UI, API, PostgreSQL, Redis, Celery worker, Celery beat, Qdrant, Neo4j, MLflow, and Phoenix on localhost-bound ports. |
+| Web UI | Next.js dark AI-console shell with source, evidence, memory, work, approval, report, audit, retrieval preview, and MVP Action Console panels. |
+| API | FastAPI gateway with health, source, approval, collection, artifact, evidence, retrieval, chat, graph, vector, feedback, outcome, report, improvement, experiment, work-item, and audit routes. |
+| State and audit | PostgreSQL stores sources, permissions, collection runs, artifacts, normalized documents, chunks, evidence, claims, patterns, hypotheses, predictions, recommendations, work items, approvals, feedback, outcomes, reports, experiments, improvements, and audit events. |
+| Source registry | Sources can be registered with type, location, sensitivity, trust, enabled state, metadata, and optional permission. |
+| Source permissions | Permissions store scope JSON, allowed operations, external model policy, and approval requirement. |
+| Approvals | Approval requests can be created and approved or denied. Collection approval matching requires exact source, permission, and operation payload values. |
+| Collection | Manual upload collection supports base64 UTF-8 text. Local project collection supports scoped paths under a container-visible source directory. |
+| Artifacts | Raw artifacts are stored in local content-addressed storage with PostgreSQL metadata. |
+| Normalization | Worker normalization reads raw artifacts as UTF-8 text and creates normalized text documents. |
+| Chunking and evidence | Worker chunking creates chunks and evidence items from normalized documents. |
+| Vector memory | Deterministic local hash embeddings are upserted to Qdrant. Qdrant search and hydrated retrieval trails are available. |
+| Retrieval policy | Retrieval hydration excludes hits from disabled sources and preserves hits with no source. |
+| Chat | `/chat/retrieval-preview` returns retrieval context with `answer_status: not_generated`. `/chat/evidence-answer` returns a deterministic local evidence-summary packet. |
+| Work queue | Work items enforce intent verification metadata before queued dispatch. Supported dispatch types are listed below. |
+| Graph memory | Neo4j schema constraints, lineage sync, and relationship lookup are available as foundation endpoints. |
+| Analysis metadata | Patterns, hypotheses, predictions, and recommendations can be recorded against existing evidence. Baseline pattern detection exists. |
+| Feedback and outcomes | Feedback and outcome metadata can be recorded. Weak feedback can create proposed improvement items. Source trust feedback can update source trust/enabled state. |
+| Reports | Report metadata can be created and rendered to deterministic local markdown artifacts from local metadata counts and recent records. |
+| Improvement and experiments | Improvement items and experiment run metadata can be recorded. Production self-improvement execution is not implemented. |
+| Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
+
+## Not Implemented Yet
+
+Current boundaries:
+
+- No LLM-generated answers.
+- No autonomous source collection.
+- No browser automation.
+- No ComfyUI or local AI-stack functionality.
+- No image generation, model manager, model selector, or model download flow.
+- No external model calls.
+- No system-changing actions.
+- No automatic predictions or advice generation.
+- No production self-improvement execution.
+- No production method changes.
+- No binary, PDF, image, audio, or rich document normalization.
+- No full authentication system.
+- No advanced graph reasoning.
+- No advanced ML forecasting.
+- No full connector suite for router, web account, PC diagnostics, conversation history, or approved website collection.
 
 ## Services
 
-- Web UI: Next.js, bound to `127.0.0.1:3000`
-- API: FastAPI, bound to `127.0.0.1:8000`
-- Worker: Celery worker
-- Beat: Celery Beat scheduler
-- Web UI action console: source setup, approvals, dry-runs, manual uploads,
-  work dispatch, evidence answers, review actions, pattern detection, and
-  report rendering through FastAPI only
-- PostgreSQL: state, audit, foundational control tables
-- Redis: Celery broker/result backend
-- Qdrant: vector memory service for deterministic chunk embeddings
-- Neo4j: graph memory service for deterministic lineage relationships
-- MLflow: experiment tracking service reserved for controlled experiments
-- Phoenix: observability service reserved for trace review
+Default local endpoints:
 
-The worker and beat services receive database, artifact store, and Qdrant
-settings from the same `.env` file as the API, including the chunk collection
-name and vector size used by deterministic local embeddings.
+| Service | URL |
+| --- | --- |
+| Web UI | `http://127.0.0.1:3000` |
+| API | `http://127.0.0.1:8000` |
+| API docs | `http://127.0.0.1:8000/docs` |
+| Qdrant | `http://127.0.0.1:6333` |
+| Neo4j Browser | `http://127.0.0.1:7474` |
+| MLflow | `http://127.0.0.1:5000` |
+| Phoenix | `http://127.0.0.1:6006` |
 
-Current normalization is intentionally narrow: queued normalization workers
-support UTF-8 text artifacts only. Manual uploads are validated as UTF-8 text
-before normalization is queued; local project artifacts that are not UTF-8 text
-will fail normalization with an explicit text-only error until binary
-normalizers are added in a later DIFF.
+The Compose file binds published service ports to `127.0.0.1`.
 
 ## Run Locally
 
-1. Copy the environment template:
+Prerequisites:
+
+- Docker and Docker Compose.
+- Git.
+- A shell. Examples below use bash-style commands.
+
+1. Clone and open the repository.
+
+```bash
+git clone https://github.com/NastyHobbit-1/IGY6.git
+cd IGY6
+```
+
+2. Create a local environment file.
 
 ```bash
 cp .env.example .env
 ```
 
-2. Review local-only placeholder values in `.env`.
+3. Review `.env`.
 
-3. Start the local stack:
+The checked-in example uses local-only placeholder values such as
+`change-me-local-only`. Keep secrets local and do not commit `.env`.
+
+4. Start the stack.
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 ```
 
-4. Check API health:
-
-```bash
-curl http://127.0.0.1:8000/health/live
-curl http://127.0.0.1:8000/health/ready
-```
-
-5. Open the web status page:
+5. Open the web UI.
 
 ```text
 http://127.0.0.1:3000
 ```
 
-6. Stop the stack when finished:
+6. Open the API or API docs.
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:8000/docs
+```
+
+7. Stop the stack.
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env down
 ```
 
-## Migrations
+## First Use Workflow
 
-The API container applies Alembic migrations on startup. To run manually:
+Some steps are easiest through API calls today. The web UI shows current records
+and provides an MVP Action Console for several existing FastAPI endpoints.
+
+1. Start the stack.
+2. Check API readiness with `/health/ready`.
+3. Create a source.
+4. Create a source permission if one was not created with the source.
+5. If the permission has `approval_required: true`, create an approval whose
+   payload exactly matches `source_id`, `source_permission_id`, and collection
+   `operation`.
+6. Approve the approval.
+7. Run a dry-run collection preview.
+8. Run manual upload collection or local project collection.
+9. List work items and dispatch the queued `collection_normalization` item.
+10. List work items again and dispatch the chained `document_chunking` item.
+11. List work items again and dispatch the chained `chunk_vector_upsert` item.
+12. Use chat retrieval preview or evidence answer.
+13. Review retrieved chunks, source trails, evidence, audit events, and reports.
+14. Record feedback, outcomes, or reports if desired.
+
+Only ingested, normalized, chunked, and vector-upserted evidence can be returned
+by retrieval.
+
+## API Examples
+
+Set a local API variable:
 
 ```bash
-docker compose -f infra/docker-compose.yml --env-file .env run --rm api alembic upgrade head
+API=http://127.0.0.1:8000
 ```
+
+Replace placeholder IDs such as `SOURCE_ID`, `SOURCE_PERMISSION_ID`,
+`APPROVAL_ID`, `WORK_ITEM_ID`, and `REPORT_ID` with IDs returned by earlier
+calls.
+
+### Health
+
+```bash
+curl "$API/health/live"
+curl "$API/health/ready"
+```
+
+### Create a manual upload source with a permission
+
+```bash
+curl -X POST "$API/sources" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Manual UTF-8 notes",
+    "source_type": "manual_upload",
+    "location": null,
+    "sensitivity": "internal",
+    "permission": {
+      "scope_json": {
+        "description": "Authorized manual UTF-8 text notes only"
+      },
+      "allowed_operations": ["dry_run", "read", "collect"],
+      "external_model_policy": "blocked",
+      "approval_required": true
+    }
+  }'
+```
+
+Use the response `id` as `SOURCE_ID` and the first permission `id` as
+`SOURCE_PERMISSION_ID`.
+
+### Create an approval for manual upload collection
+
+```bash
+curl -X POST "$API/approvals" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request_type": "manual_upload_collection",
+    "requested_by_actor_id": "local-owner",
+    "request_payload_json": {
+      "source_id": "SOURCE_ID",
+      "source_permission_id": "SOURCE_PERMISSION_ID",
+      "operation": "manual_upload_collection"
+    }
+  }'
+```
+
+### Approve the approval
+
+```bash
+curl -X POST "$API/approvals/APPROVAL_ID/decision" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "approved",
+    "decided_by_actor_id": "local-owner",
+    "decision_reason": "Approved local manual UTF-8 test collection"
+  }'
+```
+
+### Run a dry-run
+
+```bash
+curl -X POST "$API/collection-runs/dry-run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_id": "SOURCE_ID",
+    "source_permission_id": "SOURCE_PERMISSION_ID",
+    "requested_by_actor_id": "local-owner"
+  }'
+```
+
+### Run manual upload collection with base64 UTF-8 text
+
+```bash
+TEXT_B64=$(printf 'IGY6 local UTF-8 evidence note.' | base64 | tr -d '\n')
+
+curl -X POST "$API/collection-runs/manual-upload" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"source_id\": \"SOURCE_ID\",
+    \"source_permission_id\": \"SOURCE_PERMISSION_ID\",
+    \"approval_id\": \"APPROVAL_ID\",
+    \"filename\": \"manual-note.txt\",
+    \"mime_type\": \"text/plain\",
+    \"content_base64\": \"$TEXT_B64\",
+    \"requested_by_actor_id\": \"local-owner\"
+  }"
+```
+
+The collection response summary includes raw artifact IDs and the queued
+normalization work item ID.
+
+### List work items
+
+```bash
+curl "$API/work-items"
+```
+
+### Dispatch a queued work item
+
+```bash
+curl -X POST "$API/work-items/WORK_ITEM_ID/dispatch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actor_id": "local-owner"
+  }'
+```
+
+Repeat list and dispatch for the chained `document_chunking` and
+`chunk_vector_upsert` work items.
+
+### Run chat retrieval preview
+
+```bash
+curl -X POST "$API/chat/retrieval-preview" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What does the system know?",
+    "limit": 5
+  }'
+```
+
+### Run deterministic evidence answer
+
+```bash
+curl -X POST "$API/chat/evidence-answer" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What does the system know?",
+    "limit": 5
+  }'
+```
+
+### Create a report
+
+```bash
+curl -X POST "$API/reports" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Local evidence summary",
+    "report_type": "summary",
+    "status": "requested",
+    "requested_by_actor_id": "local-owner"
+  }'
+```
+
+### Render a report
+
+```bash
+curl -X POST "$API/reports/REPORT_ID/render" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actor_id": "local-owner",
+    "notes": "Rendered from local metadata only."
+  }'
+```
+
+Rendering creates a local markdown artifact and marks the report `ready`.
+
+## Local Project Collection
+
+Local project collection is implemented for scoped files that the API container
+can see.
+
+- The source `source_type` must be `local_project`.
+- The source `location` must be an existing directory inside the
+  container-visible environment. With the default Compose file, the repository
+  `storage` directory is mounted into the API container at `/workspace/storage`.
+- The permission `scope_json` must include a non-empty `paths` list.
+- Relative paths are resolved under the source location.
+- Absolute or relative paths must not escape the source location.
+- `max_files` defaults to `100` when omitted and must be at least `1`.
+- `max_file_bytes` defaults to `1000000` when omitted and must be at least `1`.
+- Symlinks are skipped.
+- Files over `max_file_bytes` are skipped.
+- Artifacts are stored as raw bytes, but current worker normalization supports
+  UTF-8 text only. Binary files may collect and then fail normalization with an
+  explicit UTF-8-only error.
+
+Create an approval for local project collection with
+`operation: "local_project_collection"` and use
+`/collection-runs/local-project` to collect.
+
+Example source payload shape:
+
+```json
+{
+  "name": "Container-visible project notes",
+  "source_type": "local_project",
+  "location": "/workspace/storage/project-notes",
+  "sensitivity": "internal",
+  "permission": {
+    "scope_json": {
+      "paths": ["."],
+      "max_files": 25,
+      "max_file_bytes": 1000000
+    },
+    "allowed_operations": ["dry_run", "read", "collect"],
+    "external_model_policy": "blocked",
+    "approval_required": true
+  }
+}
+```
+
+## Work-Item Dispatch Notes
+
+Work items require recorded intent verification metadata before they can be
+queued or dispatched. Only `queued` work items can dispatch.
+
+Supported dispatch types:
+
+- `collection_normalization`
+- `document_chunking`
+- `chunk_vector_upsert`
+
+Unsupported work-item dispatch types return an error. Worker tasks may create
+chained queued work items after successful normalization or chunking.
+
+Terminal work items such as `completed`, `failed`, or `canceled` do not move
+casually back to `queued` or `running`.
+
+## Retrieval And Chat Notes
+
+- `POST /chat/retrieval-preview` returns retrieval context only with
+  `answer_status: not_generated`.
+- `POST /chat/evidence-answer` returns a deterministic local evidence packet
+  with facts, assumptions, inferences, uncertainty, missing information, source
+  trails, and retrieval context.
+- No LLM answer is generated.
+- No external model call happens.
+- No hidden reasoning or autonomous action happens.
+- Disabled sources are filtered out of hydrated retrieval results.
+- Retrieval can only find chunks that have been ingested, normalized, chunked,
+  and vector-upserted.
+- Retrieval scores are similarity signals, not proof of correctness.
+
+## UI Usage
+
+The web UI is a dark AI-console shell for the existing IGY6 workflows. It shows:
+
+- Local readiness and status.
+- Source registry and source permission summaries.
+- Collection runs, raw artifacts, normalized documents, chunks, evidence items,
+  and claims.
+- Vector memory and graph schema status.
+- Patterns, hypotheses, predictions, and recommendations.
+- Work items, approvals, feedback, outcomes, reports, and audit events.
+- Chat Retrieval Preview, which calls same-origin
+  `/api/chat/retrieval-preview`.
+- MVP Action Console controls that call existing FastAPI endpoints only.
+
+Scaffolded visual controls are disabled or labeled honestly. The UI does not add
+ComfyUI, image generation, model management, model downloads, autonomous agents,
+or AI-stack backend behavior.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Docker daemon unavailable | Confirm Docker Desktop or the Docker daemon is running, then rerun the Compose command. |
+| Port already in use | Another local process may already be bound to `3000`, `8000`, `5432`, `6379`, `6333`, `7474`, `7687`, `5000`, or `6006`. Stop the other process or change the local port mapping deliberately. |
+| API readiness is not `ok` | Call `/health/ready` and inspect which dependency is degraded: PostgreSQL, Redis, Qdrant, Neo4j, MLflow, or Phoenix. |
+| Worker not responding | Check the `worker` service logs and run the Celery ping command in the verification section. |
+| Migrations not current | Run `docker compose -f infra/docker-compose.yml --env-file .env exec -T api alembic current` and inspect API startup logs. |
+| Qdrant search returns no hits | Make sure collection, normalization, document chunking, and vector upsert work items have completed. Also verify the vector collection exists. |
+| Manual upload rejected as non-UTF-8 | Manual upload collection currently accepts UTF-8 text only. Convert the content to UTF-8 text before upload. |
+| Local project path escapes source location | Keep every permission path under the source `location`; scoped paths cannot escape that root. |
+| No evidence answer is returned | There may be no ingested, chunked, and vector-upserted evidence yet, or matching evidence may belong to a disabled source. |
+| `npm --prefix apps/web run lint` is unavailable | The web package currently defines `dev`, `build`, and `start`, but no `lint` script. Use `npm --prefix apps/web run build` for web build verification. |
 
 ## Verification
 
-The foundation is verified with:
+Useful local checks:
 
 ```bash
 python3 -m compileall services/api services/worker
@@ -94,31 +444,25 @@ docker compose -f infra/docker-compose.yml --env-file .env.example up -d
 curl http://127.0.0.1:8000/health/ready
 docker compose -f infra/docker-compose.yml --env-file .env.example exec -T api alembic current
 docker compose -f infra/docker-compose.yml --env-file .env.example exec -T worker celery -A app.celery_app:celery_app inspect ping
+npm --prefix apps/web run build
 ```
 
-Expected API readiness status:
+Use `.env.example` for configuration validation and disposable local smoke
+checks. Use `.env` for normal local runs after reviewing local-only values.
 
-```json
-{"status":"ok"}
+For documentation-only changes, the narrow repository checks are:
+
+```bash
+git diff --check
+python3 -m compileall services/api services/worker
+docker compose -f infra/docker-compose.yml --env-file .env.example config
 ```
 
-## Current Boundaries
+## Development Notes
 
-The system remains read-only and scaffolded by default:
-
-- No autonomous source collection dispatch.
-- No browser automation.
-- No external embedding or answer-generation model calls.
-- No LLM-generated evidence-backed answers.
-- Deterministic evidence-summary packets may be produced from retrieved local
-  evidence, with citations and uncertainty, without hidden reasoning or
-  external model calls.
-- No automatic prediction/advice generation.
-- No self-improvement experiment execution.
-- No production method changes without approval.
-- No ruvnet components.
-- No remote service exposure by default.
-- No hard-coded secrets.
-
-Every future source access and important decision must go through policy,
-approval, and audit paths.
+- Follow `AGENTS.md` and the DIFF process in `docs/diffs`.
+- Do not add features outside the active DIFF.
+- Do not treat retrieved content as trusted instructions.
+- Do not claim generated answers, external model calls, browser automation,
+  ComfyUI, image generation, or autonomous system-changing actions unless those
+  behaviors are implemented in code and covered by an active DIFF.
