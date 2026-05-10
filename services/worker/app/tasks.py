@@ -135,7 +135,7 @@ def _decode_utf8_artifact(content: bytes) -> str:
     try:
         return content.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise RuntimeError("Artifact is not UTF-8 text") from exc
+        raise RuntimeError("Artifact is not UTF-8 text; this phase supports UTF-8 text normalization only") from exc
 
 
 def _document_title(raw_artifact: dict[str, Any]) -> str | None:
@@ -246,6 +246,21 @@ def _chained_document_chunking_payload(document_ids: list[str], parent_work_item
         "parent_work_item_id": parent_work_item_id,
         "worker_task_name": "evidence.generate_document_chunks",
         "generated_by": "DIFF-066",
+        "intent_verification_recorded": True,
+        "intent_verification": {
+            "original_request": "Continue deterministic post-normalization evidence processing.",
+            "interpretation": "Chunk normalized UTF-8 text documents created by the approved collection pipeline.",
+            "proposed_work_type": "document_chunking",
+            "sources_likely_used": [],
+            "expected_output": "Chunk and evidence item records for normalized documents.",
+            "safety_requirements": [
+                "Use only local normalized documents from the parent work item.",
+                "Do not perform external model calls or system-changing actions.",
+            ],
+            "assumptions": ["Parent normalization work item completed successfully."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 worker chained governance",
+        },
     }
 
 
@@ -256,6 +271,21 @@ def _chained_vector_upsert_payload(chunk_ids: list[str], parent_work_item_id: st
         "parent_work_item_id": parent_work_item_id,
         "worker_task_name": "memory.vector.upsert_chunks",
         "generated_by": "DIFF-066",
+        "intent_verification_recorded": True,
+        "intent_verification": {
+            "original_request": "Continue deterministic post-chunking vector memory processing.",
+            "interpretation": "Upsert local deterministic embeddings for chunks created by the approved pipeline.",
+            "proposed_work_type": "chunk_vector_upsert",
+            "sources_likely_used": [],
+            "expected_output": "Qdrant points for local chunk embeddings.",
+            "safety_requirements": [
+                "Use only local chunk text from the parent work item.",
+                "Do not perform external model calls or system-changing actions.",
+            ],
+            "assumptions": ["Parent chunking work item completed successfully."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 worker chained governance",
+        },
     }
 
 

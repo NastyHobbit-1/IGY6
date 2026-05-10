@@ -168,6 +168,15 @@ def get_retrieval_chunk_trail(db: Session, chunk_id: str) -> RetrievalTrailRead:
     )
 
 
+def is_source_allowed_for_retrieval(source: RetrievalSourceRead | None) -> bool:
+    # DIFF-074 keeps the current policy minimal: disabled sources are hidden.
+    # Future sensitivity, trust, and external-model filters should extend this
+    # single policy hook instead of scattering retrieval checks.
+    if source is None:
+        return True
+    return source.enabled
+
+
 def search_hydrated_chunks(
     db: Session,
     settings: Settings,
@@ -187,6 +196,8 @@ def search_hydrated_chunks(
             )
 
         trail = get_retrieval_chunk_trail(db, vector_hit.chunk_id)
+        if not is_source_allowed_for_retrieval(trail.source):
+            continue
         hits.append(
             HydratedChunkSearchHit(
                 score=vector_hit.score,

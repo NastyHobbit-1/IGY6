@@ -23,6 +23,15 @@ WORK_ITEM_STATUSES = {
     "canceled",
 }
 
+SAFE_WORK_ITEM_STATUS_TRANSITIONS = {
+    "pending_intent_verification": {"queued", "canceled"},
+    "queued": {"running", "canceled"},
+    "running": {"completed", "failed", "canceled"},
+    "completed": set(),
+    "failed": set(),
+    "canceled": set(),
+}
+
 
 class IntentVerificationContext(BaseModel):
     original_request: str = Field(min_length=1)
@@ -75,6 +84,35 @@ class WorkItemDispatchResult(BaseModel):
 
 def _celery_app(settings: Settings) -> Celery:
     return Celery("igy6_api_dispatch", broker=settings.celery_broker_url, backend=settings.celery_result_backend)
+
+
+def _has_intent_verification(work_item: WorkItem) -> bool:
+    payload = work_item.payload_json or {}
+    if isinstance(payload.get("intent_verification"), dict):
+        return True
+    return payload.get("intent_verification_recorded") is True
+
+
+def _require_intent_verification(work_item: WorkItem, action_label: str) -> None:
+    if not _has_intent_verification(work_item):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Work item requires recorded intent verification before {action_label}",
+        )
+
+
+def _require_valid_status_transition(work_item: WorkItem, new_status: str) -> None:
+    if work_item.status == new_status:
+        return
+
+    allowed_next_statuses = SAFE_WORK_ITEM_STATUS_TRANSITIONS.get(work_item.status, set())
+    if new_status not in allowed_next_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Invalid work item status transition from {work_item.status} to {new_status}",
+        )
+    if new_status == "queued":
+        _require_intent_verification(work_item, "queueing")
 
 
 def build_dispatch_plan(work_item: WorkItem) -> tuple[str, list[Any], dict[str, Any]]:
@@ -206,6 +244,7 @@ def dispatch_work_item(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
     if work_item.status != "queued":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued work items can be dispatched")
+    _require_intent_verification(work_item, "dispatch")
 
     task_name, args, kwargs = build_dispatch_plan(work_item)
     async_result = _celery_app(settings).send_task(task_name, args=args, kwargs=kwargs)
@@ -249,6 +288,7 @@ def update_work_item_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
 
     previous_status = work_item.status
+    _require_valid_status_transition(work_item, payload.status)
     work_item.status = payload.status
     work_item.error_message = payload.error_message
     _audit_work_item_status_updated(

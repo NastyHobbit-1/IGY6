@@ -166,6 +166,22 @@ def _queue_normalization_work_item(
             "scaffold_only": False,
             "executes_normalization": True,
             "worker_task_name": "collection.normalize_collection_run",
+            "normalization_input_type": "utf_8_text",
+            "intent_verification_recorded": True,
+            "intent_verification": {
+                "original_request": f"Queue normalization for {collection_mode}",
+                "interpretation": "Create a queued worker item to normalize collected UTF-8 text artifacts.",
+                "proposed_work_type": "collection_normalization",
+                "sources_likely_used": [collection_run.source_id] if collection_run.source_id else [],
+                "expected_output": "Normalized document records for the collected raw artifacts.",
+                "safety_requirements": [
+                    "Use only stored local artifacts linked to this collection run.",
+                    "Do not perform external model calls or system-changing actions.",
+                ],
+                "assumptions": ["Collected artifacts are UTF-8 text artifacts supported by the current worker."],
+                "missing_information": [],
+                "recorded_by": "DIFF-074 collection enqueue governance",
+            },
         },
         error_message=None,
     )
@@ -195,6 +211,16 @@ def _decode_content_base64(content_base64: str) -> bytes:
         return base64.b64decode(content_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid base64 content") from exc
+
+
+def _require_utf8_text_artifact_content(content: bytes) -> None:
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Manual upload normalization currently supports UTF-8 text artifacts only",
+        ) from exc
 
 
 def _require_permission_operation(permission: SourcePermission, allowed: set[str], action_label: str) -> None:
@@ -237,7 +263,12 @@ def _require_collection_approval(
     }
     for key, expected_value in expected_values.items():
         actual_value = payload.get(key)
-        if actual_value is not None and actual_value != expected_value:
+        if actual_value is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Approval is missing required {key} for requested collection",
+            )
+        if actual_value != expected_value:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Approval {key} does not match requested collection",
@@ -435,6 +466,7 @@ def create_manual_upload_collection(
     )
 
     content = _decode_content_base64(payload.content_base64)
+    _require_utf8_text_artifact_content(content)
     try:
         stored = store_artifact_bytes(content, get_settings().artifact_store_path)
     except ArtifactStoreError as exc:
@@ -455,7 +487,7 @@ def create_manual_upload_collection(
             "size_bytes": stored.size_bytes,
             "content_already_existed": stored.existed,
             "would_normalize": True,
-            "would_enqueue_worker": False,
+            "normalization_input_type": "utf_8_text",
             "approval_id": approval.id if approval else None,
         },
         error_message=None,
@@ -495,6 +527,7 @@ def create_manual_upload_collection(
     )
     collection_run.summary_json = {
         **collection_run.summary_json,
+        "normalization_work_item_created": True,
         "normalization_work_item_id": work_item.id,
         "raw_artifact_ids": [artifact.id],
     }
@@ -555,7 +588,8 @@ def create_local_project_collection(
             "collected_files": result.collected_files,
             "skipped_files": result.skipped_files,
             "would_normalize": True,
-            "would_enqueue_worker": False,
+            "normalization_input_type": "utf_8_text",
+            "normalization_note": "Worker normalization currently supports UTF-8 text artifacts only.",
             "approval_id": approval.id if approval else None,
         },
         error_message=None,
@@ -600,6 +634,7 @@ def create_local_project_collection(
     )
     collection_run.summary_json = {
         **collection_run.summary_json,
+        "normalization_work_item_created": True,
         "normalization_work_item_id": work_item.id,
         "raw_artifact_ids": raw_artifact_ids,
     }

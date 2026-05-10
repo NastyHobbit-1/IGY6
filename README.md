@@ -9,8 +9,10 @@ metadata, evidence records, deterministic chunking, local deterministic
 embedding scaffolds, Qdrant and Neo4j memory foundations, retrieval previews,
 review metadata, worker tasks for normalization/chunking/vector upsert, report
 metadata, and self-improvement queue/experiment metadata. It does not implement
-answer generation, autonomous collection dispatch, browser automation,
-production self-improvement execution, or system-changing actions.
+LLM-generated answers, autonomous collection dispatch, browser automation,
+production self-improvement execution, or system-changing actions. Deterministic
+evidence-summary packets are available from stored local evidence only; they do
+not use hidden reasoning, external model calls, or autonomous actions.
 
 ## Services
 
@@ -31,6 +33,12 @@ production self-improvement execution, or system-changing actions.
 The worker and beat services receive database, artifact store, and Qdrant
 settings from the same `.env` file as the API, including the chunk collection
 name and vector size used by deterministic local embeddings.
+
+Current normalization is intentionally narrow: queued normalization workers
+support UTF-8 text artifacts only. Manual uploads are validated as UTF-8 text
+before normalization is queued; local project artifacts that are not UTF-8 text
+will fail normalization with an explicit text-only error until binary
+normalizers are added in a later DIFF.
 
 ## Run Locally
 
@@ -101,7 +109,10 @@ The system remains read-only and scaffolded by default:
 - No autonomous source collection dispatch.
 - No browser automation.
 - No external embedding or answer-generation model calls.
-- No generated evidence-backed answers.
+- No LLM-generated evidence-backed answers.
+- Deterministic evidence-summary packets may be produced from retrieved local
+  evidence, with citations and uncertainty, without hidden reasoning or
+  external model calls.
 - No automatic prediction/advice generation.
 - No self-improvement experiment execution.
 - No production method changes without approval.
