@@ -252,6 +252,100 @@ a {
   color: #f8fafc;
 }
 
+.termHelp {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+
+.termLabel {
+  min-width: 0;
+}
+
+.helpHeading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.termHelpTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(125, 166, 255, 0.38);
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.78);
+  color: #bfdbfe;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0;
+}
+
+.termHelpBubble {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  gap: 7px;
+  width: min(380px, calc(100vw - 36px));
+  border: 1px solid rgba(125, 166, 255, 0.32);
+  border-radius: 10px;
+  background: rgba(6, 10, 18, 0.98);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  color: #dbe7f7;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.42;
+  opacity: 0;
+  padding: 12px;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+}
+
+.termHelpBubble strong {
+  color: #f8fafc;
+  font-size: 0.84rem;
+}
+
+.termHelpBubble b {
+  color: #bfdbfe;
+}
+
+.termHelp:hover .termHelpBubble,
+.termHelp:focus-within .termHelpBubble {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 1s;
+}
+
+.item div:last-child .termHelpBubble,
+.rightContext .termHelpBubble {
+  left: auto;
+  right: 0;
+}
+
+.fieldWithHelp,
+.actionHint {
+  display: grid;
+  gap: 7px;
+}
+
+.actionHint {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .sidebarList,
 .localFooter {
   display: grid;

@@ -426,6 +426,23 @@ Scaffolded visual controls are disabled or labeled honestly. The UI does not add
 ComfyUI, image generation, model management, model downloads, autonomous agents,
 or AI-stack backend behavior.
 
+## Help Bubbles
+
+IGY6 includes hover/focus help bubbles for technical terms in the web UI. Keep
+the pointer or keyboard focus on the small `?` marker for about one second to
+see a plain-language explanation.
+
+Help bubbles are cosmetic only. They do not change API names, saved data,
+backend behavior, settings behavior, or labels stored in the database. Common
+words such as Completed, Failed, Reports, Settings, Search, and Save may not
+have bubbles because they are already clear in context.
+
+Exact technical keys remain visible where needed, especially in Settings. For
+example, `ENV_FILE_PATH`, `ENV_BACKUP_DIR`,
+`QDRANT_CHUNK_VECTOR_SIZE`, `EXTERNAL_MODEL_POLICY_DEFAULT`, and
+`APPROVAL_REQUIRED_DEFAULT` keep their exact names while explaining what they
+control and what restart or safety limits apply.
+
 ## Settings Page
 
 The Settings section edits the local IGY6 `.env` only. It is a sensitive,

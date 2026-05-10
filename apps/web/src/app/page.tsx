@@ -223,6 +223,341 @@ type ApiResult<T> = {
   error: string | null;
 };
 
+type TermHelpContent = {
+  title: string;
+  explanation: string;
+  manage: string;
+  purpose: string;
+  examples?: string;
+  warning?: string;
+};
+
+const TERM_HELP: Record<string, TermHelpContent> = {
+  source: {
+    title: "Source",
+    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and scaffolded or planned types such as local_pc_diagnostics, router_network, web_public, and web_authorized_account.",
+    manage: "Manage sources in the Sources panel or the MVP Action Console Source form.",
+    purpose: "Sources define what evidence IGY6 is allowed to use before collection, normalization, search, reports, or review.",
+    warning: "A registered source does not grant broad PC or account access; permissions and approvals still apply."
+  },
+  sourceType: {
+    title: "Source Type",
+    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or scaffolded router/web/PC diagnostic types.",
+    manage: "Choose the type when creating a source in the MVP Action Console or source API workflow.",
+    purpose: "The type controls which collection workflow and safety expectations apply.",
+    warning: "Some source types are scaffolded and not full collectors yet."
+  },
+  sourcePermission: {
+    title: "Source Permission",
+    explanation: "A Source Permission controls what a source is allowed to do, including permission scope, allowed operations, approval requirement, and external model policy.",
+    manage: "Create permissions with a source in the Sources workflow or MVP Action Console.",
+    purpose: "Permissions keep collection local, scoped, and auditable instead of treating a source as open-ended access.",
+    warning: "A permission is not permission to perform system-changing actions."
+  },
+  permissionScope: {
+    title: "Permission Scope",
+    explanation: "Permission Scope limits which part of a source can be accessed. For local_project sources, scope means allowed paths under the source location.",
+    manage: "Edit scope JSON in the MVP Action Console Source form or source permission API workflow.",
+    purpose: "Scope keeps collection bounded to the files or records the user authorized.",
+    warning: "Scoped paths cannot escape the source location."
+  },
+  allowedOperations: {
+    title: "Allowed Operations",
+    explanation: "Allowed Operations are specific collection permissions such as dry_run, read, and collect.",
+    manage: "Set them when creating a source permission in the MVP Action Console or API.",
+    purpose: "They tell IGY6 what collection steps are allowed for that source.",
+    warning: "They are not general permission to modify the PC, accounts, router, or websites."
+  },
+  externalModelPolicy: {
+    title: "External Model Policy",
+    explanation: "External Model Policy controls whether source data may be sent to online or external AI models.",
+    manage: "Set it on source permissions and review the default in Settings with EXTERNAL_MODEL_POLICY_DEFAULT.",
+    purpose: "It protects local or sensitive evidence from leaving the local stack.",
+    warning: "The current default is blocked and should stay blocked unless deliberately changed."
+  },
+  approval: {
+    title: "Approval",
+    explanation: "An Approval is a local permission request that must be approved before some collections or sensitive workflows can run.",
+    manage: "Use the Approvals panel or MVP Action Console Approval and Decision forms.",
+    purpose: "Approvals make sensitive collection auditable and explicit.",
+    warning: "Approved collection payloads must match the source, permission, and operation."
+  },
+  approvalRequired: {
+    title: "Approval Required",
+    explanation: "Approval Required means this permission or workflow must have an approved local approval record before it can proceed.",
+    manage: "Set it when creating source permissions; change the default with APPROVAL_REQUIRED_DEFAULT in Settings.",
+    purpose: "It keeps sensitive collection permissioned by default.",
+    warning: "Turning it off reduces review friction but also reduces safety checks."
+  },
+  collectionRun: {
+    title: "Collection Run",
+    explanation: "A Collection Run is a record of a collection attempt or test run for a source.",
+    manage: "Review runs in the collection records shown in the web UI or through collection-run API workflows.",
+    purpose: "It links source collection to raw artifacts, status, summaries, and audit history.",
+    warning: "A run record does not mean every downstream worker task has completed."
+  },
+  dryRun: {
+    title: "Dry Run",
+    explanation: "A Dry Run is a test or preview that records what would happen without collecting artifacts or changing source data.",
+    manage: "Run it from the MVP Action Console Dry-Run form or collection dry-run API endpoint.",
+    purpose: "It lets the user inspect collection scope before real collection.",
+    warning: "Dry-run passing is a preview, not proof that all later work will succeed."
+  },
+  manualUpload: {
+    title: "Manual Upload",
+    explanation: "Manual Upload collects UTF-8 text the user manually provides.",
+    manage: "Use the MVP Action Console Manual Upload form after creating a manual_upload source, permission, and approval if required.",
+    purpose: "It creates raw artifacts that can be normalized, chunked, embedded, and used as evidence.",
+    warning: "Current normalization supports UTF-8 text only, not binary/PDF/image/audio parsing."
+  },
+  localProject: {
+    title: "Local Project",
+    explanation: "Local Project is a source type for scoped files under a folder visible inside the container.",
+    manage: "Create a local_project source and permission scope paths in the Sources workflow or MVP Action Console.",
+    purpose: "It lets IGY6 collect authorized project files into local evidence.",
+    warning: "Paths must stay under the source location and binary files may fail UTF-8 normalization."
+  },
+  rawArtifact: {
+    title: "Raw Artifact",
+    explanation: "A Raw Artifact is the original stored collected content or file, saved locally with metadata and a content hash.",
+    manage: "Review artifacts in the Evidence panel and artifact API records.",
+    purpose: "Artifacts preserve the original evidence input before normalization.",
+    warning: "Artifact metadata does not mean the content has been normalized or embedded yet."
+  },
+  normalizedDocument: {
+    title: "Normalized Document",
+    explanation: "A Normalized Document is readable UTF-8 text extracted from a raw artifact.",
+    manage: "Review normalized documents in the Evidence panel.",
+    purpose: "Documents are the text source for chunks, evidence items, and retrieval.",
+    warning: "The current normalizer supports UTF-8 text only."
+  },
+  chunk: {
+    title: "Chunk",
+    explanation: "A Chunk is a smaller piece of a normalized document used for evidence and search.",
+    manage: "Review chunks in the Evidence panel; worker tasks create them after normalization.",
+    purpose: "Chunks make long documents searchable and citable.",
+    warning: "Chunks must be vector-upserted before vector retrieval can find them."
+  },
+  evidenceItem: {
+    title: "Evidence Item",
+    explanation: "An Evidence Item is a stored piece of evidence created from chunks or records.",
+    manage: "Review evidence items in the Evidence panel.",
+    purpose: "Retrieval previews and evidence answers cite evidence items to show what supports a result.",
+    warning: "Evidence is local record material, not proof that a statement is universally true."
+  },
+  claim: {
+    title: "Claim",
+    explanation: "A Claim is a recorded statement tied to evidence and review status.",
+    manage: "Review claims in the Evidence panel.",
+    purpose: "Claims help separate asserted statements from raw text and evidence records.",
+    warning: "Claims are metadata records, not automatically verified facts."
+  },
+  vectorMemory: {
+    title: "Vector Memory",
+    explanation: "Vector Memory is similarity-search memory used to find relevant chunks. IGY6 currently uses deterministic local hash vectors, not online AI embeddings.",
+    manage: "Review vector status in the Memory panel and Qdrant-related settings in Settings.",
+    purpose: "It helps retrieval find local evidence related to a user question.",
+    warning: "Changing vector size can require rebuilding vector storage."
+  },
+  qdrant: {
+    title: "Qdrant",
+    explanation: "Qdrant is the local vector database behind Vector Memory.",
+    manage: "Review the vector collection in the Memory panel and Qdrant settings in Settings.",
+    purpose: "It stores searchable chunk vectors for local retrieval.",
+    warning: "Qdrant results depend on chunks being embedded/upserted first."
+  },
+  graphMemory: {
+    title: "Graph Memory",
+    explanation: "Graph Memory stores relationship and lineage foundation data, such as how sources, artifacts, documents, chunks, evidence, and reports connect.",
+    manage: "Review graph schema status in the Memory panel and Neo4j settings in Settings.",
+    purpose: "It prepares IGY6 for relationship inspection and evidence lineage.",
+    warning: "This is not full autonomous graph reasoning yet."
+  },
+  neo4j: {
+    title: "Neo4j",
+    explanation: "Neo4j is the local graph database behind Graph Memory.",
+    manage: "Review graph status in the Memory panel and Neo4j settings in Settings.",
+    purpose: "It stores local relationship nodes and lineage relationships.",
+    warning: "Graph sync and schema foundation exist, but advanced graph reasoning is not complete."
+  },
+  workItem: {
+    title: "Work Item",
+    explanation: "A Work Item is a queued, running, completed, failed, or canceled task for worker processing.",
+    manage: "Review work items in the Work Queue area and dispatch supported queued items from the MVP Action Console.",
+    purpose: "Work items keep long-running local processing out of the API request path.",
+    warning: "Queued work items require intent verification metadata before dispatch."
+  },
+  dispatch: {
+    title: "Dispatch",
+    explanation: "Dispatch starts a queued work item by sending it to the worker.",
+    manage: "Use the MVP Action Console Dispatch form with a queued work item ID.",
+    purpose: "It advances supported worker tasks such as normalization, chunking, and vector upsert.",
+    warning: "Dispatch is not autonomous action; unsupported work types are rejected."
+  },
+  chatRetrievalPreview: {
+    title: "Chat Retrieval Preview",
+    explanation: "Chat Retrieval Preview searches local evidence and returns retrieval context only.",
+    manage: "Use the Chat panel message box.",
+    purpose: "It shows which local chunks and evidence would be used for a question.",
+    warning: "It does not generate an AI answer, persist a conversation, or trigger actions."
+  },
+  evidenceAnswer: {
+    title: "Evidence Answer",
+    explanation: "Evidence Answer creates a deterministic evidence summary from local retrieved evidence.",
+    manage: "Use the MVP Action Console Evidence Answer form or the chat evidence-answer API.",
+    purpose: "It summarizes local facts, assumptions, uncertainty, and source trails.",
+    warning: "It is not an LLM answer and does not call an external model."
+  },
+  deterministic: {
+    title: "Deterministic",
+    explanation: "Deterministic means output is rule-based, local, and repeatable from stored records.",
+    manage: "Review deterministic evidence outputs in Chat Retrieval Preview and Evidence Answer.",
+    purpose: "It keeps current answers auditable while LLM generation is not implemented.",
+    warning: "Deterministic output does not include hidden AI reasoning."
+  },
+  noExternalModel: {
+    title: "No External Model",
+    explanation: "No External Model means no online AI model is called for this workflow.",
+    manage: "Review external model policy in source permissions and Settings.",
+    purpose: "It keeps sensitive local data inside the local IGY6 stack.",
+    warning: "Changing policy defaults should be deliberate and reviewed."
+  },
+  pattern: {
+    title: "Pattern",
+    explanation: "A Pattern is a recorded repeated finding or baseline detected pattern based on existing evidence.",
+    manage: "Review patterns in the Memory and Analysis area or run baseline pattern detection in the MVP Action Console.",
+    purpose: "Patterns help identify recurrence, gaps, or cross-source signals.",
+    warning: "A candidate pattern still needs user review."
+  },
+  hypothesis: {
+    title: "Hypothesis",
+    explanation: "A Hypothesis is a possible explanation tied to supporting evidence.",
+    manage: "Review hypotheses in the Memory and Analysis area.",
+    purpose: "It records a testable idea without treating it as proven fact.",
+    warning: "A hypothesis is not a verified conclusion."
+  },
+  prediction: {
+    title: "Prediction",
+    explanation: "A Prediction is an expected outcome record tied to evidence.",
+    manage: "Review predictions in the Memory and Analysis area and record outcomes in the review workflow.",
+    purpose: "It lets IGY6 track whether expected outcomes later become correct, wrong, partial, or inconclusive.",
+    warning: "Automatic forecasting is not implemented yet."
+  },
+  recommendation: {
+    title: "Recommendation",
+    explanation: "A Recommendation is a suggested action record tied to evidence.",
+    manage: "Review recommendations in the Memory and Analysis area and record feedback or outcomes when useful.",
+    purpose: "It connects suggested action, risk, expected result, and evidence.",
+    warning: "IGY6 does not automatically execute recommendations."
+  },
+  feedback: {
+    title: "Feedback",
+    explanation: "Feedback is user review metadata about whether an item was useful, weak, wrong, verified, incomplete, noisy, trusted, or rejected.",
+    manage: "Use the Review form in the MVP Action Console or inspect Feedback in Review and Operations.",
+    purpose: "Feedback helps identify weak spots and can propose improvement items.",
+    warning: "Feedback records metadata; it does not rewrite historical evidence."
+  },
+  outcome: {
+    title: "Outcome",
+    explanation: "An Outcome records the result of a prediction, recommendation, hypothesis, pattern, report, or work item.",
+    manage: "Use the Review form in the MVP Action Console or inspect Outcomes in Review and Operations.",
+    purpose: "Outcomes let IGY6 track whether prior expectations or recommendations worked.",
+    warning: "Outcomes must reference an existing target record."
+  },
+  improvementItem: {
+    title: "Improvement Item",
+    explanation: "An Improvement Item is a proposed improvement area for future tuning, such as parsing, retrieval, scoring, prediction, reporting, reasoning, or safety.",
+    manage: "Inspect improvement records through API-backed metadata and feedback side effects.",
+    purpose: "It captures weak spots or improvement ideas for later experiments.",
+    warning: "It is not production self-improvement execution."
+  },
+  experimentRun: {
+    title: "Experiment Run",
+    explanation: "An Experiment Run is metadata for a planned, running, completed, failed, or abandoned experiment.",
+    manage: "Inspect experiment metadata through experiment API-backed records.",
+    purpose: "It records metrics and artifacts for future method comparisons.",
+    warning: "It does not mean MLflow or Optuna execution is active yet."
+  },
+  auditEvent: {
+    title: "Audit Event",
+    explanation: "An Audit Event is an activity record showing who or what changed, attempted, approved, denied, dispatched, or saved something.",
+    manage: "Review Audit Events in Review and Operations or the right-side Recent Audit panel.",
+    purpose: "Audit events make sensitive workflows traceable.",
+    warning: "Audit details should not contain unmasked secret values."
+  },
+  artifactStore: {
+    title: "Artifact Store",
+    explanation: "Artifact Store is the local content-addressed storage path for raw artifacts and generated report artifacts.",
+    manage: "Review ARTIFACT_STORE_PATH in Settings and artifact records in the Evidence panel.",
+    purpose: "It keeps original evidence files separate from PostgreSQL metadata.",
+    warning: "Changing storage paths can require mounted volume review and stack restart."
+  },
+  exportStore: {
+    title: "Export Store",
+    explanation: "Export Store is the local path reserved for exportable reports and bundles.",
+    manage: "Review EXPORT_STORE_PATH in Settings.",
+    purpose: "It gives IGY6 a local place for user-exportable outputs.",
+    warning: "Export behavior is still limited to current report/artifact workflows."
+  },
+  ENV_FILE_PATH: {
+    title: "ENV_FILE_PATH",
+    explanation: "ENV_FILE_PATH is the controlled container path to the mounted local .env file.",
+    manage: "View it in Settings; it is read-only for safety.",
+    purpose: "It tells the Settings workflow exactly which local .env file may be verified and saved.",
+    warning: "The UI/API must not edit arbitrary file paths."
+  },
+  ENV_BACKUP_DIR: {
+    title: "ENV_BACKUP_DIR",
+    explanation: "ENV_BACKUP_DIR is the controlled backup folder for .env backups.",
+    manage: "View it in Settings; it is read-only for safety.",
+    purpose: "It stores timestamped backups before Settings writes a new .env.",
+    warning: "Automatic rollback is not implemented; manual rollback uses these backups."
+  },
+  QDRANT_CHUNK_VECTOR_SIZE: {
+    title: "QDRANT_CHUNK_VECTOR_SIZE",
+    explanation: "QDRANT_CHUNK_VECTOR_SIZE is the vector size used by local search memory.",
+    manage: "Edit it in Settings, then verify dry-run before saving.",
+    purpose: "It controls the dimensions used by deterministic local chunk vectors.",
+    warning: "Changing it may require rebuilding vector storage."
+  },
+  EXTERNAL_MODEL_POLICY_DEFAULT: {
+    title: "EXTERNAL_MODEL_POLICY_DEFAULT",
+    explanation: "EXTERNAL_MODEL_POLICY_DEFAULT is the default rule for whether data can go to online AI models.",
+    manage: "Edit it in Settings and review source permissions.",
+    purpose: "It sets the local-first privacy default for new policy-aware workflows.",
+    warning: "Default should stay blocked unless deliberately changed."
+  },
+  APPROVAL_REQUIRED_DEFAULT: {
+    title: "APPROVAL_REQUIRED_DEFAULT",
+    explanation: "APPROVAL_REQUIRED_DEFAULT controls whether new sensitive workflows require approval by default.",
+    manage: "Edit it in Settings and verify dry-run before saving.",
+    purpose: "It keeps source collection and sensitive actions permissioned by default.",
+    warning: "Turning it off reduces safety review for future records that use the default."
+  }
+};
+
+function TermHelp({ term, label }: { term: keyof typeof TERM_HELP; label?: string }) {
+  const help = TERM_HELP[term];
+  return (
+    <span className="termHelp">
+      {label ? <span className="termLabel">{label}</span> : null}
+      <button className="termHelpTrigger" type="button" aria-label={`Help: ${help.title}`}>?</button>
+      <span className="termHelpBubble" role="tooltip">
+        <strong>{help.title}</strong>
+        <span>{help.explanation}</span>
+        <span><b>Where:</b> {help.manage}</span>
+        <span><b>Why it matters:</b> {help.purpose}</span>
+        {help.examples ? <span><b>Examples:</b> {help.examples}</span> : null}
+        {help.warning ? <span><b>Limit:</b> {help.warning}</span> : null}
+      </span>
+    </span>
+  );
+}
+
+function HelpHeading({ children, term }: { children: string; term: keyof typeof TERM_HELP }) {
+  return <span className="helpHeading"><span>{children}</span><TermHelp term={term} /></span>;
+}
+
 async function getJson<T>(path: string, fallback: T): Promise<ApiResult<T>> {
   const baseUrl = process.env.API_BASE_URL ?? "http://api:8000";
 
@@ -294,6 +629,21 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
     ...group,
     settings: data.settings.filter((setting) => setting.group === group.key)
   }));
+  const groupHelpTerms: Record<string, keyof typeof TERM_HELP> = {
+    qdrant: "qdrant",
+    neo4j: "neo4j",
+    storage: "artifactStore",
+    policy: "externalModelPolicy"
+  };
+  const settingHelpTerms: Record<string, keyof typeof TERM_HELP> = {
+    ENV_FILE_PATH: "ENV_FILE_PATH",
+    ENV_BACKUP_DIR: "ENV_BACKUP_DIR",
+    QDRANT_CHUNK_VECTOR_SIZE: "QDRANT_CHUNK_VECTOR_SIZE",
+    EXTERNAL_MODEL_POLICY_DEFAULT: "EXTERNAL_MODEL_POLICY_DEFAULT",
+    APPROVAL_REQUIRED_DEFAULT: "APPROVAL_REQUIRED_DEFAULT",
+    ARTIFACT_STORE_PATH: "artifactStore",
+    EXPORT_STORE_PATH: "exportStore"
+  };
   const script = `
 (() => {
   const root = document.querySelector("[data-settings-env]");
@@ -436,12 +786,16 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
       <div className="settingsGroups">
         {groupedSettings.map((group) => (
           <section className="settingsGroup" key={group.key}>
-            <h3>{group.label}</h3>
+            <h3>{groupHelpTerms[group.key] ? <HelpHeading term={groupHelpTerms[group.key]}>{group.label}</HelpHeading> : group.label}</h3>
             <div className="settingsRows">
               {group.settings.map((setting) => (
                 <article className="settingRow" key={setting.key}>
                   <div className="settingInfo">
-                    <strong>{setting.key}</strong>
+                    <strong>
+                      {settingHelpTerms[setting.key] ? (
+                        <TermHelp term={settingHelpTerms[setting.key]} label={setting.key} />
+                      ) : setting.key}
+                    </strong>
                     <span>{setting.description}</span>
                     <div className="messageMeta">
                       {setting.secret ? <StatusPill state="secret-masked" /> : null}
@@ -485,7 +839,7 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
 
       {data.unmanaged.length > 0 ? (
         <section className="settingsGroup unmanagedSettings">
-          <h3>Unmanaged read-only keys</h3>
+          <h3><HelpHeading term="permissionScope">Unmanaged read-only keys</HelpHeading></h3>
           <div className="settingsRows">
             {data.unmanaged.map((item) => (
               <article className="settingRow" key={item.key}>
@@ -600,7 +954,7 @@ function ChatRetrievalPreview() {
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Evidence preview</p>
-          <h2>Chat Retrieval Preview</h2>
+          <h2><HelpHeading term="chatRetrievalPreview">Chat Retrieval Preview</HelpHeading></h2>
         </div>
         <span className="statusText" data-chat-preview-status>answer_status: not_generated</span>
       </div>
@@ -616,7 +970,7 @@ function ChatRetrievalPreview() {
         <button type="submit">Preview Context</button>
       </form>
       <div className="previewNote">
-        Retrieval context only. No LLM answer, hidden reasoning, external model call, persistence, or action execution.
+        Retrieval context only. <TermHelp term="noExternalModel" label="No external model" /> answer, hidden reasoning, external model call, persistence, or action execution.
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <script dangerouslySetInnerHTML={{ __html: script }} />
@@ -755,14 +1109,18 @@ function MvpActionConsole() {
       </div>
       <section className="actionGrid">
         <form className="actionBox" data-create-source>
-          <h3>Source</h3>
+          <h3><HelpHeading term="source">Source</HelpHeading></h3>
+          <p className="actionHint"><TermHelp term="sourcePermission" label="Source Permission" /> controls scope, operations, approval, and external model policy.</p>
           <input name="source_name" placeholder="Source name" />
-          <select name="source_type" defaultValue="manual_upload">
-            <option value="manual_upload">manual_upload</option>
-            <option value="local_project">local_project</option>
-            <option value="conversation_history">conversation_history</option>
-            <option value="user_observation">user_observation</option>
-          </select>
+          <label className="fieldWithHelp">
+            <TermHelp term="sourceType" label="Source Type" />
+            <select name="source_type" defaultValue="manual_upload">
+              <option value="manual_upload">manual_upload</option>
+              <option value="local_project">local_project</option>
+              <option value="conversation_history">conversation_history</option>
+              <option value="user_observation">user_observation</option>
+            </select>
+          </label>
           <input name="source_location" placeholder="Location" />
           <select name="source_sensitivity" defaultValue="internal">
             <option value="public">public</option>
@@ -770,14 +1128,15 @@ function MvpActionConsole() {
             <option value="sensitive">sensitive</option>
             <option value="secret">secret</option>
           </select>
-          <input name="source_allowed_operations" defaultValue="dry_run,read,collect" />
-          <textarea name="source_scope_json" rows={2} defaultValue="{}" />
-          <label className="checkLine"><input name="source_approval_required" type="checkbox" defaultChecked /> Approval required</label>
+          <label className="fieldWithHelp"><TermHelp term="allowedOperations" label="Allowed Operations" /><input name="source_allowed_operations" defaultValue="dry_run,read,collect" /></label>
+          <label className="fieldWithHelp"><TermHelp term="permissionScope" label="Permission Scope" /><textarea name="source_scope_json" rows={2} defaultValue="{}" /></label>
+          <p className="actionHint"><TermHelp term="manualUpload" label="Manual Upload" /> and <TermHelp term="localProject" label="Local Project" /> are the currently useful collection paths.</p>
+          <label className="checkLine"><input name="source_approval_required" type="checkbox" defaultChecked /> <TermHelp term="approvalRequired" label="Approval required" /></label>
           <button type="submit">Create Source</button>
         </form>
 
         <form className="actionBox" data-approval>
-          <h3>Approval</h3>
+          <h3><HelpHeading term="approval">Approval</HelpHeading></h3>
           <input name="approval_request_type" defaultValue="manual_upload_collection" />
           <input name="approval_source_id" placeholder="Source ID" />
           <input name="approval_permission_id" placeholder="Permission ID" />
@@ -797,14 +1156,14 @@ function MvpActionConsole() {
         </form>
 
         <form className="actionBox" data-dry-run>
-          <h3>Dry-Run</h3>
+          <h3><HelpHeading term="dryRun">Dry-Run</HelpHeading></h3>
           <input name="dry_source_id" placeholder="Source ID" />
           <input name="dry_permission_id" placeholder="Permission ID" />
           <button type="submit">Run</button>
         </form>
 
         <form className="actionBox wide" data-manual-upload>
-          <h3>Manual Upload</h3>
+          <h3><HelpHeading term="manualUpload">Manual Upload</HelpHeading></h3>
           <input name="upload_source_id" placeholder="Source ID" />
           <input name="upload_permission_id" placeholder="Permission ID" />
           <input name="upload_approval_id" placeholder="Approval ID" />
@@ -814,13 +1173,13 @@ function MvpActionConsole() {
         </form>
 
         <form className="actionBox" data-dispatch>
-          <h3>Dispatch</h3>
+          <h3><HelpHeading term="dispatch">Dispatch</HelpHeading></h3>
           <input name="dispatch_work_item_id" placeholder="Queued work item ID" />
           <button type="submit">Dispatch</button>
         </form>
 
         <form className="actionBox wide" data-answer>
-          <h3>Evidence Answer</h3>
+          <h3><HelpHeading term="evidenceAnswer">Evidence Answer</HelpHeading></h3>
           <textarea name="answer_message" rows={3} defaultValue="What does the system know?" />
           <input name="answer_limit" type="number" min="1" max="50" defaultValue="5" />
           <button type="submit">Build Answer</button>
@@ -841,7 +1200,7 @@ function MvpActionConsole() {
         </form>
 
         <form className="actionBox" data-pattern-detect>
-          <h3>Patterns</h3>
+          <h3><HelpHeading term="pattern">Patterns</HelpHeading></h3>
           <input name="pattern_threshold" type="number" min="2" max="20" defaultValue="3" />
           <button type="submit">Detect</button>
         </form>
@@ -1018,7 +1377,7 @@ export default async function Home() {
                 <span className="messageLabel">System / local status</span>
                 <p>IGY6 is running as a local-first evidence system. Responses in this panel are retrieval previews or deterministic evidence packets, not LLM-generated answers.</p>
                 <div className="messageMeta">
-                  <StatusPill state="deterministic" />
+                  <TermHelp term="deterministic" label="deterministic" />
                   <StatusPill state="not-generated" />
                   <StatusPill state="read-only-default" />
                 </div>
@@ -1039,9 +1398,9 @@ export default async function Home() {
                 <span className="messageLabel">Assistant / evidence summary preview</span>
                 <p>Use the retrieval preview below to inspect matching local chunks and evidence trails. No external model is called, and no action is triggered.</p>
                 <div className="retrievalStrip">
-                  <span>{evidenceItems.data.length} evidence items stored</span>
-                  <span>{chunks.data.length} chunks indexed in state</span>
-                  <span>{vectorCollection.data.exists ? "Vector collection ready" : "Vector collection missing"}</span>
+                  <span>{evidenceItems.data.length} <TermHelp term="evidenceItem" label="evidence items" /> stored</span>
+                  <span>{chunks.data.length} <TermHelp term="chunk" label="chunks" /> indexed in state</span>
+                  <span><TermHelp term="vectorMemory" label={vectorCollection.data.exists ? "Vector collection ready" : "Vector collection missing"} /></span>
                 </div>
               </div>
             </article>
@@ -1070,7 +1429,7 @@ export default async function Home() {
             <div className="panelHeader">
               <div>
                 <p className="eyebrow">Sources</p>
-                <h2>Source Registry</h2>
+                <h2><HelpHeading term="source">Source Registry</HelpHeading></h2>
               </div>
               {sources.error ? <span className="errorText">{sources.error}</span> : <StatusPill state={`${sources.data.length}-sources`} />}
             </div>
@@ -1078,9 +1437,9 @@ export default async function Home() {
               {sources.data.map((source) => (
                 <div className="row" key={source.id}>
                   <strong>{source.name}</strong>
-                  <span>{source.source_type}</span>
+                  <span><TermHelp term="sourceType" label={source.source_type} /></span>
                   <span>{source.sensitivity}</span>
-                  <span>{source.permissions?.length ?? 0} permissions</span>
+                  <span>{source.permissions?.length ?? 0} <TermHelp term="sourcePermission" label="permissions" /></span>
                   <StatusPill state={source.enabled ? "enabled" : "disabled"} />
                 </div>
               ))}
@@ -1092,26 +1451,54 @@ export default async function Home() {
             <div className="panelHeader">
               <div>
                 <p className="eyebrow">Evidence</p>
-                <h2>Evidence Explorer</h2>
+                <h2><HelpHeading term="evidenceItem">Evidence Explorer</HelpHeading></h2>
               </div>
               {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some evidence endpoints returned errors.</span>
               ) : null}
             </div>
             <section className="metrics compact" aria-label="Evidence totals">
-              <article><span>Documents</span><strong>{documents.data.length}</strong></article>
-              <article><span>Chunks</span><strong>{chunks.data.length}</strong></article>
-              <article><span>Evidence</span><strong>{evidenceItems.data.length}</strong></article>
-              <article><span>Claims</span><strong>{claims.data.length}</strong></article>
+              <article><span><TermHelp term="collectionRun" label="Collection runs" /></span><strong>{collectionRuns.data.length}</strong></article>
+              <article><span><TermHelp term="rawArtifact" label="Raw artifacts" /></span><strong>{artifacts.data.length}</strong></article>
+              <article><span><TermHelp term="normalizedDocument" label="Documents" /></span><strong>{documents.data.length}</strong></article>
+              <article><span><TermHelp term="chunk" label="Chunks" /></span><strong>{chunks.data.length}</strong></article>
+              <article><span><TermHelp term="evidenceItem" label="Evidence" /></span><strong>{evidenceItems.data.length}</strong></article>
+              <article><span><TermHelp term="claim" label="Claims" /></span><strong>{claims.data.length}</strong></article>
             </section>
             <section className="quad">
               <div>
-                <div className="subHeader"><h3>Documents</h3>{documents.error ? <span className="errorText">{documents.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
+                <div className="stack">
+                  {recentRuns.map((run) => (
+                    <article className="item evidenceItem" key={run.id}>
+                      <div><strong>{run.status}</strong><span>{run.dry_run ? "dry run" : "collection"} · {compactId(run.id)}</span></div>
+                      <div><span>{formatDate(run.created_at)}</span><span><TermHelp term="source" label="source" /> {compactId(run.source_id)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentRuns.length === 0 ? <EmptyState label="No collection runs recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3><HelpHeading term="rawArtifact">Raw Artifacts</HelpHeading></h3>{artifacts.error ? <span className="errorText">{artifacts.error}</span> : null}</div>
+                <div className="stack">
+                  {recentArtifacts.map((artifact) => (
+                    <article className="item evidenceItem" key={artifact.id}>
+                      <div><strong>{formatBytes(artifact.size_bytes)}</strong><span>{artifact.mime_type ?? "unknown type"} · {compactId(artifact.id)}</span></div>
+                      <div><span>{formatDate(artifact.created_at)}</span><span><TermHelp term="collectionRun" label="run" /> {compactId(artifact.collection_run_id)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentArtifacts.length === 0 ? <EmptyState label="No raw artifacts recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3><HelpHeading term="normalizedDocument">Documents</HelpHeading></h3>{documents.error ? <span className="errorText">{documents.error}</span> : null}</div>
                 <div className="stack">
                   {recentDocuments.map((document) => (
                     <article className="item evidenceItem" key={document.id}>
                       <div><strong>{document.title ?? compactId(document.id)}</strong><span>{document.document_type} · {document.sensitivity}</span></div>
-                      <div><span>{formatDate(document.created_at)}</span><span>source {compactId(document.source_id)}</span></div>
+                      <div><span>{formatDate(document.created_at)}</span><span><TermHelp term="source" label="source" /> {compactId(document.source_id)}</span></div>
                     </article>
                   ))}
                 </div>
@@ -1119,7 +1506,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Chunks</h3>{chunks.error ? <span className="errorText">{chunks.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="chunk">Chunks</HelpHeading></h3>{chunks.error ? <span className="errorText">{chunks.error}</span> : null}</div>
                 <div className="stack">
                   {recentChunks.map((chunk) => (
                     <article className="item evidenceItem" key={chunk.id}>
@@ -1132,12 +1519,12 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Evidence Items</h3>{evidenceItems.error ? <span className="errorText">{evidenceItems.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="evidenceItem">Evidence Items</HelpHeading></h3>{evidenceItems.error ? <span className="errorText">{evidenceItems.error}</span> : null}</div>
                 <div className="stack">
                   {recentEvidence.map((item) => (
                     <article className="item evidenceItem" key={item.id}>
                       <div><strong>{item.evidence_type}</strong><span>{excerpt(item.statement)}</span></div>
-                      <div><span>{item.confidence === null ? "unscored" : `${item.confidence}%`}</span><span>chunk {compactId(item.chunk_id)}</span></div>
+                      <div><span>{item.confidence === null ? "unscored" : `${item.confidence}%`}</span><span><TermHelp term="chunk" label="chunk" /> {compactId(item.chunk_id)}</span></div>
                     </article>
                   ))}
                 </div>
@@ -1145,7 +1532,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Claims</h3>{claims.error ? <span className="errorText">{claims.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="claim">Claims</HelpHeading></h3>{claims.error ? <span className="errorText">{claims.error}</span> : null}</div>
                 <div className="stack">
                   {recentClaims.map((claim) => (
                     <article className="item evidenceItem" key={claim.id}>
@@ -1163,31 +1550,31 @@ export default async function Home() {
             <div className="panelHeader">
               <div>
                 <p className="eyebrow">Memory</p>
-                <h2>Memory And Analysis</h2>
+                <h2><HelpHeading term="vectorMemory">Memory And Analysis</HelpHeading></h2>
               </div>
               {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some memory or analysis endpoints returned errors.</span>
               ) : null}
             </div>
             <section className="metrics compact" aria-label="Memory and analysis totals">
-              <article><span>Vector collection</span><strong>{vectorCollection.data.exists ? "Ready" : "Missing"}</strong></article>
-              <article><span>Graph constraints</span><strong>{graphSchema.data.constraints.length}</strong></article>
-              <article><span>Patterns</span><strong>{patterns.data.length}</strong></article>
-              <article><span>Recommendations</span><strong>{recommendations.data.length}</strong></article>
+              <article><span><TermHelp term="vectorMemory" label="Vector collection" /></span><strong>{vectorCollection.data.exists ? "Ready" : "Missing"}</strong></article>
+              <article><span><TermHelp term="graphMemory" label="Graph constraints" /></span><strong>{graphSchema.data.constraints.length}</strong></article>
+              <article><span><TermHelp term="pattern" label="Patterns" /></span><strong>{patterns.data.length}</strong></article>
+              <article><span><TermHelp term="recommendation" label="Recommendations" /></span><strong>{recommendations.data.length}</strong></article>
             </section>
             <section className="split">
               <article className="item evidenceItem">
-                <div><strong>{vectorCollection.data.collection_name}</strong><span>Configured chunk collection</span></div>
+                <div><strong><TermHelp term="qdrant" label={vectorCollection.data.collection_name} /></strong><span>Configured chunk collection</span></div>
                 <div><StatusPill state={vectorCollection.data.exists ? "enabled" : "missing"} /></div>
               </article>
               <article className="item evidenceItem">
-                <div><strong>{graphSchema.data.constraints.length} constraints</strong><span>Graph schema inspection only</span></div>
+                <div><strong><TermHelp term="neo4j" label={`${graphSchema.data.constraints.length} constraints`} /></strong><span>Graph schema inspection only</span></div>
                 <div><StatusPill state={graphSchema.error ? "error" : "ok"} /></div>
               </article>
             </section>
             <section className="quad analysisGrid">
               <div>
-                <div className="subHeader"><h3>Patterns</h3>{patterns.error ? <span className="errorText">{patterns.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="pattern">Patterns</HelpHeading></h3>{patterns.error ? <span className="errorText">{patterns.error}</span> : null}</div>
                 <div className="stack">
                   {recentPatterns.map((pattern) => (
                     <article className="item evidenceItem" key={pattern.id}>
@@ -1200,7 +1587,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Hypotheses</h3>{hypotheses.error ? <span className="errorText">{hypotheses.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="hypothesis">Hypotheses</HelpHeading></h3>{hypotheses.error ? <span className="errorText">{hypotheses.error}</span> : null}</div>
                 <div className="stack">
                   {recentHypotheses.map((hypothesis) => (
                     <article className="item evidenceItem" key={hypothesis.id}>
@@ -1213,7 +1600,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Predictions</h3>{predictions.error ? <span className="errorText">{predictions.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="prediction">Predictions</HelpHeading></h3>{predictions.error ? <span className="errorText">{predictions.error}</span> : null}</div>
                 <div className="stack">
                   {recentPredictions.map((prediction) => (
                     <article className="item evidenceItem" key={prediction.id}>
@@ -1226,7 +1613,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Recommendations</h3>{recommendations.error ? <span className="errorText">{recommendations.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="recommendation">Recommendations</HelpHeading></h3>{recommendations.error ? <span className="errorText">{recommendations.error}</span> : null}</div>
                 <div className="stack">
                   {recentRecommendations.map((recommendation) => (
                     <article className="item evidenceItem" key={recommendation.id}>
@@ -1244,21 +1631,21 @@ export default async function Home() {
             <div className="panelHeader">
               <div>
                 <p className="eyebrow">Operations</p>
-                <h2>Review And Operations</h2>
+                <h2><HelpHeading term="workItem">Review And Operations</HelpHeading></h2>
               </div>
               {[workItems.error, approvals.error, feedback.error, outcomes.error, reports.error, auditEvents.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some review or operations endpoints returned errors.</span>
               ) : null}
             </div>
             <section className="metrics compact" aria-label="Review and operations totals">
-              <article><span>Work items</span><strong>{workItems.data.length}</strong></article>
-              <article><span>Approvals</span><strong>{approvals.data.length}</strong></article>
-              <article><span>Feedback</span><strong>{feedback.data.length}</strong></article>
-              <article><span>Audit events</span><strong>{auditEvents.data.length}</strong></article>
+              <article><span><TermHelp term="workItem" label="Work items" /></span><strong>{workItems.data.length}</strong></article>
+              <article><span><TermHelp term="approval" label="Approvals" /></span><strong>{approvals.data.length}</strong></article>
+              <article><span><TermHelp term="feedback" label="Feedback" /></span><strong>{feedback.data.length}</strong></article>
+              <article><span><TermHelp term="auditEvent" label="Audit events" /></span><strong>{auditEvents.data.length}</strong></article>
             </section>
             <section className="quad analysisGrid">
               <div>
-                <div className="subHeader"><h3>Work Items</h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
                 <div className="stack">
                   {recentWorkItems.map((workItem) => (
                     <article className="item evidenceItem" key={workItem.id}>
@@ -1271,7 +1658,7 @@ export default async function Home() {
               </div>
 
               <div id="approvals">
-                <div className="subHeader"><h3>Approvals</h3>{approvals.error ? <span className="errorText">{approvals.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="approval">Approvals</HelpHeading></h3>{approvals.error ? <span className="errorText">{approvals.error}</span> : null}</div>
                 <div className="stack">
                   {recentApprovals.map((approval) => (
                     <article className="item evidenceItem" key={approval.id}>
@@ -1284,7 +1671,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Feedback</h3>{feedback.error ? <span className="errorText">{feedback.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="feedback">Feedback</HelpHeading></h3>{feedback.error ? <span className="errorText">{feedback.error}</span> : null}</div>
                 <div className="stack">
                   {recentFeedback.map((event) => (
                     <article className="item evidenceItem" key={event.id}>
@@ -1297,7 +1684,7 @@ export default async function Home() {
               </div>
 
               <div>
-                <div className="subHeader"><h3>Outcomes</h3>{outcomes.error ? <span className="errorText">{outcomes.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="outcome">Outcomes</HelpHeading></h3>{outcomes.error ? <span className="errorText">{outcomes.error}</span> : null}</div>
                 <div className="stack">
                   {recentOutcomes.map((outcome) => (
                     <article className="item evidenceItem" key={outcome.id}>
@@ -1323,7 +1710,7 @@ export default async function Home() {
               </div>
 
               <div id="audit">
-                <div className="subHeader"><h3>Audit Events</h3>{auditEvents.error ? <span className="errorText">{auditEvents.error}</span> : null}</div>
+                <div className="subHeader"><h3><HelpHeading term="auditEvent">Audit Events</HelpHeading></h3>{auditEvents.error ? <span className="errorText">{auditEvents.error}</span> : null}</div>
                 <div className="stack">
                   {recentAuditEvents.map((event) => (
                     <article className="item evidenceItem" key={event.id}>
@@ -1347,10 +1734,10 @@ export default async function Home() {
           </div>
           {health.error ? <span className="errorText">{health.error}</span> : null}
           <div className="contextStats">
-            <article><span>Sources</span><strong>{sources.data.length}</strong></article>
-            <article><span>Evidence</span><strong>{evidenceItems.data.length}</strong></article>
-            <article><span>Work queue</span><strong>{workItems.data.length}</strong></article>
-            <article><span>Approvals</span><strong>{approvals.data.length}</strong></article>
+            <article><span><TermHelp term="source" label="Sources" /></span><strong>{sources.data.length}</strong></article>
+            <article><span><TermHelp term="evidenceItem" label="Evidence" /></span><strong>{evidenceItems.data.length}</strong></article>
+            <article><span><TermHelp term="workItem" label="Work queue" /></span><strong>{workItems.data.length}</strong></article>
+            <article><span><TermHelp term="approval" label="Approvals" /></span><strong>{approvals.data.length}</strong></article>
           </div>
         </section>
 
@@ -1368,7 +1755,7 @@ export default async function Home() {
         </section>
 
         <section className="contextCard">
-          <h2>Recent Sources</h2>
+          <h2><HelpHeading term="source">Recent Sources</HelpHeading></h2>
           <div className="stack">
             {sources.data.slice(0, 4).map((source) => (
               <article className="miniRecord" key={source.id}>
@@ -1381,7 +1768,7 @@ export default async function Home() {
         </section>
 
         <section className="contextCard">
-          <h2>Recent Audit</h2>
+          <h2><HelpHeading term="auditEvent">Recent Audit</HelpHeading></h2>
           <div className="stack">
             {recentAuditEvents.map((event) => (
               <article className="miniRecord" key={event.id}>
@@ -1391,6 +1778,20 @@ export default async function Home() {
             ))}
           </div>
           {recentAuditEvents.length === 0 ? <EmptyState label="No audit events yet." /> : null}
+        </section>
+
+        <section className="contextCard">
+          <h2>Method Review</h2>
+          <div className="stack">
+            <article className="miniRecord">
+              <strong><TermHelp term="improvementItem" label="Improvement Item" /></strong>
+              <span>Proposed tuning target; not execution.</span>
+            </article>
+            <article className="miniRecord">
+              <strong><TermHelp term="experimentRun" label="Experiment Run" /></strong>
+              <span>Experiment metadata; not active MLflow/Optuna execution.</span>
+            </article>
+          </div>
         </section>
 
         <section className="contextCard reminderCard">
