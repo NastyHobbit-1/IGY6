@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import AuditEvent, FeedbackEvent
+from app.models import AuditEvent, FeedbackEvent, Source
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -34,6 +34,12 @@ FEEDBACK_LABELS = {
     "noisy",
     "trusted",
     "rejected",
+}
+
+SOURCE_TRUST_FEEDBACK = {
+    "trusted": {"trust_level": "trusted", "enabled": True},
+    "noisy": {"trust_level": "noisy", "enabled": True},
+    "rejected": {"trust_level": "rejected", "enabled": False},
 }
 
 
@@ -91,6 +97,39 @@ def _audit_feedback_created(db: Session, feedback: FeedbackEvent) -> None:
     )
 
 
+def _apply_source_trust_feedback(db: Session, feedback: FeedbackEvent) -> None:
+    if feedback.target_type != "source" or feedback.label not in SOURCE_TRUST_FEEDBACK:
+        return
+
+    source = db.get(Source, feedback.target_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+
+    previous_trust_level = source.trust_level
+    previous_enabled = source.enabled
+    update = SOURCE_TRUST_FEEDBACK[feedback.label]
+    source.trust_level = update["trust_level"]
+    source.enabled = update["enabled"]
+
+    db.add(
+        AuditEvent(
+            actor_id=feedback.actor_id,
+            event_type="source.trust_feedback_applied",
+            decision=feedback.label,
+            resource_type="source",
+            resource_id=source.id,
+            correlation_id=None,
+            details_json={
+                "feedback_id": feedback.id,
+                "previous_trust_level": previous_trust_level,
+                "new_trust_level": source.trust_level,
+                "previous_enabled": previous_enabled,
+                "new_enabled": source.enabled,
+            },
+        )
+    )
+
+
 @router.get("", response_model=list[FeedbackRead])
 def list_feedback(db: Session = Depends(get_db)) -> list[FeedbackEvent]:
     statement = select(FeedbackEvent).order_by(FeedbackEvent.created_at.desc())
@@ -110,6 +149,7 @@ def create_feedback(payload: FeedbackCreate, db: Session = Depends(get_db)) -> F
     )
     db.add(feedback)
     _audit_feedback_created(db, feedback)
+    _apply_source_trust_feedback(db, feedback)
     db.commit()
     db.refresh(feedback)
     return feedback

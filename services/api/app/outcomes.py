@@ -8,7 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import AuditEvent, Outcome
+from app.models import (
+    AuditEvent,
+    EvidenceItem,
+    Hypothesis,
+    Outcome,
+    Pattern,
+    Prediction,
+    Recommendation,
+    Report,
+    WorkItem,
+)
 
 router = APIRouter(prefix="/outcomes", tags=["outcomes"])
 
@@ -30,6 +40,15 @@ OUTCOME_STATUSES = {
     "inconclusive",
     "confirmed",
     "disconfirmed",
+}
+
+TARGET_MODELS = {
+    "prediction": Prediction,
+    "recommendation": Recommendation,
+    "work_item": WorkItem,
+    "hypothesis": Hypothesis,
+    "pattern": Pattern,
+    "report": Report,
 }
 
 
@@ -89,6 +108,38 @@ def _audit_outcome_created(db: Session, outcome: Outcome) -> None:
     )
 
 
+def _validate_target_exists(db: Session, target_type: str, target_id: str) -> None:
+    target_model = TARGET_MODELS[target_type]
+    if db.get(target_model, target_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Outcome target record does not exist",
+                "target_type": target_type,
+                "target_id": target_id,
+            },
+        )
+
+
+def _validated_evidence_ids(db: Session, evidence_ids: list[str]) -> list[str]:
+    unique_ids = list(dict.fromkeys(evidence_ids))
+    if not unique_ids:
+        return unique_ids
+
+    statement = select(EvidenceItem.id).where(EvidenceItem.id.in_(unique_ids))
+    found_ids = set(db.scalars(statement).all())
+    missing_ids = [evidence_id for evidence_id in unique_ids if evidence_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Outcome records must reference existing evidence items",
+                "missing_evidence_ids": missing_ids,
+            },
+        )
+    return unique_ids
+
+
 @router.get("", response_model=list[OutcomeRead])
 def list_outcomes(db: Session = Depends(get_db)) -> list[Outcome]:
     statement = select(Outcome).order_by(Outcome.created_at.desc())
@@ -97,6 +148,8 @@ def list_outcomes(db: Session = Depends(get_db)) -> list[Outcome]:
 
 @router.post("", response_model=OutcomeRead, status_code=status.HTTP_201_CREATED)
 def create_outcome(payload: OutcomeCreate, db: Session = Depends(get_db)) -> Outcome:
+    _validate_target_exists(db, payload.target_type, payload.target_id)
+    evidence_ids = _validated_evidence_ids(db, payload.evidence_ids)
     outcome = Outcome(
         id=str(uuid4()),
         target_type=payload.target_type,
@@ -104,7 +157,7 @@ def create_outcome(payload: OutcomeCreate, db: Session = Depends(get_db)) -> Out
         outcome_status=payload.outcome_status,
         summary=payload.summary,
         occurred_at=payload.occurred_at,
-        evidence_ids=payload.evidence_ids,
+        evidence_ids=evidence_ids,
         metadata_json=payload.metadata_json,
     )
     db.add(outcome)

@@ -14,7 +14,7 @@ from app.collector_dry_run import DryRunResult, run_connector_dry_run
 from app.config import get_settings
 from app.db import get_db
 from app.local_project_collection import LocalProjectCollectionError, collect_local_project_files
-from app.models import AuditEvent, CollectionRun, RawArtifact, Source, SourcePermission
+from app.models import AuditEvent, CollectionRun, RawArtifact, Source, SourcePermission, WorkItem
 
 router = APIRouter(prefix="/collection-runs", tags=["collection-runs"])
 
@@ -132,6 +132,54 @@ def _audit_raw_artifact_created(
             },
         )
     )
+
+
+def _queue_normalization_work_item(
+    db: Session,
+    *,
+    actor_id: str,
+    collection_run: CollectionRun,
+    source_permission_id: str,
+    raw_artifact_ids: list[str],
+    collection_mode: str,
+) -> WorkItem:
+    work_item = WorkItem(
+        id=str(uuid4()),
+        work_type="collection_normalization",
+        status="queued",
+        requested_by_actor_id=actor_id,
+        payload_json={
+            "collection_run_id": collection_run.id,
+            "source_id": collection_run.source_id,
+            "source_permission_id": source_permission_id,
+            "raw_artifact_ids": raw_artifact_ids,
+            "artifact_count": len(raw_artifact_ids),
+            "collection_mode": collection_mode,
+            "scaffold_only": False,
+            "executes_normalization": True,
+            "worker_task_name": "collection.normalize_collection_run",
+        },
+        error_message=None,
+    )
+    db.add(work_item)
+    db.add(
+        AuditEvent(
+            actor_id=actor_id,
+            event_type="work_item.created",
+            decision="queued",
+            resource_type="work_item",
+            resource_id=work_item.id,
+            correlation_id=collection_run.id,
+            details_json={
+                "work_type": work_item.work_type,
+                "collection_run_id": collection_run.id,
+                "raw_artifact_ids": raw_artifact_ids,
+                "scaffold_only": False,
+                "executes_normalization": True,
+            },
+        )
+    )
+    return work_item
 
 
 def _decode_content_base64(content_base64: str) -> bytes:
@@ -351,7 +399,7 @@ def create_manual_upload_collection(
             "storage_path": stored.storage_path,
             "size_bytes": stored.size_bytes,
             "content_already_existed": stored.existed,
-            "would_normalize": False,
+            "would_normalize": True,
             "would_enqueue_worker": False,
         },
         error_message=None,
@@ -380,6 +428,19 @@ def create_manual_upload_collection(
         artifact=artifact,
         content_already_existed=stored.existed,
     )
+    work_item = _queue_normalization_work_item(
+        db,
+        actor_id=payload.requested_by_actor_id,
+        collection_run=collection_run,
+        source_permission_id=permission.id,
+        raw_artifact_ids=[artifact.id],
+        collection_mode="manual_upload_collection",
+    )
+    collection_run.summary_json = {
+        **collection_run.summary_json,
+        "normalization_work_item_id": work_item.id,
+        "raw_artifact_ids": [artifact.id],
+    }
     db.commit()
     db.refresh(collection_run)
     return collection_run
@@ -433,7 +494,7 @@ def create_local_project_collection(
             "total_files": result.total_files,
             "collected_files": result.collected_files,
             "skipped_files": result.skipped_files,
-            "would_normalize": False,
+            "would_normalize": True,
             "would_enqueue_worker": False,
         },
         error_message=None,
@@ -441,6 +502,7 @@ def create_local_project_collection(
     db.add(collection_run)
     _audit_collection_run_created(db, collection_run)
 
+    raw_artifact_ids: list[str] = []
     for collected_file in result.files:
         artifact = RawArtifact(
             id=str(uuid4()),
@@ -457,6 +519,7 @@ def create_local_project_collection(
                 "content_already_existed": collected_file.artifact.existed,
             },
         )
+        raw_artifact_ids.append(artifact.id)
         db.add(artifact)
         _audit_raw_artifact_created(
             db,
@@ -465,6 +528,19 @@ def create_local_project_collection(
             content_already_existed=collected_file.artifact.existed,
         )
 
+    work_item = _queue_normalization_work_item(
+        db,
+        actor_id=payload.requested_by_actor_id,
+        collection_run=collection_run,
+        source_permission_id=permission.id,
+        raw_artifact_ids=raw_artifact_ids,
+        collection_mode="local_project_collection",
+    )
+    collection_run.summary_json = {
+        **collection_run.summary_json,
+        "normalization_work_item_id": work_item.id,
+        "raw_artifact_ids": raw_artifact_ids,
+    }
     db.commit()
     db.refresh(collection_run)
     return collection_run

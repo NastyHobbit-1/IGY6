@@ -43,12 +43,17 @@ GET /reports
 POST /reports
 GET /reports/{report_id}
 GET /analysis/patterns
+POST /analysis/patterns
+POST /analysis/patterns/{pattern_id}/review
 GET /analysis/patterns/{pattern_id}
 GET /analysis/hypotheses
+POST /analysis/hypotheses
 GET /analysis/hypotheses/{hypothesis_id}
 GET /analysis/predictions
+POST /analysis/predictions
 GET /analysis/predictions/{prediction_id}
 GET /analysis/recommendations
+POST /analysis/recommendations
 GET /analysis/recommendations/{recommendation_id}
 GET /audit-events
 GET /audit-events/{audit_event_id}
@@ -107,19 +112,63 @@ chunk. Generated chunks are not embedded and are rejected if chunks already
 exist for the document.
 
 Feedback endpoints record user labels for existing records and emit audit
-events. Feedback creation does not trigger outcome evaluation, ranking changes,
-or self-improvement jobs.
+events. Source-target feedback labels `trusted`, `noisy`, and `rejected` also
+update the target source: `trusted` sets source `trust_level` to `trusted`,
+`noisy` sets source `trust_level` to `noisy`, and `rejected` sets source
+`trust_level` to `rejected` and disables the source. These source trust side
+effects require the source to exist and emit a source audit event. Other
+feedback labels and non-source targets remain record-only. Feedback creation
+does not trigger outcome evaluation, ranking changes, graph or vector updates,
+worker jobs, or self-improvement jobs.
 
 Outcome endpoints record what happened after a prediction, recommendation, work
-item, hypothesis, pattern, or report. Outcome creation emits an audit event but
-does not update prediction/recommendation status or start self-improvement.
+item, hypothesis, pattern, or report. `POST /outcomes` validates that
+`target_type` is supported and that `target_id` exists for that target table
+before inserting the outcome. Optional `evidence_ids` must reference existing
+immutable evidence items; duplicate IDs are deduplicated in first-seen order.
+Validation failures return `422` and do not create an outcome or audit event.
+Outcome creation emits an audit event but does not update
+prediction/recommendation status, mutate the target record, create feedback,
+update graph or vector memory, enqueue workers, or start self-improvement.
 
 Report endpoints record report metadata and emit audit events. They do not
 render reports, write artifacts, or create exports.
 
-Analysis endpoints are read-only inspection routes for existing patterns,
-hypotheses, predictions, and recommendations. They do not generate new records,
-score confidence, create recommendations, or update outcomes.
+Analysis endpoints support explicit record entry and inspection for patterns,
+hypotheses, predictions, and recommendations. Create routes are human/API entry
+only. They validate every referenced evidence ID against existing immutable
+evidence items before inserting records and emit audit events when records are
+created.
+
+Pattern creation accepts `pattern_type`, `summary`, `evidence_ids`, optional
+`status`, optional `confidence`, optional `metadata_json`, and optional
+`actor_id`.
+
+Pattern review accepts `status`, optional `reviewed_by_actor_id`, and optional
+`review_note` at `POST /analysis/patterns/{pattern_id}/review`. Review status
+must be `verified` or `rejected`, and only existing `candidate` patterns can be
+reviewed. Review returns the updated pattern and writes an audit event with the
+previous status, new status, reviewer actor, and review note. It does not
+update outcomes, feedback, graph records, vector records, worker queues, or
+self-improvement state.
+
+Hypothesis creation accepts `hypothesis_text`, `supporting_evidence_ids`,
+optional `status`, optional `missing_evidence_json`, optional `confidence`,
+optional `metadata_json`, and optional `actor_id`.
+
+Prediction creation accepts `prediction_text`, `expected_result`,
+`evidence_ids`, optional `disproof_condition`, optional `status`, optional
+`confidence`, optional `metadata_json`, and optional `actor_id`.
+
+Recommendation creation accepts `recommendation_text`, `evidence_ids`, optional
+`risk_level`, optional `approval_required`, optional `expected_result`,
+optional `status`, optional `confidence`, optional `metadata_json`, and
+optional `actor_id`.
+
+Analysis create routes do not detect patterns, generate hypotheses, score
+confidence automatically, execute predictions or recommendations, update
+outcomes, enqueue workers, upsert vector or graph records, call external
+models, or trigger self-improvement.
 
 Audit endpoints are read-only inspection routes for audit events already present
 in PostgreSQL. They do not create, modify, or delete audit records.
@@ -130,8 +179,10 @@ artifact store, records PostgreSQL metadata, and emits an audit event. Artifact
 read routes remain metadata-only; they do not read artifact files or create
 exports.
 
-Collection-run endpoints record dry-run planning metadata only. They do not
-create raw artifacts, normalize content, or start worker jobs.
+Collection-run endpoints support dry-run planning and approved non-dry-run
+collection routes. Non-dry-run collection can create raw artifacts and a durable
+normalization work item marker. Collection routes do not normalize content,
+dispatch Celery jobs from the API, or execute worker jobs.
 
 The `POST /collection-runs/dry-run` route runs connector-backed dry-run
 validation for a source and permission pair, then records the preview result.
@@ -142,15 +193,37 @@ artifacts, normalize records, or queue work.
 The `POST /collection-runs/manual-upload` route accepts base64 content for a
 registered `manual_upload` source, stores it in the local content-addressed
 artifact store, creates a completed collection-run record, records raw artifact
-metadata, and emits audit events. It does not normalize content, generate
-chunks/evidence, or enqueue worker jobs.
+metadata, records a queued `collection_normalization` work item with the raw
+artifact ID, and emits audit events. It does not normalize content, generate
+chunks/evidence, dispatch Celery work from the API, or execute worker jobs. The
+collection summary exposes `normalization_work_item_id`.
 
 The `POST /collection-runs/local-project` route reads only files covered by
 explicit `scope_json.paths` for a registered `local_project` source. It rejects
 disabled or mismatched sources, skips symlinks and non-files, enforces file
 count and size limits, stores collected bytes in the local content-addressed
-artifact store, and records raw artifact metadata. It does not normalize
-content, generate chunks/evidence, or enqueue worker jobs.
+artifact store, records raw artifact metadata, records a queued
+`collection_normalization` work item with collected raw artifact IDs, and emits
+audit events. It does not normalize content, generate chunks/evidence, dispatch
+Celery work from the API, or execute worker jobs. The collection summary
+exposes `normalization_work_item_id`.
+
+The worker exposes `collection.normalize_collection_run` for queued
+`collection_normalization` work items. It validates the work item, collection
+run, and raw artifact IDs, reads only referenced artifact bytes, decodes UTF-8
+text, creates normalized document rows, skips already-normalized raw artifacts,
+updates work item state, and emits completion or failure audit events. It does
+not create chunks/evidence, upsert vector or graph memory, generate reports,
+call external models, or trigger self-improvement.
+
+The worker also exposes `evidence.generate_document_chunks` for existing
+normalized documents. It deterministically splits document text into fixed-size
+chunks, creates one evidence item per chunk, skips already-chunked documents,
+optionally updates a supplied `document_chunking` work item, and emits
+completion or failure audit events. This worker task is manually invokable or
+queue-targeted only; the API does not dispatch it automatically. It does not
+embed chunks, write Qdrant or Neo4j records, call external models, generate
+reports, or trigger self-improvement.
 
 Vector memory endpoints inspect and create the configured Qdrant chunk
 collection, upsert existing chunk text using the deterministic local embedding

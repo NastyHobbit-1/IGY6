@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     celery_broker_url: str = "redis://redis:6379/0"
     celery_result_backend: str = "redis://redis:6379/1"
+    database_url: str = "postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
+    artifact_store_path: str = "/workspace/storage/artifacts"
 
 
 @lru_cache
