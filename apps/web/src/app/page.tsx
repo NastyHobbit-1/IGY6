@@ -328,9 +328,12 @@ function ChatRetrievalPreview() {
 `;
 
   return (
-    <section className="panel">
+    <section className="panel chatPreviewPanel">
       <div className="panelHeader">
-        <h2>Chat Retrieval Preview</h2>
+        <div>
+          <p className="eyebrow">Evidence preview</p>
+          <h2>Chat Retrieval Preview</h2>
+        </div>
         <span className="statusText" data-chat-preview-status>answer_status: not_generated</span>
       </div>
       <form className="previewForm" data-chat-preview-form data-api-base-url={browserApiBaseUrl}>
@@ -342,10 +345,10 @@ function ChatRetrievalPreview() {
           <span>Limit</span>
           <input data-chat-preview-limit name="limit" type="number" min="1" max="50" defaultValue="5" />
         </label>
-        <button type="submit">Preview Retrieval Context</button>
+        <button type="submit">Preview Context</button>
       </form>
       <div className="previewNote">
-        This preview returns retrieval context only. It does not generate an answer, persist a conversation, call a model, or trigger an action.
+        Retrieval context only. No LLM answer, hidden reasoning, external model call, persistence, or action execution.
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <script dangerouslySetInnerHTML={{ __html: script }} />
@@ -663,552 +666,453 @@ export default async function Home() {
   const recentAuditEvents = auditEvents.data.slice(0, 4);
 
   return (
-    <main className="shell">
-      <section className="header">
-        <div>
-          <p className="eyebrow">Local inventory</p>
-          <h1>IGY6 Adaptive Intelligence System</h1>
+    <main className="consoleShell">
+      <aside className="leftSidebar" aria-label="IGY6 navigation">
+        <div className="brandBlock">
+          <div className="brandMark">IG</div>
+          <div>
+            <strong>IGY6</strong>
+            <span>Local evidence console</span>
+          </div>
         </div>
-        <div className="overall">
-          <span>API readiness</span>
-          <StatusPill state={health.data.status} />
+
+        <div className="sidebarActions">
+          <button type="button" disabled>New Chat · Scaffolded</button>
+          <button type="button" disabled>New Review · Scaffolded</button>
+          <button type="button" disabled>New Task · Scaffolded</button>
         </div>
+
+        <label className="sidebarSearch">
+          <span>Search workspace</span>
+          <input readOnly value="" placeholder="Sources, evidence, reports..." />
+        </label>
+
+        <nav className="navSection" aria-label="Workspace sections">
+          {["Chat", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit"].map((item) => (
+            <a href={`#${item.toLowerCase().replaceAll(" ", "-")}`} key={item}>{item}</a>
+          ))}
+        </nav>
+
+        <section className="sidebarList" aria-label="Recent work">
+          <div className="sidebarHeading">
+            <span>Recent work</span>
+            <StatusPill state="scaffolded" />
+          </div>
+          {recentWorkItems.map((workItem) => (
+            <article className="miniRecord" key={workItem.id}>
+              <strong>{workItem.work_type}</strong>
+              <span>{workItem.status} · {compactId(workItem.id)}</span>
+            </article>
+          ))}
+          {recentWorkItems.length === 0 ? <EmptyState label="No work items yet." /> : null}
+        </section>
+
+        <footer className="localFooter">
+          <StatusPill state="local-first" />
+          <span>Read-only by default · No external model</span>
+        </footer>
+      </aside>
+
+      <section className="mainConsole">
+        <header className="topBar">
+          <div>
+            <p className="eyebrow">IGY6</p>
+            <h1>Adaptive Intelligence Evidence Console</h1>
+          </div>
+          <div className="topStatus">
+            <StatusPill state="local-first" />
+            <StatusPill state="evidence-only" />
+            <StatusPill state="no-external-model" />
+            <StatusPill state={health.data.status} />
+          </div>
+        </header>
+
+        <section className="chatStage" id="chat">
+          <div className="conversationWindow">
+            <article className="message systemMessage">
+              <div className="avatar">SYS</div>
+              <div className="messageBubble">
+                <span className="messageLabel">System / local status</span>
+                <p>IGY6 is running as a local-first evidence system. Responses in this panel are retrieval previews or deterministic evidence packets, not LLM-generated answers.</p>
+                <div className="messageMeta">
+                  <StatusPill state="deterministic" />
+                  <StatusPill state="not-generated" />
+                  <StatusPill state="read-only-default" />
+                </div>
+              </div>
+            </article>
+
+            <article className="message userMessage">
+              <div className="avatar">YOU</div>
+              <div className="messageBubble">
+                <span className="messageLabel">User prompt</span>
+                <p>What does the system know?</p>
+              </div>
+            </article>
+
+            <article className="message assistantMessage">
+              <div className="avatar">IG</div>
+              <div className="messageBubble">
+                <span className="messageLabel">Assistant / evidence summary preview</span>
+                <p>Use the retrieval preview below to inspect matching local chunks and evidence trails. No external model is called, and no action is triggered.</p>
+                <div className="retrievalStrip">
+                  <span>{evidenceItems.data.length} evidence items stored</span>
+                  <span>{chunks.data.length} chunks indexed in state</span>
+                  <span>{vectorCollection.data.exists ? "Vector collection ready" : "Vector collection missing"}</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <ChatRetrievalPreview />
+        </section>
+
+        <section className="panel toolConsole" aria-label="MVP action console">
+          <details>
+            <summary>
+              <span>
+                <strong>MVP Action Console</strong>
+                <em>Existing FastAPI controls · no new actions added</em>
+              </span>
+              <StatusPill state="scaffolded" />
+            </summary>
+            <MvpActionConsole />
+          </details>
+        </section>
+
+        <section className="workspaceGrid" aria-label="IGY6 loaded records">
+          <section className="panel" id="sources">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Sources</p>
+                <h2>Source Registry</h2>
+              </div>
+              {sources.error ? <span className="errorText">{sources.error}</span> : <StatusPill state={`${sources.data.length}-sources`} />}
+            </div>
+            <div className="table compactTable">
+              {sources.data.map((source) => (
+                <div className="row" key={source.id}>
+                  <strong>{source.name}</strong>
+                  <span>{source.source_type}</span>
+                  <span>{source.sensitivity}</span>
+                  <span>{source.permissions?.length ?? 0} permissions</span>
+                  <StatusPill state={source.enabled ? "enabled" : "disabled"} />
+                </div>
+              ))}
+            </div>
+            {sources.data.length === 0 ? <EmptyState label="No sources registered yet." /> : null}
+          </section>
+
+          <section className="panel" id="evidence">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Evidence</p>
+                <h2>Evidence Explorer</h2>
+              </div>
+              {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
+                <span className="errorText">Some evidence endpoints returned errors.</span>
+              ) : null}
+            </div>
+            <section className="metrics compact" aria-label="Evidence totals">
+              <article><span>Documents</span><strong>{documents.data.length}</strong></article>
+              <article><span>Chunks</span><strong>{chunks.data.length}</strong></article>
+              <article><span>Evidence</span><strong>{evidenceItems.data.length}</strong></article>
+              <article><span>Claims</span><strong>{claims.data.length}</strong></article>
+            </section>
+            <section className="quad">
+              <div>
+                <div className="subHeader"><h3>Documents</h3>{documents.error ? <span className="errorText">{documents.error}</span> : null}</div>
+                <div className="stack">
+                  {recentDocuments.map((document) => (
+                    <article className="item evidenceItem" key={document.id}>
+                      <div><strong>{document.title ?? compactId(document.id)}</strong><span>{document.document_type} · {document.sensitivity}</span></div>
+                      <div><span>{formatDate(document.created_at)}</span><span>source {compactId(document.source_id)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentDocuments.length === 0 ? <EmptyState label="No normalized documents recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Chunks</h3>{chunks.error ? <span className="errorText">{chunks.error}</span> : null}</div>
+                <div className="stack">
+                  {recentChunks.map((chunk) => (
+                    <article className="item evidenceItem" key={chunk.id}>
+                      <div><strong>{compactId(chunk.id)}</strong><span>document {compactId(chunk.document_id)}</span></div>
+                      <div><StatusPill state={chunk.embedding_status} /><span>index {chunk.chunk_index}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentChunks.length === 0 ? <EmptyState label="No chunks generated yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Evidence Items</h3>{evidenceItems.error ? <span className="errorText">{evidenceItems.error}</span> : null}</div>
+                <div className="stack">
+                  {recentEvidence.map((item) => (
+                    <article className="item evidenceItem" key={item.id}>
+                      <div><strong>{item.evidence_type}</strong><span>{excerpt(item.statement)}</span></div>
+                      <div><span>{item.confidence === null ? "unscored" : `${item.confidence}%`}</span><span>chunk {compactId(item.chunk_id)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentEvidence.length === 0 ? <EmptyState label="No evidence items recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Claims</h3>{claims.error ? <span className="errorText">{claims.error}</span> : null}</div>
+                <div className="stack">
+                  {recentClaims.map((claim) => (
+                    <article className="item evidenceItem" key={claim.id}>
+                      <div><strong>{claim.claim_type}</strong><span>{excerpt(claim.claim_text)}</span></div>
+                      <div><StatusPill state={claim.status} /><span>{claim.confidence === null ? "unscored" : `${claim.confidence}%`}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentClaims.length === 0 ? <EmptyState label="No claims recorded yet." /> : null}
+              </div>
+            </section>
+          </section>
+
+          <section className="panel" id="memory">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Memory</p>
+                <h2>Memory And Analysis</h2>
+              </div>
+              {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
+                <span className="errorText">Some memory or analysis endpoints returned errors.</span>
+              ) : null}
+            </div>
+            <section className="metrics compact" aria-label="Memory and analysis totals">
+              <article><span>Vector collection</span><strong>{vectorCollection.data.exists ? "Ready" : "Missing"}</strong></article>
+              <article><span>Graph constraints</span><strong>{graphSchema.data.constraints.length}</strong></article>
+              <article><span>Patterns</span><strong>{patterns.data.length}</strong></article>
+              <article><span>Recommendations</span><strong>{recommendations.data.length}</strong></article>
+            </section>
+            <section className="split">
+              <article className="item evidenceItem">
+                <div><strong>{vectorCollection.data.collection_name}</strong><span>Configured chunk collection</span></div>
+                <div><StatusPill state={vectorCollection.data.exists ? "enabled" : "missing"} /></div>
+              </article>
+              <article className="item evidenceItem">
+                <div><strong>{graphSchema.data.constraints.length} constraints</strong><span>Graph schema inspection only</span></div>
+                <div><StatusPill state={graphSchema.error ? "error" : "ok"} /></div>
+              </article>
+            </section>
+            <section className="quad analysisGrid">
+              <div>
+                <div className="subHeader"><h3>Patterns</h3>{patterns.error ? <span className="errorText">{patterns.error}</span> : null}</div>
+                <div className="stack">
+                  {recentPatterns.map((pattern) => (
+                    <article className="item evidenceItem" key={pattern.id}>
+                      <div><strong>{pattern.pattern_type}</strong><span>{excerpt(pattern.summary)}</span></div>
+                      <div><StatusPill state={pattern.status} /><span>{pattern.confidence === null ? "unscored" : `${pattern.confidence}%`}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentPatterns.length === 0 ? <EmptyState label="No patterns recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Hypotheses</h3>{hypotheses.error ? <span className="errorText">{hypotheses.error}</span> : null}</div>
+                <div className="stack">
+                  {recentHypotheses.map((hypothesis) => (
+                    <article className="item evidenceItem" key={hypothesis.id}>
+                      <div><strong>{compactId(hypothesis.id)}</strong><span>{excerpt(hypothesis.hypothesis_text)}</span></div>
+                      <div><StatusPill state={hypothesis.status} /><span>{hypothesis.confidence === null ? "unscored" : `${hypothesis.confidence}%`}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Predictions</h3>{predictions.error ? <span className="errorText">{predictions.error}</span> : null}</div>
+                <div className="stack">
+                  {recentPredictions.map((prediction) => (
+                    <article className="item evidenceItem" key={prediction.id}>
+                      <div><strong>{excerpt(prediction.prediction_text, 80)}</strong><span>{excerpt(prediction.expected_result, 90)}</span></div>
+                      <div><StatusPill state={prediction.status} /><span>{prediction.confidence === null ? "unscored" : `${prediction.confidence}%`}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentPredictions.length === 0 ? <EmptyState label="No predictions recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Recommendations</h3>{recommendations.error ? <span className="errorText">{recommendations.error}</span> : null}</div>
+                <div className="stack">
+                  {recentRecommendations.map((recommendation) => (
+                    <article className="item evidenceItem" key={recommendation.id}>
+                      <div><strong>{recommendation.risk_level}</strong><span>{excerpt(recommendation.recommendation_text)}</span></div>
+                      <div><StatusPill state={recommendation.status} /><span>{recommendation.approval_required ? "approval" : "no approval"}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
+              </div>
+            </section>
+          </section>
+
+          <section className="panel" id="work-queue">
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">Operations</p>
+                <h2>Review And Operations</h2>
+              </div>
+              {[workItems.error, approvals.error, feedback.error, outcomes.error, reports.error, auditEvents.error].filter(Boolean).length > 0 ? (
+                <span className="errorText">Some review or operations endpoints returned errors.</span>
+              ) : null}
+            </div>
+            <section className="metrics compact" aria-label="Review and operations totals">
+              <article><span>Work items</span><strong>{workItems.data.length}</strong></article>
+              <article><span>Approvals</span><strong>{approvals.data.length}</strong></article>
+              <article><span>Feedback</span><strong>{feedback.data.length}</strong></article>
+              <article><span>Audit events</span><strong>{auditEvents.data.length}</strong></article>
+            </section>
+            <section className="quad analysisGrid">
+              <div>
+                <div className="subHeader"><h3>Work Items</h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
+                <div className="stack">
+                  {recentWorkItems.map((workItem) => (
+                    <article className="item evidenceItem" key={workItem.id}>
+                      <div><strong>{workItem.work_type}</strong><span>{workItem.error_message ?? `requested by ${workItem.requested_by_actor_id}`}</span></div>
+                      <div><StatusPill state={workItem.status} /><span>{formatDate(workItem.created_at)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
+              </div>
+
+              <div id="approvals">
+                <div className="subHeader"><h3>Approvals</h3>{approvals.error ? <span className="errorText">{approvals.error}</span> : null}</div>
+                <div className="stack">
+                  {recentApprovals.map((approval) => (
+                    <article className="item evidenceItem" key={approval.id}>
+                      <div><strong>{approval.request_type}</strong><span>{approval.decision_reason ?? `requested by ${approval.requested_by_actor_id}`}</span></div>
+                      <div><StatusPill state={approval.status} /><span>{approval.decided_by_actor_id ?? "undecided"}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentApprovals.length === 0 ? <EmptyState label="No approvals recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Feedback</h3>{feedback.error ? <span className="errorText">{feedback.error}</span> : null}</div>
+                <div className="stack">
+                  {recentFeedback.map((event) => (
+                    <article className="item evidenceItem" key={event.id}>
+                      <div><strong>{event.label}</strong><span>{event.note ?? `${event.target_type} ${compactId(event.target_id)}`}</span></div>
+                      <div><span>{event.actor_id}</span><span>{formatDate(event.created_at)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentFeedback.length === 0 ? <EmptyState label="No feedback recorded yet." /> : null}
+              </div>
+
+              <div>
+                <div className="subHeader"><h3>Outcomes</h3>{outcomes.error ? <span className="errorText">{outcomes.error}</span> : null}</div>
+                <div className="stack">
+                  {recentOutcomes.map((outcome) => (
+                    <article className="item evidenceItem" key={outcome.id}>
+                      <div><strong>{outcome.target_type}</strong><span>{outcome.summary ?? compactId(outcome.target_id)}</span></div>
+                      <div><StatusPill state={outcome.outcome_status} /><span>{formatDate(outcome.created_at)}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentOutcomes.length === 0 ? <EmptyState label="No outcomes recorded yet." /> : null}
+              </div>
+
+              <div id="reports">
+                <div className="subHeader"><h3>Reports</h3>{reports.error ? <span className="errorText">{reports.error}</span> : null}</div>
+                <div className="stack">
+                  {recentReports.map((report) => (
+                    <article className="item evidenceItem" key={report.id}>
+                      <div><strong>{report.title}</strong><span>{report.report_type}</span></div>
+                      <div><StatusPill state={report.status} /><span>{report.requested_by_actor_id}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentReports.length === 0 ? <EmptyState label="No reports recorded yet." /> : null}
+              </div>
+
+              <div id="audit">
+                <div className="subHeader"><h3>Audit Events</h3>{auditEvents.error ? <span className="errorText">{auditEvents.error}</span> : null}</div>
+                <div className="stack">
+                  {recentAuditEvents.map((event) => (
+                    <article className="item evidenceItem" key={event.id}>
+                      <div><strong>{event.event_type}</strong><span>{event.resource_type ?? "resource"} {compactId(event.resource_id)}</span></div>
+                      <div><StatusPill state={event.decision ?? "recorded"} /><span>{event.actor_id}</span></div>
+                    </article>
+                  ))}
+                </div>
+                {recentAuditEvents.length === 0 ? <EmptyState label="No audit events recorded yet." /> : null}
+              </div>
+            </section>
+          </section>
+        </section>
       </section>
 
-      <section className="metrics" aria-label="Inventory totals">
-        <article>
-          <span>Sources</span>
-          <strong>{sources.data.length}</strong>
-        </article>
-        <article>
-          <span>Collection runs</span>
-          <strong>{collectionRuns.data.length}</strong>
-        </article>
-        <article>
-          <span>Raw artifacts</span>
-          <strong>{artifacts.data.length}</strong>
-        </article>
-        <article>
-          <span>Evidence items</span>
-          <strong>{evidenceItems.data.length}</strong>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Service Readiness</h2>
+      <aside className="rightContext" aria-label="IGY6 context">
+        <section className="contextCard">
+          <div className="panelHeader">
+            <h2>Context</h2>
+            <StatusPill state={health.data.status} />
+          </div>
           {health.error ? <span className="errorText">{health.error}</span> : null}
-        </div>
-        <div className="checkGrid">
-          {Object.entries(checks).map(([name, check]) => (
-            <article className="check" key={name}>
-              <span>{name}</span>
-              <StatusPill state={check.status} />
-              {check.detail ? <small>{check.detail}</small> : null}
-            </article>
-          ))}
-          {Object.keys(checks).length === 0 ? <EmptyState label="No readiness details returned." /> : null}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Sources</h2>
-          {sources.error ? <span className="errorText">{sources.error}</span> : null}
-        </div>
-        <div className="table">
-          <div className="row head">
-            <span>Name</span>
-            <span>Type</span>
-            <span>Sensitivity</span>
-            <span>Permissions</span>
-            <span>State</span>
+          <div className="contextStats">
+            <article><span>Sources</span><strong>{sources.data.length}</strong></article>
+            <article><span>Evidence</span><strong>{evidenceItems.data.length}</strong></article>
+            <article><span>Work queue</span><strong>{workItems.data.length}</strong></article>
+            <article><span>Approvals</span><strong>{approvals.data.length}</strong></article>
           </div>
-          {sources.data.map((source) => (
-            <div className="row" key={source.id}>
-              <strong>{source.name}</strong>
-              <span>{source.source_type}</span>
-              <span>{source.sensitivity}</span>
-              <span>{source.permissions?.length ?? 0}</span>
-              <StatusPill state={source.enabled ? "enabled" : "disabled"} />
-            </div>
-          ))}
-        </div>
-        {sources.data.length === 0 ? <EmptyState label="No sources registered yet." /> : null}
-      </section>
+        </section>
 
-      <section className="split">
-        <section className="panel">
-          <div className="panelHeader">
-            <h2>Recent Collection Runs</h2>
-            {collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}
+        <section className="contextCard">
+          <h2>Service Readiness</h2>
+          <div className="checkList">
+            {Object.entries(checks).map(([name, check]) => (
+              <article className="checkRow" key={name}>
+                <span>{name}</span>
+                <StatusPill state={check.status} />
+              </article>
+            ))}
+            {Object.keys(checks).length === 0 ? <EmptyState label="No readiness details returned." /> : null}
           </div>
+        </section>
+
+        <section className="contextCard">
+          <h2>Recent Sources</h2>
           <div className="stack">
-            {recentRuns.map((run) => (
-              <article className="item" key={run.id}>
-                <div>
-                  <strong>{compactId(run.id)}</strong>
-                  <span>{formatDate(run.created_at)}</span>
-                </div>
-                <div>
-                  <StatusPill state={run.status} />
-                  <span>{run.dry_run ? "dry run" : "collection"}</span>
-                </div>
+            {sources.data.slice(0, 4).map((source) => (
+              <article className="miniRecord" key={source.id}>
+                <strong>{source.name}</strong>
+                <span>{source.source_type} · {source.trust_level}</span>
               </article>
             ))}
           </div>
-          {recentRuns.length === 0 ? <EmptyState label="No collection runs recorded yet." /> : null}
+          {sources.data.length === 0 ? <EmptyState label="No sources yet." /> : null}
         </section>
 
-        <section className="panel">
-          <div className="panelHeader">
-            <h2>Recent Raw Artifacts</h2>
-            {artifacts.error ? <span className="errorText">{artifacts.error}</span> : null}
-          </div>
+        <section className="contextCard">
+          <h2>Recent Audit</h2>
           <div className="stack">
-            {recentArtifacts.map((artifact) => (
-              <article className="item" key={artifact.id}>
-                <div>
-                  <strong>{compactId(artifact.id)}</strong>
-                  <span>{formatDate(artifact.created_at)}</span>
-                </div>
-                <div>
-                  <span>{artifact.mime_type ?? "unknown type"}</span>
-                  <span>{formatBytes(artifact.size_bytes)}</span>
-                </div>
+            {recentAuditEvents.map((event) => (
+              <article className="miniRecord" key={event.id}>
+                <strong>{event.event_type}</strong>
+                <span>{event.decision ?? "recorded"} · {event.actor_id}</span>
               </article>
             ))}
           </div>
-          {recentArtifacts.length === 0 ? <EmptyState label="No raw artifacts recorded yet." /> : null}
+          {recentAuditEvents.length === 0 ? <EmptyState label="No audit events yet." /> : null}
         </section>
-      </section>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Evidence Explorer</h2>
-          {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
-            <span className="errorText">Some evidence endpoints returned errors.</span>
-          ) : null}
-        </div>
-        <section className="metrics compact" aria-label="Evidence totals">
-          <article>
-            <span>Documents</span>
-            <strong>{documents.data.length}</strong>
-          </article>
-          <article>
-            <span>Chunks</span>
-            <strong>{chunks.data.length}</strong>
-          </article>
-          <article>
-            <span>Evidence items</span>
-            <strong>{evidenceItems.data.length}</strong>
-          </article>
-          <article>
-            <span>Claims</span>
-            <strong>{claims.data.length}</strong>
-          </article>
+        <section className="contextCard reminderCard">
+          <h2>Uncertainty</h2>
+          <p>Retrieval only reflects sources that have been registered, collected, normalized, chunked, and embedded. Missing or disabled sources are not evidence.</p>
         </section>
-        <section className="quad">
-          <div>
-            <div className="subHeader">
-              <h3>Documents</h3>
-              {documents.error ? <span className="errorText">{documents.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentDocuments.map((document) => (
-                <article className="item evidenceItem" key={document.id}>
-                  <div>
-                    <strong>{document.title ?? compactId(document.id)}</strong>
-                    <span>{document.document_type} · {document.sensitivity}</span>
-                  </div>
-                  <div>
-                    <span>{formatDate(document.created_at)}</span>
-                    <span>source {compactId(document.source_id)}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentDocuments.length === 0 ? <EmptyState label="No normalized documents recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Chunks</h3>
-              {chunks.error ? <span className="errorText">{chunks.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentChunks.map((chunk) => (
-                <article className="item evidenceItem" key={chunk.id}>
-                  <div>
-                    <strong>{compactId(chunk.id)}</strong>
-                    <span>document {compactId(chunk.document_id)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={chunk.embedding_status} />
-                    <span>index {chunk.chunk_index}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentChunks.length === 0 ? <EmptyState label="No chunks generated yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Evidence Items</h3>
-              {evidenceItems.error ? <span className="errorText">{evidenceItems.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentEvidence.map((item) => (
-                <article className="item evidenceItem" key={item.id}>
-                  <div>
-                    <strong>{item.evidence_type}</strong>
-                    <span>{excerpt(item.statement)}</span>
-                  </div>
-                  <div>
-                    <span>{item.confidence === null ? "unscored" : `${item.confidence}%`}</span>
-                    <span>chunk {compactId(item.chunk_id)}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentEvidence.length === 0 ? <EmptyState label="No evidence items recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Claims</h3>
-              {claims.error ? <span className="errorText">{claims.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentClaims.map((claim) => (
-                <article className="item evidenceItem" key={claim.id}>
-                  <div>
-                    <strong>{claim.claim_type}</strong>
-                    <span>{excerpt(claim.claim_text)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={claim.status} />
-                    <span>{claim.confidence === null ? "unscored" : `${claim.confidence}%`}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentClaims.length === 0 ? <EmptyState label="No claims recorded yet." /> : null}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Memory And Analysis</h2>
-          {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
-            <span className="errorText">Some memory or analysis endpoints returned errors.</span>
-          ) : null}
-        </div>
-        <section className="metrics compact" aria-label="Memory and analysis totals">
-          <article>
-            <span>Vector collection</span>
-            <strong>{vectorCollection.data.exists ? "Ready" : "Missing"}</strong>
-          </article>
-          <article>
-            <span>Graph constraints</span>
-            <strong>{graphSchema.data.constraints.length}</strong>
-          </article>
-          <article>
-            <span>Patterns</span>
-            <strong>{patterns.data.length}</strong>
-          </article>
-          <article>
-            <span>Recommendations</span>
-            <strong>{recommendations.data.length}</strong>
-          </article>
-        </section>
-        <section className="split">
-          <div className="memoryStatus">
-            <div className="subHeader">
-              <h3>Vector Memory</h3>
-              {vectorCollection.error ? <span className="errorText">{vectorCollection.error}</span> : null}
-            </div>
-            <article className="item evidenceItem">
-              <div>
-                <strong>{vectorCollection.data.collection_name}</strong>
-                <span>Configured chunk collection</span>
-              </div>
-              <div>
-                <StatusPill state={vectorCollection.data.exists ? "enabled" : "missing"} />
-              </div>
-            </article>
-          </div>
-          <div className="memoryStatus">
-            <div className="subHeader">
-              <h3>Graph Memory</h3>
-              {graphSchema.error ? <span className="errorText">{graphSchema.error}</span> : null}
-            </div>
-            <article className="item evidenceItem">
-              <div>
-                <strong>{graphSchema.data.constraints.length} constraints</strong>
-                <span>Schema inspection only</span>
-              </div>
-              <div>
-                <StatusPill state={graphSchema.error ? "error" : "ok"} />
-              </div>
-            </article>
-          </div>
-        </section>
-        <section className="quad analysisGrid">
-          <div>
-            <div className="subHeader">
-              <h3>Patterns</h3>
-              {patterns.error ? <span className="errorText">{patterns.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentPatterns.map((pattern) => (
-                <article className="item evidenceItem" key={pattern.id}>
-                  <div>
-                    <strong>{pattern.pattern_type}</strong>
-                    <span>{excerpt(pattern.summary)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={pattern.status} />
-                    <span>{pattern.confidence === null ? "unscored" : `${pattern.confidence}%`}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentPatterns.length === 0 ? <EmptyState label="No patterns recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Hypotheses</h3>
-              {hypotheses.error ? <span className="errorText">{hypotheses.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentHypotheses.map((hypothesis) => (
-                <article className="item evidenceItem" key={hypothesis.id}>
-                  <div>
-                    <strong>{compactId(hypothesis.id)}</strong>
-                    <span>{excerpt(hypothesis.hypothesis_text)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={hypothesis.status} />
-                    <span>{hypothesis.confidence === null ? "unscored" : `${hypothesis.confidence}%`}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Predictions</h3>
-              {predictions.error ? <span className="errorText">{predictions.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentPredictions.map((prediction) => (
-                <article className="item evidenceItem" key={prediction.id}>
-                  <div>
-                    <strong>{excerpt(prediction.prediction_text, 80)}</strong>
-                    <span>{excerpt(prediction.expected_result, 90)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={prediction.status} />
-                    <span>{prediction.confidence === null ? "unscored" : `${prediction.confidence}%`}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentPredictions.length === 0 ? <EmptyState label="No predictions recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Recommendations</h3>
-              {recommendations.error ? <span className="errorText">{recommendations.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentRecommendations.map((recommendation) => (
-                <article className="item evidenceItem" key={recommendation.id}>
-                  <div>
-                    <strong>{recommendation.risk_level}</strong>
-                    <span>{excerpt(recommendation.recommendation_text)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={recommendation.status} />
-                    <span>{recommendation.approval_required ? "approval" : "no approval"}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Review And Operations</h2>
-          {[workItems.error, approvals.error, feedback.error, outcomes.error, reports.error, auditEvents.error].filter(Boolean).length > 0 ? (
-            <span className="errorText">Some review or operations endpoints returned errors.</span>
-          ) : null}
-        </div>
-        <section className="metrics compact" aria-label="Review and operations totals">
-          <article>
-            <span>Work items</span>
-            <strong>{workItems.data.length}</strong>
-          </article>
-          <article>
-            <span>Approvals</span>
-            <strong>{approvals.data.length}</strong>
-          </article>
-          <article>
-            <span>Feedback</span>
-            <strong>{feedback.data.length}</strong>
-          </article>
-          <article>
-            <span>Audit events</span>
-            <strong>{auditEvents.data.length}</strong>
-          </article>
-        </section>
-        <section className="quad analysisGrid">
-          <div>
-            <div className="subHeader">
-              <h3>Work Items</h3>
-              {workItems.error ? <span className="errorText">{workItems.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentWorkItems.map((workItem) => (
-                <article className="item evidenceItem" key={workItem.id}>
-                  <div>
-                    <strong>{workItem.work_type}</strong>
-                    <span>{workItem.error_message ?? `requested by ${workItem.requested_by_actor_id}`}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={workItem.status} />
-                    <span>{formatDate(workItem.created_at)}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Approvals</h3>
-              {approvals.error ? <span className="errorText">{approvals.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentApprovals.map((approval) => (
-                <article className="item evidenceItem" key={approval.id}>
-                  <div>
-                    <strong>{approval.request_type}</strong>
-                    <span>{approval.decision_reason ?? `requested by ${approval.requested_by_actor_id}`}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={approval.status} />
-                    <span>{approval.decided_by_actor_id ?? "undecided"}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentApprovals.length === 0 ? <EmptyState label="No approvals recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Feedback</h3>
-              {feedback.error ? <span className="errorText">{feedback.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentFeedback.map((event) => (
-                <article className="item evidenceItem" key={event.id}>
-                  <div>
-                    <strong>{event.label}</strong>
-                    <span>{event.note ?? `${event.target_type} ${compactId(event.target_id)}`}</span>
-                  </div>
-                  <div>
-                    <span>{event.actor_id}</span>
-                    <span>{formatDate(event.created_at)}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentFeedback.length === 0 ? <EmptyState label="No feedback recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Outcomes</h3>
-              {outcomes.error ? <span className="errorText">{outcomes.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentOutcomes.map((outcome) => (
-                <article className="item evidenceItem" key={outcome.id}>
-                  <div>
-                    <strong>{outcome.target_type}</strong>
-                    <span>{outcome.summary ?? compactId(outcome.target_id)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={outcome.outcome_status} />
-                    <span>{formatDate(outcome.created_at)}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentOutcomes.length === 0 ? <EmptyState label="No outcomes recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Reports</h3>
-              {reports.error ? <span className="errorText">{reports.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentReports.map((report) => (
-                <article className="item evidenceItem" key={report.id}>
-                  <div>
-                    <strong>{report.title}</strong>
-                    <span>{report.report_type}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={report.status} />
-                    <span>{report.requested_by_actor_id}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentReports.length === 0 ? <EmptyState label="No reports recorded yet." /> : null}
-          </div>
-
-          <div>
-            <div className="subHeader">
-              <h3>Audit Events</h3>
-              {auditEvents.error ? <span className="errorText">{auditEvents.error}</span> : null}
-            </div>
-            <div className="stack">
-              {recentAuditEvents.map((event) => (
-                <article className="item evidenceItem" key={event.id}>
-                  <div>
-                    <strong>{event.event_type}</strong>
-                    <span>{event.resource_type ?? "resource"} {compactId(event.resource_id)}</span>
-                  </div>
-                  <div>
-                    <StatusPill state={event.decision ?? "recorded"} />
-                    <span>{event.actor_id}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {recentAuditEvents.length === 0 ? <EmptyState label="No audit events recorded yet." /> : null}
-          </div>
-        </section>
-      </section>
-
-      <ChatRetrievalPreview />
-      <MvpActionConsole />
+      </aside>
     </main>
   );
 }
