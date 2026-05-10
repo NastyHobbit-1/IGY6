@@ -1,9 +1,12 @@
 # API
 
-The API currently exposes health checks plus Phase 1 foundation endpoints for
-source registry records, work item intent records, and approval records. It does
-not implement collection, ingestion, evidence review, chat, prediction, or
-self-improvement execution yet.
+The API currently exposes local-first foundation endpoints for health checks,
+source registry records, work item intent records, approvals, artifact and
+collection metadata, evidence records, review records, vector and graph memory,
+retrieval preview, reports, improvement items, and experiment run metadata. It
+does not implement answer generation, autonomous collection dispatch,
+self-improvement execution, production method changes, or system-changing
+actions.
 
 ## Endpoints
 
@@ -18,6 +21,7 @@ GET /sources/{source_id}/permissions
 POST /sources/{source_id}/permissions
 GET /work-items
 POST /work-items
+POST /work-items/{work_item_id}/status
 GET /work-items/{work_item_id}
 GET /approvals
 POST /approvals
@@ -41,6 +45,8 @@ POST /outcomes
 GET /outcomes/{outcome_id}
 GET /reports
 POST /reports
+POST /reports/{report_id}/status
+POST /reports/{report_id}/work-item
 GET /reports/{report_id}
 GET /analysis/patterns
 POST /analysis/patterns
@@ -77,6 +83,13 @@ GET /memory/graph/schema
 POST /memory/graph/schema/ensure
 POST /memory/graph/lineage/sync
 GET /memory/graph/nodes/{node_label}/{node_id}/relationships
+GET /improvements
+POST /improvements
+GET /improvements/{improvement_item_id}
+GET /experiments
+POST /experiments
+POST /experiments/{experiment_run_id}/status
+GET /experiments/{experiment_run_id}
 ```
 
 `/health/live` confirms the API process is running.
@@ -95,6 +108,10 @@ allowed operations, and external model policy values before database writes.
 Work item endpoints record proposed work and intent-verification context. New
 work items are created with `pending_intent_verification` status and do not
 execute worker jobs.
+
+`POST /work-items/{work_item_id}/status` explicitly updates a work item status
+within the local allowlist and records an audit event with previous and new
+status. It does not dispatch workers or execute queued work.
 
 Approval endpoints record approval requests and decisions with audit events.
 Approval decisions do not execute work or trigger worker jobs.
@@ -133,6 +150,16 @@ update graph or vector memory, enqueue workers, or start self-improvement.
 
 Report endpoints record report metadata and emit audit events. They do not
 render reports, write artifacts, or create exports.
+
+`POST /reports/{report_id}/status` updates report status within the local
+allowlist, can attach an existing artifact path, and records an audit event. It
+does not render report content, write artifacts, or create exports.
+
+`POST /reports/{report_id}/work-item` creates a queued `report_generation`
+work item marker for an existing report and records an audit event. The work
+item payload is marked scaffold-only and non-executing. The route does not
+render report content, write artifacts, create exports, dispatch workers, or
+call Celery.
 
 Analysis endpoints support explicit record entry and inspection for patterns,
 hypotheses, predictions, and recommendations. Create routes are human/API entry
@@ -225,6 +252,15 @@ queue-targeted only; the API does not dispatch it automatically. It does not
 embed chunks, write Qdrant or Neo4j records, call external models, generate
 reports, or trigger self-improvement.
 
+The worker exposes `memory.vector.upsert_chunks` for worker-backed chunk vector
+upserts. It selects chunks whose `embedding_status` is not `completed`, embeds
+chunk text with the deterministic local hash embedding helper, ensures the
+configured Qdrant chunk collection exists, upserts Qdrant points with
+chunk/document metadata, marks successfully upserted chunks completed, and
+emits completion or failure audit events. It does not call external embedding
+models, perform semantic search, update Neo4j, plan retrieval, generate chat
+answers, dispatch itself from the API, or trigger self-improvement.
+
 Vector memory endpoints inspect and create the configured Qdrant chunk
 collection, upsert existing chunk text using the deterministic local embedding
 helper, and run direct semantic chunk search against the Qdrant-backed chunk
@@ -266,12 +302,24 @@ Qdrant payloads. The route does not call models, generate answers, persist
 conversations, trigger actions, read artifact contents, traverse Neo4j, or
 write to PostgreSQL, Qdrant, Neo4j, or artifact storage.
 
-Graph memory endpoints inspect and create baseline Neo4j uniqueness constraints
-for future source, artifact, document, chunk, and evidence nodes. They do not
-infer relationships, generate patterns, or call models. The lineage sync route
-upserts only deterministic source/artifact/document/chunk/evidence provenance
-links already present in PostgreSQL. Relationship inspection is read-only and
-bounded to deterministic graph node labels.
+Graph memory endpoints inspect and create Neo4j uniqueness constraints for
+source, artifact, document, chunk, evidence, claim, analysis, outcome, and
+report nodes. They do not infer relationships, generate patterns, or call
+models. The lineage sync route upserts deterministic provenance, evidence
+support, and outcome relationships already present in PostgreSQL. Relationship
+inspection is read-only and bounded to deterministic graph node labels.
 
-Future endpoints for answer-generating chat and self-improvement are
+Improvement endpoints create and inspect self-improvement queue items for
+parsing, retrieval, scoring, prediction, reporting, reasoning, and safety
+targets. Item creation records an audit event but does not execute
+experiments, dispatch workers, call MLflow or Optuna, alter methods, or change
+production behavior.
+
+Experiment endpoints create and inspect self-improvement experiment run
+metadata, optionally link a run to an existing improvement item, and explicitly
+update run status plus recorded metrics/artifact metadata. They record audit
+events but do not execute experiments, dispatch workers, call MLflow or Optuna,
+alter methods, or change production behavior.
+
+Future endpoints for answer-generating chat and self-improvement execution are
 intentionally not implemented yet.

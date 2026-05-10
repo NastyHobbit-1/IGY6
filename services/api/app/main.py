@@ -7,9 +7,11 @@ from app.audit import router as audit_router
 from app.artifacts import router as artifacts_router
 from app.chat import router as chat_router
 from app.evidence import router as evidence_router
+from app.experiments import router as experiments_router
 from app.feedback import router as feedback_router
 from app.graph_memory import router as graph_memory_router
 from app.health import router as health_router
+from app.improvements import router as improvements_router
 from app.outcomes import router as outcomes_router
 from app.reports import router as reports_router
 from app.retrieval import router as retrieval_router
@@ -19,11 +21,11 @@ from app.work_items import router as work_items_router
 
 app = FastAPI(
     title="IGY6 Adaptive Intelligence API",
-    version="0.1.0-phase1-foundation",
+    version="0.1.0-memory-review-foundation",
     description=(
-        "Local-first Phase 1 foundation with health, source registry, work item intent, "
-        "approval record APIs, and a retrieval-only chat preview. No answer generation, "
-        "prediction, or experiments."
+        "Local-first foundation with source, evidence, collection, vector, graph, "
+        "review, worker, improvement, and experiment metadata APIs. Answer generation, "
+        "self-improvement execution, and production method changes are not implemented."
     ),
 )
 
@@ -43,12 +45,14 @@ app.include_router(retrieval_router)
 app.include_router(vector_memory_router)
 app.include_router(graph_memory_router)
 app.include_router(chat_router)
+app.include_router(improvements_router)
+app.include_router(experiments_router)
 
 
 @app.get("/")
 def root() -> dict[str, str]:
     return {
         "service": "igy6-api",
-        "phase": "1",
-        "status": "foundation",
+        "phase": "memory-review-foundation",
+        "status": "scaffolded",
     }

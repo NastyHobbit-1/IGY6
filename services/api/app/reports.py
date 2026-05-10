@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import AuditEvent, Report
+from app.models import AuditEvent, Report, WorkItem
+from app.work_items import WorkItemRead
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -66,6 +67,24 @@ class ReportRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ReportStatusUpdate(BaseModel):
+    status: str = Field(min_length=1, max_length=64)
+    actor_id: str = "local-owner"
+    artifact_path: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in REPORT_STATUSES:
+            raise ValueError(f"Unknown report status: {value}")
+        return value
+
+
+class ReportWorkItemCreate(BaseModel):
+    requested_by_actor_id: str = "local-owner"
+    notes: str | None = None
+
+
 def _audit_report_created(db: Session, report: Report) -> None:
     db.add(
         AuditEvent(
@@ -78,6 +97,52 @@ def _audit_report_created(db: Session, report: Report) -> None:
             details_json={
                 "report_type": report.report_type,
                 "status": report.status,
+            },
+        )
+    )
+
+
+def _audit_report_status_updated(
+    db: Session,
+    *,
+    actor_id: str,
+    report: Report,
+    previous_status: str,
+    previous_artifact_path: str | None,
+) -> None:
+    db.add(
+        AuditEvent(
+            actor_id=actor_id,
+            event_type="report.status_updated",
+            decision=report.status,
+            resource_type="report",
+            resource_id=report.id,
+            correlation_id=None,
+            details_json={
+                "previous_status": previous_status,
+                "new_status": report.status,
+                "previous_artifact_path": previous_artifact_path,
+                "new_artifact_path": report.artifact_path,
+            },
+        )
+    )
+
+
+def _audit_report_work_item_created(db: Session, work_item: WorkItem, report: Report) -> None:
+    db.add(
+        AuditEvent(
+            actor_id=work_item.requested_by_actor_id,
+            event_type="work_item.created",
+            decision="queued",
+            resource_type="work_item",
+            resource_id=work_item.id,
+            correlation_id=report.id,
+            details_json={
+                "work_type": work_item.work_type,
+                "status": work_item.status,
+                "report_id": report.id,
+                "report_type": report.report_type,
+                "scaffold_only": True,
             },
         )
     )
@@ -105,6 +170,65 @@ def create_report(payload: ReportCreate, db: Session = Depends(get_db)) -> Repor
     db.commit()
     db.refresh(report)
     return report
+
+
+@router.post("/{report_id}/status", response_model=ReportRead)
+def update_report_status(
+    report_id: str,
+    payload: ReportStatusUpdate,
+    db: Session = Depends(get_db),
+) -> Report:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    previous_status = report.status
+    previous_artifact_path = report.artifact_path
+    report.status = payload.status
+    if payload.artifact_path is not None:
+        report.artifact_path = payload.artifact_path
+    _audit_report_status_updated(
+        db,
+        actor_id=payload.actor_id,
+        report=report,
+        previous_status=previous_status,
+        previous_artifact_path=previous_artifact_path,
+    )
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+@router.post("/{report_id}/work-item", response_model=WorkItemRead, status_code=status.HTTP_201_CREATED)
+def create_report_work_item(
+    report_id: str,
+    payload: ReportWorkItemCreate,
+    db: Session = Depends(get_db),
+) -> WorkItem:
+    report = db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    work_item = WorkItem(
+        id=str(uuid4()),
+        work_type="report_generation",
+        status="queued",
+        requested_by_actor_id=payload.requested_by_actor_id,
+        payload_json={
+            "report_id": report.id,
+            "report_type": report.report_type,
+            "report_status": report.status,
+            "scaffold_only": True,
+            "executes_report_generation": False,
+            "notes": payload.notes,
+        },
+        error_message=None,
+    )
+    db.add(work_item)
+    _audit_report_work_item_created(db, work_item, report)
+    db.commit()
+    db.refresh(work_item)
+    return work_item
 
 
 @router.get("/{report_id}", response_model=ReportRead)

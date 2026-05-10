@@ -1,7 +1,10 @@
 from pathlib import Path
+from hashlib import blake2b
+from math import sqrt
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import (
     Column,
     DateTime,
@@ -150,6 +153,66 @@ def _split_text_chunks(text: str, chunk_size: int) -> list[str]:
         for index in range(0, len(text), chunk_size)
         if text[index : index + chunk_size]
     ]
+
+
+def _embed_text_local(text: str, vector_size: int) -> list[float]:
+    if vector_size < 1:
+        raise RuntimeError("vector_size must be at least 1")
+
+    vector = [0.0 for _ in range(vector_size)]
+    tokens = text.lower().split()
+    if not tokens:
+        return vector
+
+    for token in tokens:
+        digest = blake2b(token.encode("utf-8"), digest_size=16).digest()
+        index = int.from_bytes(digest[:8], "big") % vector_size
+        sign = 1.0 if digest[8] % 2 == 0 else -1.0
+        vector[index] += sign
+
+    magnitude = sqrt(sum(value * value for value in vector))
+    if magnitude == 0:
+        return vector
+    return [value / magnitude for value in vector]
+
+
+def _qdrant_collection_payload(vector_size: int) -> dict[str, Any]:
+    return {
+        "vectors": {
+            "size": vector_size,
+            "distance": "Cosine",
+        }
+    }
+
+
+def _qdrant_points_payload(points: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"points": points}
+
+
+def _qdrant_collection_url() -> str:
+    settings = get_settings()
+    base_url = settings.qdrant_url.rstrip("/")
+    return f"{base_url}/collections/{settings.qdrant_chunk_collection}"
+
+
+def _qdrant_points_url() -> str:
+    return f"{_qdrant_collection_url()}/points"
+
+
+def _ensure_qdrant_chunk_collection() -> None:
+    settings = get_settings()
+    response = httpx.get(_qdrant_collection_url(), timeout=5)
+    if response.status_code == 404:
+        create_response = httpx.put(
+            _qdrant_collection_url(),
+            json=_qdrant_collection_payload(settings.qdrant_chunk_vector_size),
+            timeout=10,
+        )
+        if create_response.status_code >= 400:
+            raise RuntimeError(create_response.text)
+        return
+    if response.status_code >= 400:
+        raise RuntimeError(response.text)
 
 
 def _audit(
@@ -503,4 +566,134 @@ def generate_document_chunks(
         "created_chunk_ids": created_chunk_ids,
         "created_evidence_ids": created_evidence_ids,
         "skipped_document_ids": skipped_document_ids,
+    }
+
+
+@celery_app.task(name="memory.vector.upsert_chunks")
+def upsert_chunk_vectors(limit: int = 100, work_item_id: str | None = None) -> dict[str, object]:
+    if limit < 1 or limit > 1000:
+        raise RuntimeError("limit must be between 1 and 1000")
+
+    engine = _engine()
+    actor_id = "worker"
+    settings = get_settings()
+
+    if work_item_id is not None:
+        with engine.begin() as connection:
+            work_item = connection.execute(
+                select(work_items).where(work_items.c.id == work_item_id)
+            ).mappings().one_or_none()
+            if work_item is None:
+                raise RuntimeError("Work item not found")
+            if work_item["work_type"] != "chunk_vector_upsert":
+                raise RuntimeError("Work item is not a chunk_vector_upsert item")
+            actor_id = work_item["requested_by_actor_id"]
+            connection.execute(
+                update(work_items)
+                .where(work_items.c.id == work_item_id)
+                .values(status="running", error_message=None, updated_at=func.now())
+            )
+
+    try:
+        with engine.begin() as connection:
+            rows = connection.execute(
+                select(chunks)
+                .where(chunks.c.embedding_status != "completed")
+                .order_by(chunks.c.id.asc())
+                .limit(limit)
+            ).mappings().all()
+            selected_chunks = [dict(row) for row in rows]
+
+        points: list[dict[str, Any]] = []
+        for chunk in selected_chunks:
+            points.append(
+                {
+                    "id": chunk["id"],
+                    "vector": _embed_text_local(chunk["text_content"], settings.qdrant_chunk_vector_size),
+                    "payload": {
+                        "chunk_id": chunk["id"],
+                        "document_id": chunk["document_id"],
+                        "chunk_index": chunk["chunk_index"],
+                        "embedding_method": "local_hash_v1",
+                        "generated_by": "DIFF-053",
+                    },
+                }
+            )
+
+        if points:
+            _ensure_qdrant_chunk_collection()
+            response = httpx.put(_qdrant_points_url(), json=_qdrant_points_payload(points), timeout=15)
+            if response.status_code >= 400:
+                raise RuntimeError(response.text)
+
+        upserted_chunk_ids = [chunk["id"] for chunk in selected_chunks]
+        with engine.begin() as connection:
+            for chunk in selected_chunks:
+                connection.execute(
+                    update(chunks)
+                    .where(chunks.c.id == chunk["id"])
+                    .values(
+                        embedding_status="completed",
+                        metadata_json={
+                            **(chunk["metadata_json"] or {}),
+                            "embedding_method": "local_hash_v1",
+                            "vector_collection": settings.qdrant_chunk_collection,
+                        },
+                    )
+                )
+            if work_item_id is not None:
+                connection.execute(
+                    update(work_items)
+                    .where(work_items.c.id == work_item_id)
+                    .values(status="completed", error_message=None, updated_at=func.now())
+                )
+            _audit(
+                connection,
+                actor_id=actor_id,
+                event_type="chunk_vectors.upserted",
+                decision="completed",
+                resource_type="work_item" if work_item_id is not None else "chunk",
+                resource_id=work_item_id or "batch",
+                correlation_id=work_item_id or "batch",
+                details={
+                    "chunks_selected": len(selected_chunks),
+                    "chunks_upserted": len(points),
+                    "chunk_ids": upserted_chunk_ids,
+                    "vector_collection": settings.qdrant_chunk_collection,
+                    "embedding_method": "local_hash_v1",
+                },
+            )
+    except Exception as exc:
+        with engine.begin() as connection:
+            if work_item_id is not None:
+                connection.execute(
+                    update(work_items)
+                    .where(work_items.c.id == work_item_id)
+                    .values(status="failed", error_message=str(exc), updated_at=func.now())
+                )
+            _audit(
+                connection,
+                actor_id=actor_id,
+                event_type="chunk_vectors.failed",
+                decision="failed",
+                resource_type="work_item" if work_item_id is not None else "chunk",
+                resource_id=work_item_id or "batch",
+                correlation_id=work_item_id or "batch",
+                details={
+                    "limit": limit,
+                    "error_message": str(exc),
+                },
+            )
+        return {
+            "status": "failed",
+            "work_item_id": work_item_id,
+            "error_message": str(exc),
+        }
+
+    return {
+        "status": "completed",
+        "work_item_id": work_item_id,
+        "chunks_selected": len(selected_chunks),
+        "chunks_upserted": len(points),
+        "chunk_ids": upserted_chunk_ids,
     }

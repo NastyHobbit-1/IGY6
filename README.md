@@ -1,12 +1,16 @@
 # IGY6
 
-Phase 0 skeleton for the Adaptive Intelligence System.
+Local-first foundation for the Adaptive Intelligence System.
 
-This repository is intentionally local-first. Phase 0 only provides the
-monorepo structure, service skeletons, Docker Compose wiring, health checks,
-initial PostgreSQL migration, and documentation placeholders. It does not
-implement ingestion, browser automation, embeddings, graph extraction,
-evidence-backed chat, prediction/advice logic, or self-improvement experiments.
+This repository is intentionally local-first. The current foundation includes
+the monorepo structure, Docker Compose wiring, health checks, PostgreSQL state
+and audit tables, source and approval metadata, artifact and collection
+metadata, evidence records, deterministic chunking, local deterministic
+embedding scaffolds, Qdrant and Neo4j memory foundations, retrieval previews,
+review metadata, worker tasks for normalization/chunking/vector upsert, report
+metadata, and self-improvement queue/experiment metadata. It does not implement
+answer generation, autonomous collection dispatch, browser automation,
+production self-improvement execution, or system-changing actions.
 
 ## Services
 
@@ -16,10 +20,10 @@ evidence-backed chat, prediction/advice logic, or self-improvement experiments.
 - Beat: Celery Beat scheduler
 - PostgreSQL: state, audit, foundational control tables
 - Redis: Celery broker/result backend
-- Qdrant: vector memory service placeholder
-- Neo4j: graph memory service placeholder
-- MLflow: experiment tracking placeholder, using local file-backed storage in Phase 0
-- Phoenix: observability placeholder
+- Qdrant: vector memory service for deterministic chunk embeddings
+- Neo4j: graph memory service for deterministic lineage relationships
+- MLflow: experiment tracking service reserved for controlled experiments
+- Phoenix: observability service reserved for trace review
 
 ## Run Locally
 
@@ -31,7 +35,7 @@ cp .env.example .env
 
 2. Review local-only placeholder values in `.env`.
 
-3. Start the Phase 0 stack:
+3. Start the local stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env up --build
@@ -66,7 +70,7 @@ docker compose -f infra/docker-compose.yml --env-file .env run --rm api alembic 
 
 ## Verification
 
-Phase 0 was verified with:
+The foundation is verified with:
 
 ```bash
 python3 -m compileall services/api services/worker
@@ -83,17 +87,17 @@ Expected API readiness status:
 {"status":"ok"}
 ```
 
-## Phase 0 Boundaries
+## Current Boundaries
 
-Phase 0 must remain read-only and skeletal:
+The system remains read-only and scaffolded by default:
 
-- No real source ingestion.
+- No autonomous source collection dispatch.
 - No browser automation.
-- No embeddings.
-- No graph extraction.
-- No evidence-backed chat.
-- No prediction/advice logic.
-- No self-improvement experiments.
+- No external embedding or answer-generation model calls.
+- No generated evidence-backed answers.
+- No automatic prediction/advice generation.
+- No self-improvement experiment execution.
+- No production method changes without approval.
 - No ruvnet components.
 - No remote service exposure by default.
 - No hard-coded secrets.

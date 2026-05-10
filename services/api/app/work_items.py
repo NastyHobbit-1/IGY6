@@ -12,6 +12,15 @@ from app.models import AuditEvent, WorkItem
 
 router = APIRouter(prefix="/work-items", tags=["work-items"])
 
+WORK_ITEM_STATUSES = {
+    "pending_intent_verification",
+    "queued",
+    "running",
+    "completed",
+    "failed",
+    "canceled",
+}
+
 
 class IntentVerificationContext(BaseModel):
     original_request: str = Field(min_length=1)
@@ -44,6 +53,12 @@ class WorkItemRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class WorkItemStatusUpdate(BaseModel):
+    status: str = Field(min_length=1, max_length=64)
+    actor_id: str = "local-owner"
+    error_message: str | None = None
+
+
 def _audit_work_item_created(db: Session, work_item: WorkItem) -> None:
     db.add(
         AuditEvent(
@@ -56,6 +71,30 @@ def _audit_work_item_created(db: Session, work_item: WorkItem) -> None:
             details_json={
                 "work_type": work_item.work_type,
                 "status": work_item.status,
+            },
+        )
+    )
+
+
+def _audit_work_item_status_updated(
+    db: Session,
+    *,
+    actor_id: str,
+    work_item: WorkItem,
+    previous_status: str,
+) -> None:
+    db.add(
+        AuditEvent(
+            actor_id=actor_id,
+            event_type="work_item.status_updated",
+            decision=work_item.status,
+            resource_type="work_item",
+            resource_id=work_item.id,
+            correlation_id=None,
+            details_json={
+                "previous_status": previous_status,
+                "new_status": work_item.status,
+                "error_message": work_item.error_message,
             },
         )
     )
@@ -82,6 +121,32 @@ def create_work_item(payload: WorkItemCreate, db: Session = Depends(get_db)) -> 
     )
     db.add(work_item)
     _audit_work_item_created(db, work_item)
+    db.commit()
+    db.refresh(work_item)
+    return work_item
+
+
+@router.post("/{work_item_id}/status", response_model=WorkItemRead)
+def update_work_item_status(
+    work_item_id: str,
+    payload: WorkItemStatusUpdate,
+    db: Session = Depends(get_db),
+) -> WorkItem:
+    if payload.status not in WORK_ITEM_STATUSES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown work item status")
+    work_item = db.get(WorkItem, work_item_id)
+    if work_item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work item not found")
+
+    previous_status = work_item.status
+    work_item.status = payload.status
+    work_item.error_message = payload.error_message
+    _audit_work_item_status_updated(
+        db,
+        actor_id=payload.actor_id,
+        work_item=work_item,
+        previous_status=previous_status,
+    )
     db.commit()
     db.refresh(work_item)
     return work_item
