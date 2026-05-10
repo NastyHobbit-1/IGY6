@@ -38,6 +38,7 @@ Implemented or scaffolded behavior in the current repository:
 | Reports | Report metadata can be created and rendered to deterministic local markdown artifacts from local metadata counts and recent records. |
 | Improvement and experiments | Improvement items and experiment run metadata can be recorded. Production self-improvement execution is not implemented. |
 | Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
+| Settings | The UI can edit the local `.env` through a backend verify-dry-run-before-save workflow with secret masking, backups, atomic writes, and audit events. |
 
 ## Not Implemented Yet
 
@@ -100,6 +101,11 @@ cp .env.example .env
 
 The checked-in example uses local-only placeholder values such as
 `change-me-local-only`. Keep secrets local and do not commit `.env`.
+
+The settings editor expects the API container to see the project `.env` at
+`ENV_FILE_PATH=/workspace/project/.env` and to place backups under
+`ENV_BACKUP_DIR=/workspace/storage/env_backups`. These are local container paths
+defined in `.env.example` and mounted by Docker Compose.
 
 4. Start the stack.
 
@@ -412,11 +418,72 @@ The web UI is a dark AI-console shell for the existing IGY6 workflows. It shows:
 - Work items, approvals, feedback, outcomes, reports, and audit events.
 - Chat Retrieval Preview, which calls same-origin
   `/api/chat/retrieval-preview`.
+- Settings, which calls same-origin `/api/settings/env`,
+  `/api/settings/env/verify`, and `/api/settings/env/apply`.
 - MVP Action Console controls that call existing FastAPI endpoints only.
 
 Scaffolded visual controls are disabled or labeled honestly. The UI does not add
 ComfyUI, image generation, model management, model downloads, autonomous agents,
 or AI-stack backend behavior.
+
+## Settings Page
+
+The Settings section edits the local IGY6 `.env` only. It is a sensitive,
+system-changing workflow, so the UI never blindly saves edits.
+
+Current flow:
+
+1. The UI loads sanitized settings from `GET /settings/env`.
+2. Editable allowlisted keys are grouped by App / Web, PostgreSQL, Redis /
+   Celery, Qdrant, Neo4j, MLflow, Phoenix, Storage, and Policy / Safety.
+3. Secret values such as passwords and URLs containing passwords are masked by
+   default.
+4. To change a secret, use the replacement field; the current secret is not
+   shown in plain text.
+5. Click `Verify Dry Run`.
+6. The API validates the proposed candidate without writing `.env`.
+7. If dry-run passes, the API returns a candidate hash/verification token.
+8. `Save Settings` is enabled only for the exact candidate that passed dry-run.
+9. Save revalidates the same candidate, requires the matching token, creates a
+   timestamped backup, atomically writes normalized `.env` content, and records
+   an audit event without secret values.
+
+Dry-run validates:
+
+- Unknown keys are not editable. Existing unknown `.env` keys are shown as
+  read-only unmanaged keys and preserved.
+- Required allowlisted keys are present.
+- Ports are valid integers from `1` to `65535`.
+- Boolean values parse for `SINGLE_USER_MODE` and
+  `APPROVAL_REQUIRED_DEFAULT`.
+- URLs and URIs are syntactically plausible.
+- `DATABASE_URL`, `NEO4J_URI`, and `QDRANT_URL` agree with their matching host,
+  port, user, password, and database fields where applicable.
+- Storage paths are absolute container paths and do not contain obvious path
+  traversal.
+- External model policy and audit log level values are constrained.
+- Qdrant vector size is a positive integer, with a warning that changing it can
+  require rebuilding vector storage.
+- Docker Compose config validation is attempted from the API runtime only when
+  Docker CLI and the Compose file are available. If unavailable, dry-run returns
+  a warning instead of failing solely for that reason.
+
+Dry-run passing means the candidate configuration is syntactically and
+structurally valid. It does not guarantee every service will work after restart.
+
+Saved settings are written to `.env`; they are not applied to running
+containers. Restart or recreate the Docker stack before expecting changed values
+to take effect. No automatic restart or container recreate is implemented.
+
+Backups are written to `ENV_BACKUP_DIR`. Automatic rollback is not implemented
+in this DIFF. Manual rollback is:
+
+```bash
+cp storage/env_backups/.env.TIMESTAMP.bak .env
+docker compose -f infra/docker-compose.yml --env-file .env up --build
+```
+
+Use the actual backup path returned by the Settings save response.
 
 ## Troubleshooting
 
@@ -431,6 +498,8 @@ or AI-stack backend behavior.
 | Manual upload rejected as non-UTF-8 | Manual upload collection currently accepts UTF-8 text only. Convert the content to UTF-8 text before upload. |
 | Local project path escapes source location | Keep every permission path under the source `location`; scoped paths cannot escape that root. |
 | No evidence answer is returned | There may be no ingested, chunked, and vector-upserted evidence yet, or matching evidence may belong to a disabled source. |
+| Settings dry-run passes but services fail after restart | Dry-run validates structure, not live service availability. Review the changed keys and Docker logs after restart. |
+| Settings save fails because `.env` is not writable | Confirm Docker Compose mounted the repository at `/workspace/project` and that the local `.env` file exists and is writable. |
 | `npm --prefix apps/web run lint` is unavailable | The web package currently defines `dev`, `build`, and `start`, but no `lint` script. Use `npm --prefix apps/web run build` for web build verification. |
 
 ## Verification

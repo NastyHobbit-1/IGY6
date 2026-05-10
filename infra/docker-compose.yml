@@ -110,6 +110,8 @@ services:
       PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT}
       ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
       EXPORT_STORE_PATH: ${EXPORT_STORE_PATH}
+      ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
+      ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
       EXTERNAL_MODEL_POLICY_DEFAULT: ${EXTERNAL_MODEL_POLICY_DEFAULT}
       SINGLE_USER_MODE: ${SINGLE_USER_MODE}
       AUDIT_LOG_LEVEL: ${AUDIT_LOG_LEVEL}
@@ -118,6 +120,7 @@ services:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - ../storage:/workspace/storage
+      - ..:/workspace/project
     depends_on:
       postgres:
         condition: service_healthy

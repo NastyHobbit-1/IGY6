@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     phoenix_collector_endpoint: str = "http://phoenix:6006"
     artifact_store_path: str = "/workspace/storage/artifacts"
     export_store_path: str = "/workspace/storage/exports"
+    env_file_path: str = "/workspace/project/.env"
+    env_backup_dir: str = "/workspace/storage/env_backups"
 
 
 @lru_cache

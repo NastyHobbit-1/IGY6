@@ -16,6 +16,7 @@ from app.improvements import router as improvements_router
 from app.outcomes import router as outcomes_router
 from app.reports import router as reports_router
 from app.retrieval import router as retrieval_router
+from app.settings_env import router as settings_env_router
 from app.sources import router as sources_router
 from app.vector_memory import router as vector_memory_router
 from app.work_items import router as work_items_router
@@ -61,6 +62,7 @@ app.include_router(graph_memory_router)
 app.include_router(chat_router)
 app.include_router(improvements_router)
 app.include_router(experiments_router)
+app.include_router(settings_env_router)
 
 
 @app.get("/")
