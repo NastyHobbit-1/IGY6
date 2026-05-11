@@ -20,7 +20,7 @@ Implemented or scaffolded behavior in the current repository:
 | Area | Current behavior |
 | --- | --- |
 | Local stack | Docker Compose starts the web UI, API, PostgreSQL, Redis, Celery worker, Celery beat, Qdrant, Neo4j, MLflow, and Phoenix on localhost-bound ports. |
-| Web UI | Next.js dark AI-console shell with source, evidence, memory, work, approval, report, audit, retrieval preview, and MVP Action Console panels. |
+| Web UI | Next.js dark AI-console shell with source, evidence, memory, work, approval, report, audit, retrieval preview, Agent Command, and MVP Action Console panels. |
 | API | FastAPI gateway with health, source, approval, collection, artifact, evidence, retrieval, chat, graph, vector, feedback, outcome, report, improvement, experiment, work-item, and audit routes. |
 | State and audit | PostgreSQL stores sources, permissions, collection runs, artifacts, normalized documents, chunks, evidence, claims, patterns, hypotheses, predictions, recommendations, work items, approvals, feedback, outcomes, reports, experiments, improvements, and audit events. |
 | Source registry | Sources can be registered with type, location, sensitivity, trust, enabled state, metadata, and optional permission. |
@@ -41,7 +41,7 @@ Implemented or scaffolded behavior in the current repository:
 | Improvement and experiments | Improvement items and experiment run metadata can be recorded. Production self-improvement execution is not implemented. |
 | Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
 | Settings | The UI can edit the local `.env` through a backend verify-dry-run-before-save workflow with secret masking, backups, atomic writes, and audit events. |
-| Agent command plane | `/agent/intent` and `/agent/actions/{action_name}/execute` provide a deterministic local typed action registry. Read-only actions can inspect health, git state, latest DIFF, work items, and retrieval preview. Stack start/stop/recover actions require approval and call the DIFF-082 scripts. |
+| Agent command plane | `/agent/capabilities`, `/agent/intent`, and `/agent/actions/{action_name}/execute` provide a deterministic local typed action registry. The web UI can preview intent, execute read-only actions, request approvals, and show runtime blockers honestly. Stack start/stop/recover actions require approval and only execute if the API runtime can actually access Docker CLI, Compose, and Docker control. |
 
 ## Not Implemented Yet
 
@@ -285,6 +285,20 @@ stash, overwrite, or discard anything.
 
 The MVP command plane is deterministic and local-only. It is not an LLM agent,
 does not call external models, and does not execute arbitrary shell commands.
+The web UI exposes it in the Agent Command panel near the chat/retrieval area.
+
+Runtime capability check:
+
+```bash
+curl http://127.0.0.1:8000/agent/capabilities
+```
+
+This reports the fixed action registry, which actions are read-only or
+system-changing, whether approval is required, whether required scripts exist,
+and whether the API runtime can actually run Docker stack-control actions. The
+default API container may report stack control as blocked because the Compose
+file does not mount the Docker socket and does not install Docker CLI in the API
+image. That is intentional reporting, not a failed safety check.
 
 Intent preview:
 
@@ -315,6 +329,14 @@ Approval-required local stack actions:
 - `start_stack`, which calls `scripts/run.sh --detached`
 - `stop_stack`, which calls `scripts/stop.sh`
 - `run_last_healthy_stack`, which calls `scripts/run-last-healthy-config.sh`
+
+The Agent Command UI previews these actions but does not execute them silently.
+It can create an `agent_action` approval request. The user must explicitly
+approve that record before passing its approval ID to execution. If
+`/agent/capabilities` says Docker stack control is unavailable from the API
+runtime, the UI keeps execution blocked even with an approval ID. Host-side
+operators can still run `scripts/run.sh`, `scripts/stop.sh`, and
+`scripts/run-last-healthy-config.sh` directly from the repository root.
 
 To approve a stack action, create and approve an approval with request type
 `agent_action` and a payload that exactly names the action:

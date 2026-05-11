@@ -4,15 +4,22 @@ from sqlalchemy.orm import Session
 from app.agent_actions import (
     AgentActionExecuteRequest,
     AgentActionExecuteResponse,
+    AgentCapabilitiesResponse,
     AgentIntentRequest,
     AgentIntentResponse,
     classify_agent_intent,
     execute_agent_action,
+    get_agent_capabilities,
 )
 from app.config import Settings, get_settings
 from app.db import get_db
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+@router.get("/capabilities", response_model=AgentCapabilitiesResponse)
+def read_agent_capabilities() -> AgentCapabilitiesResponse:
+    return get_agent_capabilities()
 
 
 @router.post("/intent", response_model=AgentIntentResponse)

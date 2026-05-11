@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from os import environ
 from pathlib import Path
+from shutil import which
 from typing import Any, Literal
 
 from fastapi import HTTPException, status
@@ -68,6 +69,36 @@ class AgentActionExecuteResponse(BaseModel):
     audit_event_id: int | None = None
 
 
+class AgentRuntimeCapabilities(BaseModel):
+    repo_root: str
+    docker_cli_available: bool
+    docker_compose_available: bool
+    docker_socket_available: bool
+    docker_host_configured: bool
+    docker_control_available: bool
+    docker_socket_path: str | None = None
+    reason: str | None = None
+
+
+class AgentActionCapability(BaseModel):
+    name: str
+    interpreted_intent: str
+    action_type: Literal["read_only", "system_changing"]
+    approval_required: bool
+    risk_level: Literal["low", "medium", "high"]
+    required_parameters: list[str]
+    script_backed: bool
+    required_scripts: list[str]
+    scripts_exist: bool
+    executable_in_api_runtime: bool
+    reason: str | None = None
+
+
+class AgentCapabilitiesResponse(BaseModel):
+    actions: list[AgentActionCapability]
+    runtime: AgentRuntimeCapabilities
+
+
 @dataclass(frozen=True)
 class AgentActionDefinition:
     name: str
@@ -77,6 +108,7 @@ class AgentActionDefinition:
     risk_level: Literal["low", "medium", "high"]
     required_parameters: tuple[str, ...] = ()
     safety_notes: tuple[str, ...] = ()
+    script_argv: tuple[str, ...] | None = None
 
 
 ACTION_REGISTRY: dict[str, AgentActionDefinition] = {
@@ -128,6 +160,7 @@ ACTION_REGISTRY: dict[str, AgentActionDefinition] = {
         approval_required=True,
         risk_level="high",
         safety_notes=("Requires approved approval record.", "Uses scripts/run.sh --detached only."),
+        script_argv=("scripts/run.sh", "--detached"),
     ),
     "stop_stack": AgentActionDefinition(
         name="stop_stack",
@@ -136,6 +169,7 @@ ACTION_REGISTRY: dict[str, AgentActionDefinition] = {
         approval_required=True,
         risk_level="high",
         safety_notes=("Requires approved approval record.", "Uses scripts/stop.sh and preserves volumes/data."),
+        script_argv=("scripts/stop.sh",),
     ),
     "run_last_healthy_stack": AgentActionDefinition(
         name="run_last_healthy_stack",
@@ -144,6 +178,7 @@ ACTION_REGISTRY: dict[str, AgentActionDefinition] = {
         approval_required=True,
         risk_level="high",
         safety_notes=("Requires approved approval record.", "Uses scripts/run-last-healthy-config.sh only."),
+        script_argv=("scripts/run-last-healthy-config.sh",),
     ),
 }
 
@@ -233,6 +268,36 @@ def classify_agent_intent(payload: AgentIntentRequest) -> AgentIntentResponse:
     )
 
 
+def get_agent_capabilities() -> AgentCapabilitiesResponse:
+    runtime = _runtime_capabilities()
+    actions = []
+    for definition in ACTION_REGISTRY.values():
+        required_scripts = [definition.script_argv[0]] if definition.script_argv else []
+        scripts_exist = all((repo_root() / script).is_file() for script in required_scripts)
+        if definition.script_argv:
+            executable = scripts_exist and runtime.docker_control_available
+            reason = None if executable else _script_capability_reason(scripts_exist, runtime)
+        else:
+            executable = True
+            reason = None
+        actions.append(
+            AgentActionCapability(
+                name=definition.name,
+                interpreted_intent=definition.interpreted_intent,
+                action_type=definition.action_type,
+                approval_required=definition.approval_required,
+                risk_level=definition.risk_level,
+                required_parameters=list(definition.required_parameters),
+                script_backed=definition.script_argv is not None,
+                required_scripts=required_scripts,
+                scripts_exist=scripts_exist,
+                executable_in_api_runtime=executable,
+                reason=reason,
+            )
+        )
+    return AgentCapabilitiesResponse(actions=actions, runtime=runtime)
+
+
 def _unknown_intent(message: str, reason: str) -> AgentIntentResponse:
     return AgentIntentResponse(
         original_message=message,
@@ -276,6 +341,8 @@ def execute_agent_action(
 
     if definition.approval_required:
         _require_action_approval(db, definition, payload)
+    if definition.script_argv:
+        _require_script_runtime_capability(definition)
 
     started_at = datetime.now(UTC)
     start_event = _audit_agent_action(
@@ -388,6 +455,73 @@ def _execute_known_action(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown agent action")
 
 
+def _runtime_capabilities() -> AgentRuntimeCapabilities:
+    docker_cli_available = which("docker") is not None
+    docker_compose_available = False
+    if docker_cli_available:
+        compose_result = _run_runtime_probe(["docker", "compose", "version"])
+        docker_compose_available = compose_result["exit_code"] == 0
+
+    docker_socket_path = environ.get("DOCKER_HOST")
+    docker_host_configured = bool(docker_socket_path)
+    socket_path: str | None = None
+    docker_socket_available = False
+    if docker_socket_path and docker_socket_path.startswith("unix://"):
+        socket_path = docker_socket_path.removeprefix("unix://")
+        docker_socket_available = Path(socket_path).exists()
+    elif docker_socket_path:
+        docker_socket_available = True
+    else:
+        default_socket = Path("/var/run/docker.sock")
+        socket_path = str(default_socket)
+        docker_socket_available = default_socket.exists()
+
+    docker_control_available = docker_cli_available and docker_compose_available and docker_socket_available
+    reason = None
+    if not docker_control_available:
+        missing = []
+        if not docker_cli_available:
+            missing.append("Docker CLI is unavailable in the API runtime")
+        if docker_cli_available and not docker_compose_available:
+            missing.append("Docker Compose is unavailable in the API runtime")
+        if not docker_socket_available:
+            missing.append("Docker socket/control path is unavailable in the API runtime")
+        reason = "; ".join(missing)
+
+    return AgentRuntimeCapabilities(
+        repo_root=str(repo_root()),
+        docker_cli_available=docker_cli_available,
+        docker_compose_available=docker_compose_available,
+        docker_socket_available=docker_socket_available,
+        docker_host_configured=docker_host_configured,
+        docker_control_available=docker_control_available,
+        docker_socket_path=socket_path,
+        reason=reason,
+    )
+
+
+def _script_capability_reason(scripts_exist: bool, runtime: AgentRuntimeCapabilities) -> str:
+    if not scripts_exist:
+        return "Required DIFF-082 script is unavailable in the API runtime."
+    if runtime.reason:
+        return runtime.reason
+    return "Stack-control action is not executable in the API runtime."
+
+
+def _require_script_runtime_capability(definition: AgentActionDefinition) -> None:
+    capabilities = get_agent_capabilities()
+    action_capability = next((action for action in capabilities.actions if action.name == definition.name), None)
+    if action_capability is None or not action_capability.executable_in_api_runtime:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Agent action is not executable in the current API runtime",
+                "action_name": definition.name,
+                "reason": action_capability.reason if action_capability else capabilities.runtime.reason,
+            },
+        )
+
+
 def _git_status() -> dict[str, Any]:
     root = repo_root()
     branch_result = _run_readonly_command(["git", "-C", str(root), "branch", "--show-current"])
@@ -498,6 +632,25 @@ def _run_readonly_command(argv: list[str]) -> dict[str, Any]:
     return {
         "stdout": _bounded_output(completed.stdout),
         "stderr": _bounded_output(completed.stderr),
+        "exit_code": completed.returncode,
+    }
+
+
+def _run_runtime_probe(argv: list[str]) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=repo_root(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"stdout": "", "stderr": "", "exit_code": 127}
+    return {
+        "stdout": _bounded_output(completed.stdout, limit=500),
+        "stderr": _bounded_output(completed.stderr, limit=500),
         "exit_code": completed.returncode,
     }
 

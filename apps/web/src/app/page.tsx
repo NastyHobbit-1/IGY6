@@ -218,6 +218,34 @@ type EnvSettingsResponse = {
   warnings: string[];
 };
 
+type AgentActionCapability = {
+  name: string;
+  interpreted_intent: string;
+  action_type: string;
+  approval_required: boolean;
+  risk_level: string;
+  required_parameters: string[];
+  script_backed: boolean;
+  required_scripts: string[];
+  scripts_exist: boolean;
+  executable_in_api_runtime: boolean;
+  reason: string | null;
+};
+
+type AgentCapabilitiesResponse = {
+  actions: AgentActionCapability[];
+  runtime: {
+    repo_root: string;
+    docker_cli_available: boolean;
+    docker_compose_available: boolean;
+    docker_socket_available: boolean;
+    docker_host_configured: boolean;
+    docker_control_available: boolean;
+    docker_socket_path: string | null;
+    reason: string | null;
+  };
+};
+
 type ApiResult<T> = {
   data: T;
   error: string | null;
@@ -986,6 +1014,230 @@ function ChatRetrievalPreview() {
   );
 }
 
+function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapabilitiesResponse> }) {
+  const data = capabilities.data;
+  const stackActions = data.actions.filter((action) => action.script_backed);
+  const script = `
+(() => {
+  const root = document.querySelector("[data-agent-command]");
+  if (!root) return;
+
+  const commandInput = root.querySelector("[data-agent-command-input]");
+  const paramsInput = root.querySelector("[data-agent-params]");
+  const approvalInput = root.querySelector("[data-agent-approval-id]");
+  const previewButton = root.querySelector("[data-agent-preview]");
+  const executeButton = root.querySelector("[data-agent-execute]");
+  const approvalButton = root.querySelector("[data-agent-request-approval]");
+  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
+  const intentPanel = root.querySelector("[data-agent-intent]");
+  const resultPanel = root.querySelector("[data-agent-result]");
+  const statusPanel = root.querySelector("[data-agent-status]");
+  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
+  let latestIntent = null;
+
+  const showJson = (node, label, payload) => {
+    if (!node) return;
+    node.textContent = label + "\\n" + JSON.stringify(payload, null, 2);
+  };
+
+  const parseParams = () => {
+    const raw = paramsInput?.value?.trim() || "{}";
+    if (!raw) return {};
+    return JSON.parse(raw);
+  };
+
+  const capabilityFor = (actionName) => {
+    return (capabilitiesPayload.actions || []).find((action) => action.name === actionName) || null;
+  };
+
+  const setButtons = () => {
+    if (!executeButton || !approvalButton || !executeApprovedButton) return;
+    executeButton.disabled = true;
+    approvalButton.disabled = true;
+    executeApprovedButton.disabled = true;
+    if (!latestIntent?.proposed_action || latestIntent.missing_parameters?.length) return;
+    const capability = capabilityFor(latestIntent.proposed_action);
+    const runtimeExecutable = capability?.executable_in_api_runtime !== false;
+    if (latestIntent.approval_required) {
+      approvalButton.disabled = false;
+      executeApprovedButton.disabled = !(runtimeExecutable && approvalInput?.value?.trim());
+      return;
+    }
+    executeButton.disabled = !(latestIntent.executable_now && runtimeExecutable);
+  };
+
+  const previewIntent = async () => {
+    const parameters = parseParams();
+    const response = await fetch("/api/agent/intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: commandInput?.value || "", parameters, actor_id: "local-owner" })
+    });
+    const payload = await response.json();
+    latestIntent = payload;
+    showJson(intentPanel, response.ok ? "Agent intent preview" : "Intent preview failed", payload);
+    const capability = payload.proposed_action ? capabilityFor(payload.proposed_action) : null;
+    const runtimeNote = capability?.reason || capabilitiesPayload.runtime?.reason || "Runtime allows this action class.";
+    if (statusPanel) {
+      statusPanel.textContent = payload.proposed_action
+        ? "Runtime: " + (capability?.executable_in_api_runtime ? "executable" : "blocked") + " | " + runtimeNote
+        : "Rejected by typed registry. No shell command will run.";
+    }
+    setButtons();
+  };
+
+  previewButton?.addEventListener("click", async () => {
+    try {
+      await previewIntent();
+    } catch (error) {
+      showJson(intentPanel, "Intent preview error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  executeButton?.addEventListener("click", async () => {
+    try {
+      if (!latestIntent?.proposed_action || latestIntent.approval_required) return;
+      const response = await fetch("/api/agent/actions/" + encodeURIComponent(latestIntent.proposed_action) + "/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parameters: parseParams(), actor_id: "local-owner" })
+      });
+      const payload = await response.json();
+      showJson(resultPanel, response.ok ? "Read-only action result" : "Action failed", payload);
+    } catch (error) {
+      showJson(resultPanel, "Action error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  approvalButton?.addEventListener("click", async () => {
+    try {
+      if (!latestIntent?.proposed_action || !latestIntent.approval_required) return;
+      const response = await fetch("/api/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request_type: "agent_action",
+          requested_by_actor_id: "local-owner",
+          request_payload_json: {
+            action_name: latestIntent.proposed_action,
+            parameters: parseParams()
+          }
+        })
+      });
+      const payload = await response.json();
+      if (payload?.id && approvalInput) approvalInput.value = payload.id;
+      showJson(resultPanel, response.ok ? "Approval request created" : "Approval request failed", payload);
+      setButtons();
+    } catch (error) {
+      showJson(resultPanel, "Approval request error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  executeApprovedButton?.addEventListener("click", async () => {
+    try {
+      if (!latestIntent?.proposed_action || !latestIntent.approval_required || !approvalInput?.value?.trim()) return;
+      const response = await fetch("/api/agent/actions/" + encodeURIComponent(latestIntent.proposed_action) + "/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parameters: parseParams(),
+          approval_id: approvalInput.value.trim(),
+          actor_id: "local-owner"
+        })
+      });
+      const payload = await response.json();
+      showJson(resultPanel, response.ok ? "Approved action result" : "Approved action blocked or failed", payload);
+    } catch (error) {
+      showJson(resultPanel, "Approved action error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  approvalInput?.addEventListener("input", setButtons);
+})();
+`;
+
+  return (
+    <section className="panel agentCommandPanel" id="agent-command" data-agent-command>
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Typed local command plane</p>
+          <h2>Agent Command</h2>
+        </div>
+        <div className="topStatus">
+          <StatusPill state={data.runtime.docker_control_available ? "stack-control-ready" : "stack-control-blocked"} />
+          <StatusPill state="no-shell" />
+          <StatusPill state="approval-gated" />
+        </div>
+      </div>
+
+      <div className="agentNotice">
+        <strong>Preview first.</strong>
+        <span>IGY6 classifies the message into a fixed local action. It never runs arbitrary shell text, never calls an external model, and stack-control actions require an approved matching approval record.</span>
+      </div>
+      {capabilities.error ? <p className="errorText">{capabilities.error}</p> : null}
+
+      <section className="agentRuntimeGrid">
+        <article><span>Docker CLI</span><strong>{data.runtime.docker_cli_available ? "available" : "unavailable"}</strong></article>
+        <article><span>Docker Compose</span><strong>{data.runtime.docker_compose_available ? "available" : "unavailable"}</strong></article>
+        <article><span>Docker control</span><strong>{data.runtime.docker_control_available ? "available" : "blocked"}</strong></article>
+        <article><span>Socket/control path</span><strong>{data.runtime.docker_socket_available ? data.runtime.docker_socket_path ?? "configured" : "unavailable"}</strong></article>
+      </section>
+
+      {data.runtime.reason ? <p className="agentRuntimeReason">{data.runtime.reason}</p> : null}
+
+      <section className="agentActionList">
+        {data.actions.map((action) => (
+          <article className="agentActionCard" key={action.name}>
+            <div>
+              <strong>{action.name}</strong>
+              <span>{action.interpreted_intent}</span>
+            </div>
+            <div className="messageMeta">
+              <StatusPill state={action.action_type} />
+              <StatusPill state={action.approval_required ? "approval-required" : "read-only"} />
+              {action.script_backed ? <StatusPill state={action.executable_in_api_runtime ? "runtime-ready" : "runtime-blocked"} /> : null}
+            </div>
+            {action.reason ? <p>{action.reason}</p> : null}
+          </article>
+        ))}
+      </section>
+
+      <section className="agentCommandGrid">
+        <label>
+          <span>User command</span>
+          <textarea data-agent-command-input rows={3} defaultValue="show project health" />
+        </label>
+        <label>
+          <span>Parameters JSON</span>
+          <textarea data-agent-params rows={3} defaultValue="{}" />
+        </label>
+        <label>
+          <span>Approval ID for approved action</span>
+          <input data-agent-approval-id placeholder="approval id after explicit approval" />
+        </label>
+      </section>
+
+      <section className="agentCommandActions">
+        <button type="button" data-agent-preview>Preview Agent Intent</button>
+        <button type="button" data-agent-execute disabled>Execute Read-Only Action</button>
+        <button type="button" data-agent-request-approval disabled>Request Approval</button>
+        <button type="button" data-agent-execute-approved disabled>Execute With Approval ID</button>
+      </section>
+
+      <p className="agentStatus" data-agent-status>
+        Stack-control actions: {stackActions.every((action) => action.executable_in_api_runtime) ? "executable from API runtime" : "blocked unless API runtime has Docker CLI, Compose, and Docker control access."}
+      </p>
+
+      <section className="agentResultGrid">
+        <pre data-agent-intent>Agent intent preview appears here.</pre>
+        <pre data-agent-result>Agent action result appears here.</pre>
+      </section>
+      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 function MvpActionConsole() {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const script = `
@@ -1259,7 +1511,8 @@ export default async function Home() {
     outcomes,
     reports,
     auditEvents,
-    envSettings
+    envSettings,
+    agentCapabilities
   ] = await Promise.all([
     getJson<HealthResponse>("/health/ready", { status: "error" }),
     getJson<SourceRecord[]>("/sources", []),
@@ -1294,6 +1547,19 @@ export default async function Home() {
       settings: [],
       unmanaged: [],
       warnings: []
+    }),
+    getJson<AgentCapabilitiesResponse>("/agent/capabilities", {
+      actions: [],
+      runtime: {
+        repo_root: "unknown",
+        docker_cli_available: false,
+        docker_compose_available: false,
+        docker_socket_available: false,
+        docker_host_configured: false,
+        docker_control_available: false,
+        docker_socket_path: null,
+        reason: "Agent capabilities were unavailable."
+      }
     })
   ]);
 
@@ -1338,7 +1604,7 @@ export default async function Home() {
         </label>
 
         <nav className="navSection" aria-label="Workspace sections">
-          {["Chat", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit", "Settings"].map((item) => (
+          {["Chat", "Agent Command", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit", "Settings"].map((item) => (
             <a href={`#${item.toLowerCase().replaceAll(" ", "-")}`} key={item}>{item}</a>
           ))}
         </nav>
@@ -1415,6 +1681,7 @@ export default async function Home() {
           </div>
 
           <ChatRetrievalPreview />
+          <AgentCommandPanel capabilities={agentCapabilities} />
         </section>
 
         <section className="panel toolConsole" aria-label="MVP action console">
