@@ -26,6 +26,8 @@ class VectorCollectionStatus(BaseModel):
 class ChunkVectorUpsertResult(BaseModel):
     chunks_selected: int
     chunks_upserted: int
+    collection_name: str
+    collection_exists: bool
 
 
 class ChunkVectorSearchRequest(BaseModel):
@@ -149,15 +151,12 @@ def ensure_qdrant_chunk_collection(settings: Settings) -> VectorCollectionStatus
     return get_qdrant_collection_status(settings)
 
 
-def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> ChunkVectorUpsertResult:
-    ensure_qdrant_chunk_collection(settings)
-    statement = (
-        select(Chunk)
-        .where(Chunk.embedding_status != "completed")
-        .order_by(Chunk.created_at.asc())
-        .limit(limit)
-    )
-    chunks = list(db.scalars(statement).all())
+def _upsert_chunk_vector_points(
+    db: Session,
+    settings: Settings,
+    chunks: list[Chunk],
+) -> ChunkVectorUpsertResult:
+    collection_status = ensure_qdrant_chunk_collection(settings)
     points: list[dict[str, Any]] = []
 
     for chunk in chunks:
@@ -175,7 +174,12 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
         )
 
     if not points:
-        return ChunkVectorUpsertResult(chunks_selected=0, chunks_upserted=0)
+        return ChunkVectorUpsertResult(
+            chunks_selected=0,
+            chunks_upserted=0,
+            collection_name=settings.qdrant_chunk_collection,
+            collection_exists=collection_status.exists,
+        )
 
     try:
         response = httpx.put(
@@ -186,13 +190,6 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
-    if _is_missing_collection_response(response, settings):
-        return ChunkVectorSearchResult(
-            query=payload.query,
-            collection_name=settings.qdrant_chunk_collection,
-            collection_exists=False,
-            hits=[],
-        )
     if response.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=response.text)
 
@@ -204,7 +201,42 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
             "vector_collection": settings.qdrant_chunk_collection,
         }
     db.commit()
-    return ChunkVectorUpsertResult(chunks_selected=len(chunks), chunks_upserted=len(points))
+    return ChunkVectorUpsertResult(
+        chunks_selected=len(chunks),
+        chunks_upserted=len(points),
+        collection_name=settings.qdrant_chunk_collection,
+        collection_exists=True,
+    )
+
+
+def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> ChunkVectorUpsertResult:
+    statement = (
+        select(Chunk)
+        .where(Chunk.embedding_status != "completed")
+        .order_by(Chunk.created_at.asc())
+        .limit(limit)
+    )
+    chunks = list(db.scalars(statement).all())
+    return _upsert_chunk_vector_points(db, settings, chunks)
+
+
+def upsert_chunk_vectors_by_ids(
+    db: Session,
+    settings: Settings,
+    chunk_ids: list[str],
+) -> ChunkVectorUpsertResult:
+    if not chunk_ids:
+        return _upsert_chunk_vector_points(db, settings, [])
+    statement = select(Chunk).where(Chunk.id.in_(chunk_ids))
+    chunks_by_id = {chunk.id: chunk for chunk in db.scalars(statement).all()}
+    missing_chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id not in chunks_by_id]
+    if missing_chunk_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chunks not found: {', '.join(missing_chunk_ids)}",
+        )
+    ordered_chunks = [chunks_by_id[chunk_id] for chunk_id in chunk_ids]
+    return _upsert_chunk_vector_points(db, settings, ordered_chunks)
 
 
 def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) -> ChunkVectorSearchResult:
