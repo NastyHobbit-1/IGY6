@@ -20,6 +20,7 @@ storage/artifacts/*
 storage/exports/*
 !storage/exports/.gitkeep
 storage/env_backups/
+storage/ops/
 storage/postgres/
 storage/qdrant/
 storage/neo4j/

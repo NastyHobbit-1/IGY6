@@ -231,6 +231,51 @@ http://127.0.0.1:8000/docs
 docker compose -f infra/docker-compose.yml --env-file .env down
 ```
 
+### Operator Scripts
+
+The manual Docker Compose commands above remain valid. For convenience, IGY6
+also includes local operator scripts that resolve the repository root from the
+script location, verify `infra/docker-compose.yml` and `.env`, print the Compose
+command before running it, and avoid destructive Docker cleanup.
+
+Start in the foreground:
+
+```bash
+scripts/run.sh
+```
+
+Start detached, run health checks, and write a safe last-healthy snapshot only
+if required health checks pass:
+
+```bash
+scripts/run.sh --detached
+```
+
+Stop without deleting volumes, images, or runtime data:
+
+```bash
+scripts/stop.sh
+```
+
+Start from the last healthy local metadata snapshot:
+
+```bash
+scripts/run-last-healthy-config.sh
+```
+
+The snapshot is stored under:
+
+```text
+${IGY6_DATA_ROOT}/ops/last-healthy.json
+```
+
+It stores safe operational metadata such as commit hash, relative Compose/env
+paths, file hashes, service status summaries, and health check results. It does
+not store raw `.env` contents or secret values. If no snapshot exists,
+`run-last-healthy-config.sh` refuses cleanly. If the current commit differs or
+the working tree has local changes, it warns but does not reset, checkout,
+stash, overwrite, or discard anything.
+
 ## First Use Workflow
 
 Some steps are easiest through API calls today. The web UI shows current records
