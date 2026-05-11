@@ -8,8 +8,10 @@ It is not a finished autonomous agent, not ComfyUI, not a generic chatbot, and
 not a local AI-stack model manager. The current implementation does not generate
 LLM answers and does not call external models. It supports deterministic local
 evidence, retrieval, metadata, reporting, and review workflows. System-changing
-actions are not implemented, and the system is read-only or scaffolded by
-default unless a current endpoint explicitly records local metadata.
+actions are not autonomous and require explicit approval when exposed through a
+typed local command plane. The system is read-only or scaffolded by default
+unless a current endpoint explicitly records local metadata or executes an
+approved local stack operator action.
 
 ## Current Capabilities
 
@@ -39,6 +41,7 @@ Implemented or scaffolded behavior in the current repository:
 | Improvement and experiments | Improvement items and experiment run metadata can be recorded. Production self-improvement execution is not implemented. |
 | Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
 | Settings | The UI can edit the local `.env` through a backend verify-dry-run-before-save workflow with secret masking, backups, atomic writes, and audit events. |
+| Agent command plane | `/agent/intent` and `/agent/actions/{action_name}/execute` provide a deterministic local typed action registry. Read-only actions can inspect health, git state, latest DIFF, work items, and retrieval preview. Stack start/stop/recover actions require approval and call the DIFF-082 scripts. |
 
 ## Not Implemented Yet
 
@@ -50,7 +53,9 @@ Current boundaries:
 - No ComfyUI or local AI-stack functionality.
 - No image generation, model manager, model selector, or model download flow.
 - No external model calls.
-- No system-changing actions.
+- No autonomous system-changing actions. The only current system-changing
+  command-plane actions are approved local stack start/stop/recover calls
+  through fixed scripts.
 - No automatic predictions or advice generation.
 - No production self-improvement execution.
 - No production method changes.
@@ -275,6 +280,62 @@ not store raw `.env` contents or secret values. If no snapshot exists,
 `run-last-healthy-config.sh` refuses cleanly. If the current commit differs or
 the working tree has local changes, it warns but does not reset, checkout,
 stash, overwrite, or discard anything.
+
+## Agent Command Plane
+
+The MVP command plane is deterministic and local-only. It is not an LLM agent,
+does not call external models, and does not execute arbitrary shell commands.
+
+Intent preview:
+
+```bash
+curl -X POST http://127.0.0.1:8000/agent/intent \
+  -H "content-type: application/json" \
+  -d '{"message":"show project health"}'
+```
+
+Execute a read-only action:
+
+```bash
+curl -X POST http://127.0.0.1:8000/agent/actions/show_git_status/execute \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+Allowed read-only actions:
+
+- `show_project_health`
+- `show_git_status`
+- `show_latest_diff`
+- `show_work_items`
+- `run_retrieval_preview`
+
+Approval-required local stack actions:
+
+- `start_stack`, which calls `scripts/run.sh --detached`
+- `stop_stack`, which calls `scripts/stop.sh`
+- `run_last_healthy_stack`, which calls `scripts/run-last-healthy-config.sh`
+
+To approve a stack action, create and approve an approval with request type
+`agent_action` and a payload that exactly names the action:
+
+```bash
+curl -X POST http://127.0.0.1:8000/approvals \
+  -H "content-type: application/json" \
+  -d '{"request_type":"agent_action","request_payload_json":{"action_name":"start_stack"}}'
+```
+
+Then approve it and pass the returned `APPROVAL_ID` to execution:
+
+```bash
+curl -X POST http://127.0.0.1:8000/agent/actions/start_stack/execute \
+  -H "content-type: application/json" \
+  -d '{"approval_id":"APPROVAL_ID"}'
+```
+
+Unknown actions, arbitrary shell requests such as `run rm -rf /`, and
+approval-required actions without a matching approved approval are rejected and
+audited where execution is attempted.
 
 ## First Use Workflow
 

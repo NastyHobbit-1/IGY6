@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent import router as agent_router
 from app.analysis import router as analysis_router
 from app.collection_runs import router as collection_runs_router
 from app.approvals import router as approvals_router
@@ -45,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(agent_router)
 app.include_router(sources_router)
 app.include_router(work_items_router)
 app.include_router(approvals_router)
