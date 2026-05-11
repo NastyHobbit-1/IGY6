@@ -119,6 +119,8 @@ class HydratedChunkSearchHit(BaseModel):
 
 class HydratedChunkSearchResult(BaseModel):
     query: str
+    collection_name: str
+    collection_exists: bool
     hits: list[HydratedChunkSearchHit]
 
 
@@ -210,7 +212,12 @@ def search_hydrated_chunks(
             )
         )
 
-    return HydratedChunkSearchResult(query=vector_results.query, hits=hits)
+    return HydratedChunkSearchResult(
+        query=vector_results.query,
+        collection_name=vector_results.collection_name,
+        collection_exists=vector_results.collection_exists,
+        hits=hits,
+    )
 
 
 @router.get("/chunks/{chunk_id}/trail", response_model=RetrievalTrailRead)

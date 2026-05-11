@@ -42,6 +42,8 @@ class ChunkVectorSearchHit(BaseModel):
 
 class ChunkVectorSearchResult(BaseModel):
     query: str
+    collection_name: str
+    collection_exists: bool
     hits: list[ChunkVectorSearchHit]
 
 
@@ -100,6 +102,14 @@ def _points_url(settings: Settings) -> str:
 
 def _search_url(settings: Settings) -> str:
     return f"{_points_url(settings)}/search"
+
+
+def _is_missing_collection_response(response: httpx.Response, settings: Settings) -> bool:
+    if response.status_code != status.HTTP_404_NOT_FOUND:
+        return False
+    detail = response.text.lower()
+    collection_name = settings.qdrant_chunk_collection.lower()
+    return collection_name in detail and "collection" in detail and ("not found" in detail or "doesn't exist" in detail)
 
 
 def get_qdrant_collection_status(settings: Settings) -> VectorCollectionStatus:
@@ -176,6 +186,13 @@ def upsert_chunk_vectors(db: Session, settings: Settings, limit: int = 100) -> C
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
+    if _is_missing_collection_response(response, settings):
+        return ChunkVectorSearchResult(
+            query=payload.query,
+            collection_name=settings.qdrant_chunk_collection,
+            collection_exists=False,
+            hits=[],
+        )
     if response.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=response.text)
 
@@ -207,6 +224,13 @@ def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) 
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
+    if _is_missing_collection_response(response, settings):
+        return ChunkVectorSearchResult(
+            query=payload.query,
+            collection_name=settings.qdrant_chunk_collection,
+            collection_exists=False,
+            hits=[],
+        )
     if response.status_code >= 400:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=response.text)
 
@@ -222,7 +246,12 @@ def search_chunk_vectors(settings: Settings, payload: ChunkVectorSearchRequest) 
                 payload=result_payload,
             )
         )
-    return ChunkVectorSearchResult(query=payload.query, hits=hits)
+    return ChunkVectorSearchResult(
+        query=payload.query,
+        collection_name=settings.qdrant_chunk_collection,
+        collection_exists=True,
+        hits=hits,
+    )
 
 
 @router.get("/chunks", response_model=VectorCollectionStatus)
