@@ -4,5 +4,6 @@ members = [
     "crates/igy6-config",
     "crates/igy6-policy",
     "crates/igy6-host-bridge",
+    "crates/igy6-cli",
 ]
 resolver = "2"

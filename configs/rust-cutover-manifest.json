@@ -50,9 +50,22 @@
       ]
     },
     "cli": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-088",
+      "verification": [
+        "git status --short checked DIFF-088 scoped files only",
+        "git diff --check passed",
+        "cargo test --workspace passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo run -p igy6-cli -- --help passed",
+        "cargo run -p igy6-cli -- version passed",
+        "cargo run -p igy6-cli -- phases --manifest configs/rust-cutover-manifest.json passed",
+        "cargo run -p igy6-cli -- phase-status cli --manifest configs/rust-cutover-manifest.json passed",
+        "cargo run -p igy6-cli -- validate-manifest configs/rust-cutover-manifest.json passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed"
+      ]
     },
     "config": {
       "status": "pending",

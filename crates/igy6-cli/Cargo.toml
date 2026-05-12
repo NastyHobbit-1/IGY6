@@ -1,0 +1,12 @@
+[package]
+name = "igy6-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-core = { path = "../igy6-core" }
+igy6-policy = { path = "../igy6-policy" }
+
+[[bin]]
+name = "igy6-cli"
+path = "src/main.rs"
