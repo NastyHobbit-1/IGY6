@@ -338,6 +338,40 @@ runtime, the UI keeps execution blocked even with an approval ID. Host-side
 operators can still run `scripts/run.sh`, `scripts/stop.sh`, and
 `scripts/run-last-healthy-config.sh` directly from the repository root.
 
+### Rust Host Control Bridge
+
+DIFF-086 adds a Rust host-side bridge scaffold at
+`crates/igy6-host-bridge/`. It is local-only and binds to `127.0.0.1`. It
+requires bearer-token authentication and exposes only fixed operator actions:
+
+- `start_stack` -> `scripts/run.sh --detached`
+- `stop_stack` -> `scripts/stop.sh`
+- `run_last_healthy_stack` -> `scripts/run-last-healthy-config.sh`
+
+It does not accept arbitrary shell commands or user-provided argv. It must only
+be called by approved local workflows; the bridge itself is not an approval
+system.
+
+Start it from the host/WSL environment:
+
+```bash
+scripts/start-host-bridge.sh
+```
+
+The start script creates or reuses a token file under
+`${IGY6_DATA_ROOT}/ops/host-bridge.token` and does not print the token. Stop it
+with:
+
+```bash
+scripts/stop-host-bridge.sh
+```
+
+Direct bridge calls require:
+
+```text
+Authorization: Bearer <token>
+```
+
 To approve a stack action, create and approve an approval with request type
 `agent_action` and a payload that exactly names the action:
 

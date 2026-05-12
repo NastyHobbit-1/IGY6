@@ -1,0 +1,9 @@
+[package]
+name = "igy6-host-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Local-only IGY6 host control bridge for fixed approved operator scripts"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]

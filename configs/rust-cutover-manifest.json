@@ -22,9 +22,19 @@
   ],
   "phases": {
     "host_bridge": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-086",
+      "crate": "crates/igy6-host-bridge",
+      "verification": [
+        "cargo test --manifest-path crates/igy6-host-bridge/Cargo.toml passed, 7 tests passed",
+        "cargo fmt --manifest-path crates/igy6-host-bridge/Cargo.toml --check passed",
+        "cargo clippy --manifest-path crates/igy6-host-bridge/Cargo.toml --all-targets passed",
+        "git diff --check passed",
+        "bash -n scripts/start-host-bridge.sh passed",
+        "bash -n scripts/stop-host-bridge.sh passed",
+        "scripts/rust-cutover.sh --check passed with expected warnings: no root Cargo.toml yet and cutover_ready false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed"
+      ]
     },
     "workspace": {
       "status": "pending",
