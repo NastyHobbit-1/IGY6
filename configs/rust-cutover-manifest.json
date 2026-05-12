@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "cutover_ready": false,
+  "target_architecture": "rust-primary",
+  "required_phases": [
+    "host_bridge",
+    "workspace",
+    "cli",
+    "config",
+    "artifact_store",
+    "normalization",
+    "chunking",
+    "vector_memory",
+    "worker",
+    "read_only_api",
+    "agent_api",
+    "retrieval_preview",
+    "evidence_answer",
+    "write_api_batch_1",
+    "work_queue_reports",
+    "rust_gateway"
+  ],
+  "phases": {
+    "host_bridge": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "workspace": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "cli": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "config": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "artifact_store": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "normalization": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "chunking": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "vector_memory": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "worker": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "read_only_api": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "agent_api": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "retrieval_preview": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "evidence_answer": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "write_api_batch_1": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "work_queue_reports": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    },
+    "rust_gateway": {
+      "status": "pending",
+      "diff": null,
+      "verification": []
+    }
+  },
+  "archive_plan": {
+    "move": [],
+    "keep": [],
+    "rewrite": [],
+    "create_if_missing": []
+  }
+}
