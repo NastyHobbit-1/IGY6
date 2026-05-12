@@ -145,7 +145,7 @@ run_cargo_checks_if_present() {
   require_command cargo
   info "Running Rust workspace checks..."
   cargo test --manifest-path "${REPO_ROOT}/Cargo.toml" --workspace
-  cargo fmt --manifest-path "${REPO_ROOT}/Cargo.toml" --check
+  cargo fmt --all --check
   cargo clippy --manifest-path "${REPO_ROOT}/Cargo.toml" --workspace --all-targets
 }
 

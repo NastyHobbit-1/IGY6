@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "crates/igy6-core",
+    "crates/igy6-config",
+    "crates/igy6-policy",
+    "crates/igy6-host-bridge",
+]
+resolver = "2"
