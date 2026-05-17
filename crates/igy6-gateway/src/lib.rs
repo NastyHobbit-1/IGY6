@@ -1,13 +1,14 @@
 use std::env;
 use std::fmt;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY};
 use igy6_evidence_answer::build_evidence_answer_packet;
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
 use postgres::{Client, NoTls};
+use serde_json::Value;
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
@@ -29,6 +30,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/chat/evidence-answer"),
     ("GET", "/approvals"),
     ("GET", "/approvals/{approval_id}"),
+    ("POST", "/approvals"),
     ("GET", "/artifacts"),
     ("GET", "/artifacts/{artifact_id}"),
     ("GET", "/audit-events"),
@@ -67,6 +69,7 @@ pub enum GatewayError {
     InvalidFallbackOrigin(String),
     MissingDatabaseUrl,
     Database(String),
+    Validation(String),
 }
 
 impl fmt::Display for GatewayError {
@@ -82,6 +85,7 @@ impl fmt::Display for GatewayError {
                 write!(formatter, "DATABASE_URL is required for this route")
             }
             Self::Database(error) => write!(formatter, "database error: {error}"),
+            Self::Validation(error) => write!(formatter, "validation error: {error}"),
         }
     }
 }
@@ -213,6 +217,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/chat/evidence-answer") => {
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
+        ("POST", "/approvals") => approval_create_response(&request.body, database_url),
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
         }
@@ -486,6 +491,139 @@ fn query_db_route(
     }
 }
 
+fn approval_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    match create_approval(body, database_url) {
+        Ok(response_body) => json_response(201, "Created", response_body, false),
+        Err(GatewayError::Validation(message)) => json_response(
+            422,
+            "Unprocessable Entity",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::MissingDatabaseUrl) => json_response(
+            503,
+            "Service Unavailable",
+            "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(error) => json_response(
+            502,
+            "Bad Gateway",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
+}
+
+fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_approval_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let approval_id = generated_record_id("approval");
+    transaction
+        .execute(
+            "INSERT INTO approvals (id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at) VALUES ($1, $2, 'pending', $3, NULL, NULL, $4::jsonb, NULL)",
+            &[
+                &approval_id,
+                &payload.request_type,
+                &payload.requested_by_actor_id,
+                &payload.request_payload_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "request_type": payload.request_type,
+        "status": "pending"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'approval.requested', 'pending', 'approval', $2, NULL, $3::jsonb)",
+            &[&payload.requested_by_actor_id, &approval_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t",
+            &[&approval_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+struct ApprovalCreatePayload {
+    request_type: String,
+    requested_by_actor_id: String,
+    request_payload_json: Value,
+}
+
+fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
+    let object = value.as_object().ok_or_else(|| {
+        GatewayError::Validation("Approval request body must be a JSON object.".to_string())
+    })?;
+    let request_type = object
+        .get("request_type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if request_type.is_empty() {
+        return Err(GatewayError::Validation(
+            "request_type is required.".to_string(),
+        ));
+    }
+    if request_type.len() > 64 {
+        return Err(GatewayError::Validation(
+            "request_type must be 64 characters or fewer.".to_string(),
+        ));
+    }
+    let requested_by_actor_id = object
+        .get("requested_by_actor_id")
+        .and_then(Value::as_str)
+        .unwrap_or("local-owner")
+        .trim()
+        .to_string();
+    if requested_by_actor_id.is_empty() {
+        return Err(GatewayError::Validation(
+            "requested_by_actor_id must not be empty.".to_string(),
+        ));
+    }
+    let request_payload_json = object
+        .get("request_payload_json")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !request_payload_json.is_object() {
+        return Err(GatewayError::Validation(
+            "request_payload_json must be a JSON object.".to_string(),
+        ));
+    }
+    Ok(ApprovalCreatePayload {
+        request_type,
+        requested_by_actor_id,
+        request_payload_json,
+    })
+}
+
+fn generated_record_id(prefix: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{prefix}-{nanos:x}")
+}
+
 fn postgres_client_url(database_url: &str) -> String {
     for prefix in ["postgresql+", "postgres+"] {
         if let Some(driver_url) = database_url.strip_prefix(prefix) {
@@ -575,7 +713,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -1210,6 +1348,42 @@ mod tests {
     }
 
     #[test]
+    fn approval_create_is_rust_native_and_requires_database_url() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/approvals",
+                r#"{"request_type":"agent_action","request_payload_json":{"action_name":"start_stack"}}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn approval_create_validation_rejects_malformed_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"request_type":""}"#,
+            r#"{"request_type":"agent_action","requested_by_actor_id":""}"#,
+            r#"{"request_type":"agent_action","request_payload_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/approvals", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
     fn rust_native_route_registry_covers_db_read_batch() {
         for expected in [
             ("GET", "/sources"),
@@ -1225,6 +1399,7 @@ mod tests {
             ("GET", "/analysis/recommendations/{recommendation_id}"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
+            ("POST", "/approvals"),
             ("GET", "/artifacts"),
             ("GET", "/artifacts/{artifact_id}"),
             ("GET", "/audit-events"),
