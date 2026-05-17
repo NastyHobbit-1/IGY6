@@ -79,7 +79,7 @@ The planned sequence is:
 | `host_bridge` | DIFF-086 or next available | Rust local-only host bridge for approved stack-control scripts. |
 | `workspace` | Next | Add Cargo workspace, `igy6-core`, `igy6-config`, and `igy6-policy`. |
 | `cli` | DIFF-088, corrected by DIFF-089 | Add `igy6` CLI for health, run, stop, run-last-healthy, config check, and snapshot show. |
-| `config` | Next | Add Rust `.env` validation without replacing Python settings until parity. |
+| `config` | DIFF-090 | Add Rust `.env` validation without replacing Python settings until parity. |
 | `artifact_store` | Next | Add Rust content-addressed artifact storage bounded by `IGY6_DATA_ROOT`. |
 | `normalization` | Next | Add UTF-8 text normalization in Rust. |
 | `chunking` | Next | Add deterministic chunking and evidence-item generation in Rust. |

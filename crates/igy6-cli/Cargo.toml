@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+igy6-config = { path = "../igy6-config" }
 igy6-core = { path = "../igy6-core" }
 igy6-policy = { path = "../igy6-policy" }
 

@@ -6,6 +6,7 @@ version = 4
 name = "igy6-cli"
 version = "0.1.0"
 dependencies = [
+ "igy6-config",
  "igy6-core",
  "igy6-policy",
 ]

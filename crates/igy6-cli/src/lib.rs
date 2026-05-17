@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use igy6_config::{render_cli_report, validate_repo_config};
 use igy6_policy::{ActionRisk, ApprovalRequirement};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -26,10 +27,6 @@ pub struct CliOutcome {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
-}
-
-struct EnvPair {
-    key: String,
 }
 
 impl CliOutcome {
@@ -287,54 +284,17 @@ pub fn render_health(repo_root: &Path) -> Result<String, CliError> {
 }
 
 pub fn render_config_check(repo_root: &Path) -> Result<String, CliError> {
-    let mut failures = Vec::new();
-    let env_example_path = repo_root.join(".env.example");
     let manifest_path = repo_root.join("configs/rust-cutover-manifest.json");
     let compose_path = repo_root.join("infra/docker-compose.yml");
+    let report = validate_repo_config(repo_root)
+        .map_err(|error| CliError::ConfigCheckFailed(vec![error.to_string()]))?;
+    let mut failures = report.error_messages();
 
-    if !env_example_path.is_file() {
-        failures.push(".env.example missing".to_string());
-    }
     if !manifest_path.is_file() {
         failures.push("configs/rust-cutover-manifest.json missing".to_string());
     }
     if !compose_path.is_file() {
         failures.push("infra/docker-compose.yml missing".to_string());
-    }
-
-    let mut parsed_keys = BTreeMap::new();
-    if env_example_path.is_file() {
-        let content = fs::read_to_string(&env_example_path)
-            .map_err(|error| CliError::ConfigCheckFailed(vec![error.to_string()]))?;
-        for (line_number, line) in content.lines().enumerate() {
-            if let Some(pair) = parse_repo_visible_env_line(line)
-                .map_err(|error| CliError::ConfigCheckFailed(vec![error.to_string()]))?
-            {
-                parsed_keys.insert(pair.key, line_number + 1);
-            }
-        }
-    }
-
-    let required_keys = [
-        "APP_ENV",
-        "APP_HOST",
-        "APP_PORT",
-        "API_BASE_URL",
-        "WEB_BASE_URL",
-        "DATABASE_URL",
-        "REDIS_URL",
-        "QDRANT_URL",
-        "NEO4J_URI",
-        "MLFLOW_TRACKING_URI",
-        "PHOENIX_COLLECTOR_ENDPOINT",
-        "IGY6_DATA_ROOT",
-        "EXTERNAL_MODEL_POLICY_DEFAULT",
-        "APPROVAL_REQUIRED_DEFAULT",
-    ];
-    for key in required_keys {
-        if !parsed_keys.contains_key(key) {
-            failures.push(format!(".env.example missing key {key}"));
-        }
     }
 
     if manifest_path.is_file() {
@@ -345,30 +305,12 @@ pub fn render_config_check(repo_root: &Path) -> Result<String, CliError> {
     }
 
     if failures.is_empty() {
-        Ok(format!(
-            "IGY6 config check\n.env.example: ok ({} keys, values redacted)\nmanifest: ok\ncompose file: ok\n.env: not read\nstatus: ok\n",
-            parsed_keys.len()
-        ))
+        let mut output = render_cli_report(&report);
+        output.push_str("manifest: ok\ncompose file: ok\n");
+        Ok(output)
     } else {
         Err(CliError::ConfigCheckFailed(failures))
     }
-}
-
-fn parse_repo_visible_env_line(line: &str) -> Result<Option<EnvPair>, String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return Ok(None);
-    }
-    let Some((key, _value)) = trimmed.split_once('=') else {
-        return Err("environment example line must contain '='".to_string());
-    };
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("environment example key must not be empty".to_string());
-    }
-    Ok(Some(EnvPair {
-        key: key.to_string(),
-    }))
 }
 
 pub fn snapshot_show_placeholder() -> String {
@@ -689,7 +631,7 @@ mod tests {
         let config =
             plan_cli(["config".to_string(), "check".to_string()], &repo_root).expect("config");
         assert!(
-            matches!(config, CommandAction::Render(output) if output.contains(".env: not read"))
+            matches!(config, CommandAction::Render(output) if output.contains("values: redacted") && output.contains("runtime_data_read: false"))
         );
         let snapshot =
             plan_cli(["snapshot".to_string(), "show".to_string()], &repo_root).expect("snapshot");
