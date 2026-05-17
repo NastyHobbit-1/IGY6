@@ -47,10 +47,12 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/evidence/claims/{claim_id}"),
     ("GET", "/feedback"),
     ("GET", "/feedback/{feedback_id}"),
+    ("POST", "/feedback"),
     ("GET", "/memory/graph/schema"),
     ("GET", "/memory/vector/chunks"),
     ("GET", "/outcomes"),
     ("GET", "/outcomes/{outcome_id}"),
+    ("POST", "/outcomes"),
     ("GET", "/reports"),
     ("GET", "/reports/{report_id}"),
     ("GET", "/settings/env"),
@@ -70,6 +72,7 @@ pub enum GatewayError {
     MissingDatabaseUrl,
     Database(String),
     Validation(String),
+    NotFound(String),
 }
 
 impl fmt::Display for GatewayError {
@@ -86,6 +89,7 @@ impl fmt::Display for GatewayError {
             }
             Self::Database(error) => write!(formatter, "database error: {error}"),
             Self::Validation(error) => write!(formatter, "validation error: {error}"),
+            Self::NotFound(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -218,6 +222,8 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
+        ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
+        ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
         }
@@ -515,6 +521,44 @@ fn approval_create_response(body: &str, database_url: Option<&str>) -> GatewayRe
     }
 }
 
+fn write_route_response(result: Result<String, GatewayError>) -> GatewayResponse {
+    match result {
+        Ok(response_body) => json_response(201, "Created", response_body, false),
+        Err(GatewayError::Validation(message)) => json_response(
+            422,
+            "Unprocessable Entity",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::NotFound(message)) => json_response(
+            404,
+            "Not Found",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::MissingDatabaseUrl) => json_response(
+            503,
+            "Service Unavailable",
+            "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(error) => json_response(
+            502,
+            "Bad Gateway",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
+}
+
+fn feedback_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_feedback(body, database_url))
+}
+
+fn outcome_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_outcome(body, database_url))
+}
+
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_approval_create(body)?;
     let database_url = database_url
@@ -561,10 +605,294 @@ fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, Gat
     Ok(response_body)
 }
 
+fn create_feedback(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_feedback_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let feedback_id = generated_record_id("feedback");
+
+    if payload.target_type == "source" {
+        if let Some((_, _)) = source_trust_update(&payload.label) {
+            let exists = transaction
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+                    &[&payload.target_id],
+                )
+                .map(|row| row.get::<_, bool>(0))
+                .map_err(|error| GatewayError::Database(error.to_string()))?;
+            if !exists {
+                return Err(GatewayError::NotFound("Source not found".to_string()));
+            }
+        }
+    }
+
+    transaction
+        .execute(
+            "INSERT INTO feedback_events (id, target_type, target_id, label, actor_id, note, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)",
+            &[
+                &feedback_id,
+                &payload.target_type,
+                &payload.target_id,
+                &payload.label,
+                &payload.actor_id,
+                &payload.note,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let feedback_audit_details = serde_json::json!({
+        "feedback_id": feedback_id,
+        "label": payload.label
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'feedback.created', 'recorded', $2, $3, NULL, $4::jsonb)",
+            &[
+                &payload.actor_id,
+                &payload.target_type,
+                &payload.target_id,
+                &feedback_audit_details,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    if payload.target_type == "source" {
+        if let Some((trust_level, enabled)) = source_trust_update(&payload.label) {
+            let row = transaction
+                .query_one(
+                    "SELECT trust_level, enabled FROM sources WHERE id = $1",
+                    &[&payload.target_id],
+                )
+                .map_err(|error| GatewayError::Database(error.to_string()))?;
+            let previous_trust_level = row.get::<_, String>(0);
+            let previous_enabled = row.get::<_, bool>(1);
+            transaction
+                .execute(
+                    "UPDATE sources SET trust_level = $1, enabled = $2 WHERE id = $3",
+                    &[&trust_level, &enabled, &payload.target_id],
+                )
+                .map_err(|error| GatewayError::Database(error.to_string()))?;
+            let details = serde_json::json!({
+                "feedback_id": feedback_id,
+                "previous_trust_level": previous_trust_level,
+                "new_trust_level": trust_level,
+                "previous_enabled": previous_enabled,
+                "new_enabled": enabled
+            });
+            transaction
+                .execute(
+                    "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'source.trust_feedback_applied', $2, 'source', $3, NULL, $4::jsonb)",
+                    &[&payload.actor_id, &payload.label, &payload.target_id, &details],
+                )
+                .map_err(|error| GatewayError::Database(error.to_string()))?;
+        }
+    }
+
+    if is_weak_feedback_label(&payload.label) && payload.target_type != "source" {
+        let improvement_id = generated_record_id("improvement");
+        let target_area = improvement_target_area(&payload.target_type);
+        let objective = format!(
+            "Investigate {} feedback for {} {}.",
+            payload.label, payload.target_type, payload.target_id
+        );
+        let improvement_metadata = serde_json::json!({
+            "generated_by": "DIFF-068",
+            "feedback_id": feedback_id,
+            "feedback_label": payload.label,
+            "target_type": payload.target_type,
+            "target_id": payload.target_id,
+            "note": payload.note
+        });
+        transaction
+            .execute(
+                "INSERT INTO improvement_items (id, target_area, status, objective, proposed_by_actor_id, priority, metadata_json) VALUES ($1, $2, 'proposed', $3, $4, 'normal', $5::jsonb)",
+                &[
+                    &improvement_id,
+                    &target_area,
+                    &objective,
+                    &payload.actor_id,
+                    &improvement_metadata,
+                ],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        let details = serde_json::json!({
+            "target_area": target_area,
+            "priority": "normal",
+            "source_feedback_id": feedback_id
+        });
+        transaction
+            .execute(
+                "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'improvement_item.created', 'proposed', 'improvement_item', $2, $3, $4::jsonb)",
+                &[&payload.actor_id, &improvement_id, &feedback_id, &details],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, target_type, target_id, label, actor_id, note, metadata_json, created_at, updated_at FROM feedback_events WHERE id = $1) t",
+            &[&feedback_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_outcome(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_outcome_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let target_table = outcome_target_table(&payload.target_type)?;
+    let target_exists = transaction
+        .query_one(
+            &format!("SELECT EXISTS (SELECT 1 FROM {target_table} WHERE id = $1)"),
+            &[&payload.target_id],
+        )
+        .map(|row| row.get::<_, bool>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if !target_exists {
+        return Err(GatewayError::Validation(
+            "Outcome target record does not exist".to_string(),
+        ));
+    }
+    for evidence_id in &payload.evidence_ids {
+        let exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM evidence_items WHERE id = $1)",
+                &[evidence_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !exists {
+            return Err(GatewayError::Validation(
+                "Outcome records must reference existing evidence items".to_string(),
+            ));
+        }
+    }
+
+    let outcome_id = generated_record_id("outcome");
+    let evidence_ids_json = Value::Array(
+        payload
+            .evidence_ids
+            .iter()
+            .map(|id| Value::String(id.clone()))
+            .collect(),
+    );
+    transaction
+        .execute(
+            "INSERT INTO outcomes (id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::jsonb, $8::jsonb)",
+            &[
+                &outcome_id,
+                &payload.target_type,
+                &payload.target_id,
+                &payload.outcome_status,
+                &payload.summary,
+                &payload.occurred_at,
+                &evidence_ids_json,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "outcome_id": outcome_id,
+        "outcome_status": payload.outcome_status
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ('local-owner', 'outcome.created', 'recorded', $1, $2, NULL, $3::jsonb)",
+            &[&payload.target_type, &payload.target_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    let previous_status = transaction
+        .query_one(
+            &format!("SELECT status FROM {target_table} WHERE id = $1"),
+            &[&payload.target_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let new_status = outcome_target_status(&payload.outcome_status);
+    let metadata_patch = serde_json::json!({
+        "latest_outcome_id": outcome_id,
+        "latest_outcome_status": payload.outcome_status
+    });
+    transaction
+        .execute(
+            &format!("UPDATE {target_table} SET status = $1, metadata_json = COALESCE(metadata_json, '{{}}'::jsonb) || $2::jsonb WHERE id = $3"),
+            &[&new_status, &metadata_patch, &payload.target_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let target_audit_details = serde_json::json!({
+        "previous_status": previous_status,
+        "new_status": new_status,
+        "outcome_status": payload.outcome_status
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ('local-owner', 'outcome.target_updated', $1, $2, $3, $4, $5::jsonb)",
+            &[
+                &new_status,
+                &payload.target_type,
+                &payload.target_id,
+                &outcome_id,
+                &target_audit_details,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json, created_at, updated_at FROM outcomes WHERE id = $1) t",
+            &[&outcome_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 struct ApprovalCreatePayload {
     request_type: String,
     requested_by_actor_id: String,
     request_payload_json: Value,
+}
+
+struct FeedbackCreatePayload {
+    target_type: String,
+    target_id: String,
+    label: String,
+    actor_id: String,
+    note: Option<String>,
+    metadata_json: Value,
+}
+
+struct OutcomeCreatePayload {
+    target_type: String,
+    target_id: String,
+    outcome_status: String,
+    summary: Option<String>,
+    occurred_at: Option<String>,
+    evidence_ids: Vec<String>,
+    metadata_json: Value,
 }
 
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
@@ -614,6 +942,263 @@ fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayErr
         requested_by_actor_id,
         request_payload_json,
     })
+}
+
+fn parse_feedback_create(body: &str) -> Result<FeedbackCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Feedback request body")?;
+    let target_type = required_string_field(&object, "target_type", 64)?;
+    if !is_feedback_target_type(&target_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown feedback target type: {target_type}"
+        )));
+    }
+    let target_id = required_string_field(&object, "target_id", 36)?;
+    let label = required_string_field(&object, "label", 64)?;
+    if !is_feedback_label(&label) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown feedback label: {label}"
+        )));
+    }
+    let actor_id = optional_string_field(&object, "actor_id", "local-owner")?;
+    let note = optional_nullable_string_field(&object, "note")?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    Ok(FeedbackCreatePayload {
+        target_type,
+        target_id,
+        label,
+        actor_id,
+        note,
+        metadata_json,
+    })
+}
+
+fn parse_outcome_create(body: &str) -> Result<OutcomeCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Outcome request body")?;
+    let target_type = required_string_field(&object, "target_type", 64)?;
+    outcome_target_table(&target_type)?;
+    let target_id = required_string_field(&object, "target_id", 36)?;
+    let outcome_status = required_string_field(&object, "outcome_status", 64)?;
+    if !is_outcome_status(&outcome_status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown outcome status: {outcome_status}"
+        )));
+    }
+    let summary = optional_nullable_string_field(&object, "summary")?;
+    let occurred_at = optional_nullable_string_field(&object, "occurred_at")?;
+    let evidence_ids = optional_string_array_field(&object, "evidence_ids")?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    Ok(OutcomeCreatePayload {
+        target_type,
+        target_id,
+        outcome_status,
+        summary,
+        occurred_at,
+        evidence_ids,
+        metadata_json,
+    })
+}
+
+fn parse_json_object(
+    body: &str,
+    description: &str,
+) -> Result<serde_json::Map<String, Value>, GatewayError> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| GatewayError::Validation(format!("{description} must be a JSON object.")))
+}
+
+fn required_string_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_len: usize,
+) -> Result<String, GatewayError> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        return Err(GatewayError::Validation(format!("{key} is required.")));
+    }
+    if value.len() > max_len {
+        return Err(GatewayError::Validation(format!(
+            "{key} must be {max_len} characters or fewer."
+        )));
+    }
+    Ok(value)
+}
+
+fn optional_string_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: &str,
+) -> Result<String, GatewayError> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(default.to_string()),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(value.trim().to_string()),
+        Some(Value::String(_)) => Err(GatewayError::Validation(format!(
+            "{key} must not be empty."
+        ))),
+        Some(_) => Err(GatewayError::Validation(format!("{key} must be a string."))),
+    }
+}
+
+fn optional_nullable_string_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, GatewayError> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.to_string())),
+        Some(_) => Err(GatewayError::Validation(format!(
+            "{key} must be a string or null."
+        ))),
+    }
+}
+
+fn optional_object_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Value, GatewayError> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(serde_json::json!({})),
+        Some(value) if value.is_object() => Ok(value.clone()),
+        Some(_) => Err(GatewayError::Validation(format!(
+            "{key} must be a JSON object."
+        ))),
+    }
+}
+
+fn optional_string_array_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, GatewayError> {
+    let Some(value) = object.get(key) else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err(GatewayError::Validation(format!(
+            "{key} must be an array of strings."
+        )));
+    };
+    let mut result = Vec::new();
+    for item in items {
+        let Some(item) = item.as_str() else {
+            return Err(GatewayError::Validation(format!(
+                "{key} must be an array of strings."
+            )));
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            return Err(GatewayError::Validation(format!(
+                "{key} must not contain empty IDs."
+            )));
+        }
+        if !result.iter().any(|existing| existing == item) {
+            result.push(item.to_string());
+        }
+    }
+    Ok(result)
+}
+
+fn is_feedback_target_type(value: &str) -> bool {
+    matches!(
+        value,
+        "source"
+            | "document"
+            | "evidence_item"
+            | "claim"
+            | "pattern"
+            | "hypothesis"
+            | "prediction"
+            | "recommendation"
+            | "report"
+            | "work_item"
+    )
+}
+
+fn is_feedback_label(value: &str) -> bool {
+    matches!(
+        value,
+        "useful"
+            | "not_useful"
+            | "wrong"
+            | "verified"
+            | "incomplete"
+            | "noisy"
+            | "trusted"
+            | "rejected"
+    )
+}
+
+fn source_trust_update(label: &str) -> Option<(&'static str, bool)> {
+    match label {
+        "trusted" => Some(("trusted", true)),
+        "noisy" => Some(("noisy", true)),
+        "rejected" => Some(("rejected", false)),
+        _ => None,
+    }
+}
+
+fn is_weak_feedback_label(value: &str) -> bool {
+    matches!(value, "not_useful" | "wrong" | "incomplete" | "rejected")
+}
+
+fn improvement_target_area(target_type: &str) -> &'static str {
+    match target_type {
+        "document" => "parsing",
+        "evidence_item" => "retrieval",
+        "prediction" => "prediction",
+        "report" => "reporting",
+        "work_item" => "safety",
+        _ => "reasoning",
+    }
+}
+
+fn outcome_target_table(target_type: &str) -> Result<&'static str, GatewayError> {
+    match target_type {
+        "prediction" => Ok("predictions"),
+        "recommendation" => Ok("recommendations"),
+        "work_item" => Ok("work_items"),
+        "hypothesis" => Ok("hypotheses"),
+        "pattern" => Ok("patterns"),
+        "report" => Ok("reports"),
+        _ => Err(GatewayError::Validation(format!(
+            "Unknown outcome target type: {target_type}"
+        ))),
+    }
+}
+
+fn is_outcome_status(value: &str) -> bool {
+    matches!(
+        value,
+        "correct"
+            | "wrong"
+            | "useful"
+            | "not_useful"
+            | "partial"
+            | "inconclusive"
+            | "confirmed"
+            | "disconfirmed"
+    )
+}
+
+fn outcome_target_status(outcome_status: &str) -> &'static str {
+    match outcome_status {
+        "correct" => "correct",
+        "useful" => "useful",
+        "confirmed" => "confirmed",
+        "wrong" => "wrong",
+        "not_useful" => "not_useful",
+        "disconfirmed" => "disconfirmed",
+        "partial" => "partial",
+        "inconclusive" => "inconclusive",
+        _ => "reviewed",
+    }
 }
 
 fn generated_record_id(prefix: &str) -> String {
@@ -713,7 +1298,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -1384,6 +1969,71 @@ mod tests {
     }
 
     #[test]
+    fn feedback_and_outcome_writes_are_rust_native_and_require_database_url() {
+        for (path, body) in [
+            (
+                "/feedback",
+                r#"{"target_type":"prediction","target_id":"prediction-1","label":"wrong","note":"bad answer"}"#,
+            ),
+            (
+                "/outcomes",
+                r#"{"target_type":"prediction","target_id":"prediction-1","outcome_status":"wrong","summary":"missed"}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
+    fn feedback_write_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"target_type":"bogus","target_id":"x","label":"wrong"}"#,
+            r#"{"target_type":"prediction","target_id":"","label":"wrong"}"#,
+            r#"{"target_type":"prediction","target_id":"x","label":"bogus"}"#,
+            r#"{"target_type":"prediction","target_id":"x","label":"wrong","metadata_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/feedback", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn outcome_write_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"target_type":"source","target_id":"x","outcome_status":"wrong"}"#,
+            r#"{"target_type":"prediction","target_id":"","outcome_status":"wrong"}"#,
+            r#"{"target_type":"prediction","target_id":"x","outcome_status":"bogus"}"#,
+            r#"{"target_type":"prediction","target_id":"x","outcome_status":"wrong","evidence_ids":[""]}"#,
+            r#"{"target_type":"prediction","target_id":"x","outcome_status":"wrong","metadata_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/outcomes", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
     fn rust_native_route_registry_covers_db_read_batch() {
         for expected in [
             ("GET", "/sources"),
@@ -1412,10 +2062,12 @@ mod tests {
             ("GET", "/reports/{report_id}"),
             ("GET", "/feedback"),
             ("GET", "/feedback/{feedback_id}"),
+            ("POST", "/feedback"),
             ("GET", "/memory/graph/schema"),
             ("GET", "/memory/vector/chunks"),
             ("GET", "/outcomes"),
             ("GET", "/outcomes/{outcome_id}"),
+            ("POST", "/outcomes"),
             ("GET", "/settings/env"),
             ("GET", "/evidence/documents"),
             ("GET", "/evidence/documents/{document_id}"),

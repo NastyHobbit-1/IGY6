@@ -15,8 +15,9 @@ Rust gateway service: api
     |
     +-- Rust-native routes for health, migration status, agent capability,
     |   agent intent, retrieval preview, evidence answer, DIFF-106 and
-    |   DIFF-107 read-only DB routes, DIFF-108 status/config routes, and
-    |   DIFF-109 approval request creation
+    |   DIFF-107 read-only DB routes, DIFF-108 status/config routes,
+    |   DIFF-109 approval request creation, and DIFF-110 feedback/outcome
+    |   writes
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -83,8 +84,10 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/evidence/claims/{claim_id}` | Rust-native DB read |
 | GET | `/feedback` | Rust-native DB read |
 | GET | `/feedback/{feedback_id}` | Rust-native DB read |
+| POST | `/feedback` | Rust-native DB write with audit event |
 | GET | `/outcomes` | Rust-native DB read |
 | GET | `/outcomes/{outcome_id}` | Rust-native DB read |
+| POST | `/outcomes` | Rust-native DB write with audit events |
 | GET | `/reports` | Rust-native DB read |
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | GET | `/sources` | Rust-native DB read |
@@ -98,13 +101,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 |
 
 ## Web-Used Route Matrix
 
@@ -133,6 +136,8 @@ Route parity counts:
 | GET | `/evidence/claims` | Page data load | Rust-native DB read |
 | GET | `/feedback` | Page data load | Rust-native DB read |
 | GET | `/outcomes` | Page data load | Rust-native DB read |
+| POST | `/feedback` | Page review feedback | Rust-native DB write with audit event |
+| POST | `/outcomes` | Page review outcome | Rust-native DB write with audit events |
 | GET | `/memory/graph/schema` | Page data load | Rust-native read-only status |
 | GET | `/memory/vector/chunks` | Page data load | Rust-native read-only status |
 | POST | `/reports` | Page report create | Proxied to FastAPI |
@@ -205,7 +210,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/experiments/{experiment_run_id}/status` | Proxied to FastAPI |
 | GET | `/experiments/{experiment_run_id}` | Proxied to FastAPI |
 | GET | `/feedback` | Rust-native DB read |
-| POST | `/feedback` | Proxied to FastAPI |
+| POST | `/feedback` | Rust-native DB write with audit event |
 | GET | `/feedback/{feedback_id}` | Rust-native DB read |
 | GET | `/health/live` | Rust-native |
 | GET | `/health/ready` | Rust-native |
@@ -221,7 +226,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/memory/vector/chunks/upsert` | Proxied to FastAPI |
 | POST | `/memory/vector/chunks/search` | Proxied to FastAPI |
 | GET | `/outcomes` | Rust-native DB read |
-| POST | `/outcomes` | Proxied to FastAPI |
+| POST | `/outcomes` | Rust-native DB write with audit events |
 | GET | `/outcomes/{outcome_id}` | Rust-native DB read |
 | GET | `/reports` | Rust-native DB read |
 | POST | `/reports` | Proxied to FastAPI |
@@ -260,7 +265,10 @@ registry and records the reduced fallback counts. DIFF-107 records the second
 DB read batch and reduces web route fallback dependency again. DIFF-108 adds
 Rust-native read-only settings/env metadata, vector status, and graph status
 routes without reading `.env` contents or mutating Qdrant/Neo4j. DIFF-109 adds
-Rust-native approval request creation with audit event insertion.
+Rust-native approval request creation with audit event insertion. DIFF-110 adds
+Rust-native feedback and outcome writes with validation, audit insertion, and
+their Python side-effect parity for source trust, weak-feedback improvement
+items, and outcome target updates.
 
 ## Manifest Finding
 
@@ -287,12 +295,14 @@ deliberately retired:
    Qdrant/Neo4j mutation.
 5. DIFF-109: migrate approval request creation with explicit audit-event
    parity.
-6. DIFF-110: continue with the remaining write/action fallback routes only
+6. DIFF-110: migrate feedback and outcome write routes with explicit validation
+   and audit parity.
+7. DIFF-111: continue with the remaining write/action fallback routes only
    where approval, audit, and response-shape parity can be explicit and
    testable.
-7. Later DIFFs: migrate settings/env write/verify, agent action execution,
+8. Later DIFFs: migrate settings/env write/verify, agent action execution,
    source/report/work-item writes, collection writes, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-8. Final retirement DIFF: remove or disable `legacy-api` only after route
+9. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
