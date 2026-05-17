@@ -85,7 +85,7 @@ The planned sequence is:
 | `chunking` | DIFF-093 | Add deterministic chunking and evidence-item generation in Rust. |
 | `vector_memory` | DIFF-094 | Add Qdrant request planning, upsert/search payloads, and deterministic vectors in Rust. |
 | `worker` | DIFF-095 | Add Rust worker MVP for normalization, chunking, and vector-upsert planning. |
-| `read_only_api` | Next | Add Rust read-only API sidecar while FastAPI remains primary. |
+| `read_only_api` | DIFF-096 | Add Rust read-only API sidecar foundation while FastAPI remains primary. |
 | `agent_api` | Next | Move typed agent command-plane logic into Rust after parity. |
 | `retrieval_preview` | Next | Move retrieval preview to Rust while preserving `answer_status: not_generated`. |
 | `evidence_answer` | Next | Move deterministic evidence-answer logic to Rust. |

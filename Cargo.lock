@@ -46,6 +46,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "igy6-read-only-api"
+version = "0.1.0"
+
+[[package]]
 name = "igy6-vector-memory"
 version = "0.1.0"
 
