@@ -40,6 +40,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/audit-events/{audit_event_id}"),
     ("GET", "/collection-runs"),
     ("GET", "/collection-runs/{collection_run_id}"),
+    ("POST", "/collection-runs/dry-run"),
     ("GET", "/evidence/documents"),
     ("GET", "/evidence/documents/{document_id}"),
     ("GET", "/evidence/items"),
@@ -78,6 +79,8 @@ pub enum GatewayError {
     Database(String),
     Validation(String),
     NotFound(String),
+    Conflict(String),
+    Forbidden(String),
 }
 
 impl fmt::Display for GatewayError {
@@ -95,6 +98,8 @@ impl fmt::Display for GatewayError {
             Self::Database(error) => write!(formatter, "database error: {error}"),
             Self::Validation(error) => write!(formatter, "validation error: {error}"),
             Self::NotFound(error) => write!(formatter, "{error}"),
+            Self::Conflict(error) => write!(formatter, "{error}"),
+            Self::Forbidden(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -230,6 +235,9 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/analysis/patterns") => pattern_create_response(&request.body, database_url),
         ("POST", "/analysis/patterns/detect-baseline") => {
             baseline_patterns_response(&request.body, database_url)
+        }
+        ("POST", "/collection-runs/dry-run") => {
+            collection_dry_run_response(&request.body, database_url)
         }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
@@ -547,6 +555,18 @@ fn write_route_response(result: Result<String, GatewayError>) -> GatewayResponse
             format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
             false,
         ),
+        Err(GatewayError::Conflict(message)) => json_response(
+            409,
+            "Conflict",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::Forbidden(message)) => json_response(
+            403,
+            "Forbidden",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
         Err(GatewayError::MissingDatabaseUrl) => json_response(
             503,
             "Service Unavailable",
@@ -584,6 +604,10 @@ fn pattern_create_response(body: &str, database_url: Option<&str>) -> GatewayRes
 
 fn baseline_patterns_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(detect_baseline_patterns(body, database_url))
+}
+
+fn collection_dry_run_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_collection_dry_run(body, database_url))
 }
 
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -700,6 +724,117 @@ fn detect_baseline_patterns(
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(format!("[{}]", responses.join(",")))
+}
+
+fn create_collection_dry_run(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_collection_dry_run(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source = load_source_for_collection(&mut transaction, &payload.source_id)?;
+    if !source.enabled {
+        return Err(GatewayError::Conflict("Source is disabled".to_string()));
+    }
+    let permission =
+        load_permission_for_collection(&mut transaction, &payload.source_permission_id)?;
+    if permission.source_id != source.id {
+        return Err(GatewayError::Conflict(
+            "Source permission does not belong to the source".to_string(),
+        ));
+    }
+    if !permission_allows(&permission.allowed_operations, &["dry_run", "read"]) {
+        return Err(GatewayError::Forbidden(
+            "Source permission does not allow dry-run preview".to_string(),
+        ));
+    }
+
+    let dry_run_result = connector_dry_run_result(&source, &permission);
+    let error_message = dry_run_result
+        .as_ref()
+        .err()
+        .map(std::string::ToString::to_string);
+    let status_value = if error_message.is_some() {
+        "dry_run_failed"
+    } else {
+        "dry_run_previewed"
+    };
+    let summary_json = collection_dry_run_summary(
+        &source,
+        &permission,
+        dry_run_result.as_ref().ok(),
+        &payload.notes,
+    );
+    let collection_run_id = generated_record_id("collection");
+    transaction
+        .execute(
+            "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, $3, true, $4, $5::jsonb, $6)",
+            &[
+                &collection_run_id,
+                &source.id,
+                &status_value,
+                &payload.requested_by_actor_id,
+                &summary_json,
+                &error_message,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let created_details = serde_json::json!({
+        "source_id": source.id,
+        "dry_run": true,
+        "status": status_value
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'collection_run.created', 'recorded', 'collection_run', $2, NULL, $3::jsonb)",
+            &[
+                &payload.requested_by_actor_id,
+                &collection_run_id,
+                &created_details,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let dry_run_details = serde_json::json!({
+        "source_id": source.id,
+        "source_permission_id": permission.id,
+        "status": status_value,
+        "error_message": error_message
+    });
+    let decision = if error_message.is_some() {
+        "rejected"
+    } else {
+        "recorded"
+    };
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'collection_run.dry_run_preview', $2, 'collection_run', $3, NULL, $4::jsonb)",
+            &[
+                &payload.requested_by_actor_id,
+                &decision,
+                &collection_run_id,
+                &dry_run_details,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs WHERE id = $1) t",
+            &[&collection_run_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
 }
 
 fn create_report(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -1366,6 +1501,42 @@ struct BaselinePatternDetectPayload {
     recurrence_threshold: i32,
 }
 
+struct CollectionDryRunPayload {
+    source_id: String,
+    source_permission_id: String,
+    requested_by_actor_id: String,
+    notes: Value,
+}
+
+struct CollectionSource {
+    id: String,
+    name: String,
+    source_type: String,
+    location: Option<String>,
+    sensitivity: String,
+    enabled: bool,
+    metadata_json: Value,
+}
+
+struct CollectionPermission {
+    id: String,
+    source_id: String,
+    scope_json: Value,
+    allowed_operations: Vec<String>,
+    external_model_policy: String,
+    approval_required: bool,
+}
+
+#[derive(Debug)]
+struct CollectionDryRunConnectorResult {
+    connector_name: String,
+    allowed: bool,
+    summary: String,
+    estimated_items: Option<i32>,
+    warnings: Vec<String>,
+    metadata: Value,
+}
+
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
@@ -1603,6 +1774,187 @@ fn parse_baseline_pattern_detect(body: &str) -> Result<BaselinePatternDetectPayl
     Ok(BaselinePatternDetectPayload {
         actor_id,
         recurrence_threshold,
+    })
+}
+
+fn parse_collection_dry_run(body: &str) -> Result<CollectionDryRunPayload, GatewayError> {
+    let object = parse_json_object(body, "Collection dry-run request body")?;
+    let source_id = required_string_field(&object, "source_id", 36)?;
+    let source_permission_id = required_string_field(&object, "source_permission_id", 36)?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let notes = optional_object_field(&object, "notes")?;
+    Ok(CollectionDryRunPayload {
+        source_id,
+        source_permission_id,
+        requested_by_actor_id,
+        notes,
+    })
+}
+
+fn load_source_for_collection(
+    transaction: &mut postgres::Transaction<'_>,
+    source_id: &str,
+) -> Result<CollectionSource, GatewayError> {
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, name, source_type, location, sensitivity, enabled, metadata_json FROM sources WHERE id = $1",
+            &[&source_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Source not found".to_string()));
+    };
+    Ok(CollectionSource {
+        id: row.get(0),
+        name: row.get(1),
+        source_type: row.get(2),
+        location: row.get(3),
+        sensitivity: row.get(4),
+        enabled: row.get(5),
+        metadata_json: row.get(6),
+    })
+}
+
+fn load_permission_for_collection(
+    transaction: &mut postgres::Transaction<'_>,
+    permission_id: &str,
+) -> Result<CollectionPermission, GatewayError> {
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required FROM source_permissions WHERE id = $1",
+            &[&permission_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound(
+            "Source permission not found".to_string(),
+        ));
+    };
+    let allowed_operations = json_value_string_array(row.get(3), "allowed_operations")?;
+    Ok(CollectionPermission {
+        id: row.get(0),
+        source_id: row.get(1),
+        scope_json: row.get(2),
+        allowed_operations,
+        external_model_policy: row.get(4),
+        approval_required: row.get(5),
+    })
+}
+
+fn json_value_string_array(value: Value, field_name: &str) -> Result<Vec<String>, GatewayError> {
+    let Some(items) = value.as_array() else {
+        return Err(GatewayError::Database(format!(
+            "{field_name} must be an array of strings"
+        )));
+    };
+    let mut strings = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(item) = item.as_str() else {
+            return Err(GatewayError::Database(format!(
+                "{field_name} must be an array of strings"
+            )));
+        };
+        strings.push(item.to_string());
+    }
+    Ok(strings)
+}
+
+fn permission_allows(allowed_operations: &[String], allowed: &[&str]) -> bool {
+    allowed_operations
+        .iter()
+        .any(|operation| allowed.iter().any(|candidate| operation == candidate))
+}
+
+fn connector_dry_run_result(
+    source: &CollectionSource,
+    permission: &CollectionPermission,
+) -> Result<CollectionDryRunConnectorResult, String> {
+    if permission.source_id != source.id {
+        return Err("Source permission does not belong to the source".to_string());
+    }
+    let connector_name = match source.source_type.as_str() {
+        "local_project" => "local_project",
+        "manual_upload" => "manual_upload",
+        _ => {
+            return Err(format!(
+                "No connector registered for source type: {}",
+                source.source_type
+            ))
+        }
+    };
+    if !permission.allowed_operations.is_empty()
+        && !permission_allows(&permission.allowed_operations, &["dry_run", "read"])
+    {
+        return Err(format!(
+            "{} sources must allow dry_run or read operations",
+            source.source_type
+        ));
+    }
+
+    Ok(CollectionDryRunConnectorResult {
+        connector_name: connector_name.to_string(),
+        allowed: true,
+        summary: format!(
+            "{} dry-run validated source and permission metadata only.",
+            source.name
+        ),
+        estimated_items: None,
+        warnings: Vec::new(),
+        metadata: serde_json::json!({
+            "source_type": source.source_type.clone(),
+            "source_location": source.location.clone(),
+            "source_metadata": source.metadata_json.clone(),
+            "permission_id": permission.id.clone(),
+            "permission_scope": permission.scope_json.clone(),
+            "allowed_operations": permission.allowed_operations.clone(),
+            "external_model_policy": permission.external_model_policy.clone(),
+            "approval_required": permission.approval_required,
+            "preview_only": true
+        }),
+    })
+}
+
+fn collection_dry_run_summary(
+    source: &CollectionSource,
+    permission: &CollectionPermission,
+    result: Option<&CollectionDryRunConnectorResult>,
+    notes: &Value,
+) -> Value {
+    let connector_result = result.map(|result| {
+        serde_json::json!({
+            "connector_name": result.connector_name.clone(),
+            "allowed": result.allowed,
+            "summary": result.summary.clone(),
+            "estimated_items": result.estimated_items,
+            "warnings": result.warnings.clone(),
+            "metadata": result.metadata.clone()
+        })
+    });
+    serde_json::json!({
+        "source": {
+            "id": source.id.clone(),
+            "name": source.name.clone(),
+            "source_type": source.source_type.clone(),
+            "sensitivity": source.sensitivity.clone(),
+            "enabled": source.enabled
+        },
+        "permission": {
+            "id": permission.id.clone(),
+            "allowed_operations": permission.allowed_operations.clone(),
+            "scope": permission.scope_json.clone(),
+            "external_model_policy": permission.external_model_policy.clone(),
+            "approval_required": permission.approval_required
+        },
+        "preview": {
+            "mode": "connector_dry_run_preview",
+            "would_collect": false,
+            "would_create_artifacts": false,
+            "would_normalize": false,
+            "would_enqueue_worker": false
+        },
+        "connector_result": connector_result,
+        "notes": notes.clone()
     })
 }
 
@@ -2558,11 +2910,15 @@ mod tests {
 
     #[test]
     fn unsupported_routes_plan_fastapi_fallback() {
-        let request = request("POST", "/collection-runs/dry-run", "{\"source_id\":\"x\"}");
+        let request = request(
+            "POST",
+            "/collection-runs/manual-upload",
+            "{\"source_id\":\"x\"}",
+        );
         let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
         assert_eq!(plan.host, "legacy-api");
         assert_eq!(plan.port, 8000);
-        assert_eq!(plan.request_target, "/collection-runs/dry-run");
+        assert_eq!(plan.request_target, "/collection-runs/manual-upload");
 
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
@@ -2832,6 +3188,143 @@ mod tests {
     }
 
     #[test]
+    fn collection_dry_run_is_rust_native_and_requires_database_url() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/collection-runs/dry-run",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1","notes":{"reason":"preview"}}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn collection_dry_run_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"source_id":"","source_permission_id":"permission-1"}"#,
+            r#"{"source_id":"source-1","source_permission_id":""}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","requested_by_actor_id":""}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","notes":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/collection-runs/dry-run", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn collection_dry_run_preview_shape_is_deterministic() {
+        let source = CollectionSource {
+            id: "source-1".to_string(),
+            name: "Project".to_string(),
+            source_type: "local_project".to_string(),
+            location: Some("/workspace".to_string()),
+            sensitivity: "internal".to_string(),
+            enabled: true,
+            metadata_json: serde_json::json!({"root": "repo"}),
+        };
+        let permission = CollectionPermission {
+            id: "permission-1".to_string(),
+            source_id: "source-1".to_string(),
+            scope_json: serde_json::json!({"paths": ["src"]}),
+            allowed_operations: vec!["dry_run".to_string()],
+            external_model_policy: "blocked".to_string(),
+            approval_required: true,
+        };
+        let result = connector_dry_run_result(&source, &permission).expect("dry run");
+        let summary = collection_dry_run_summary(
+            &source,
+            &permission,
+            Some(&result),
+            &serde_json::json!({"reason": "preview"}),
+        );
+
+        assert_eq!(summary["source"]["id"], "source-1");
+        assert_eq!(summary["preview"]["mode"], "connector_dry_run_preview");
+        assert_eq!(summary["preview"]["would_collect"], false);
+        assert_eq!(summary["preview"]["would_create_artifacts"], false);
+        assert_eq!(summary["preview"]["would_normalize"], false);
+        assert_eq!(summary["preview"]["would_enqueue_worker"], false);
+        assert_eq!(
+            summary["connector_result"]["connector_name"],
+            "local_project"
+        );
+        assert_eq!(
+            summary["connector_result"]["summary"],
+            "Project dry-run validated source and permission metadata only."
+        );
+        assert_eq!(
+            summary["connector_result"]["metadata"]["preview_only"],
+            true
+        );
+        assert_eq!(summary["notes"]["reason"], "preview");
+    }
+
+    #[test]
+    fn collection_dry_run_rejects_unsupported_connector_without_collection() {
+        let source = CollectionSource {
+            id: "source-1".to_string(),
+            name: "Web".to_string(),
+            source_type: "web_public".to_string(),
+            location: Some("https://example.test".to_string()),
+            sensitivity: "public".to_string(),
+            enabled: true,
+            metadata_json: serde_json::json!({}),
+        };
+        let permission = CollectionPermission {
+            id: "permission-1".to_string(),
+            source_id: "source-1".to_string(),
+            scope_json: serde_json::json!({}),
+            allowed_operations: vec!["read".to_string()],
+            external_model_policy: "blocked".to_string(),
+            approval_required: true,
+        };
+        let error = connector_dry_run_result(&source, &permission).expect_err("unsupported");
+        assert_eq!(error, "No connector registered for source type: web_public");
+    }
+
+    #[test]
+    fn collection_dry_run_permission_checks_are_deterministic() {
+        assert!(permission_allows(
+            &["read".to_string()],
+            &["dry_run", "read"]
+        ));
+        assert!(permission_allows(
+            &["dry_run".to_string()],
+            &["dry_run", "read"]
+        ));
+        assert!(!permission_allows(
+            &["collect".to_string()],
+            &["dry_run", "read"]
+        ));
+        assert!(!permission_allows(
+            &Vec::<String>::new(),
+            &["dry_run", "read"]
+        ));
+
+        let forbidden = write_route_response(Err(GatewayError::Forbidden(
+            "Source permission does not allow dry-run preview".to_string(),
+        )));
+        assert_eq!(forbidden.status_code, 403);
+        let conflict = write_route_response(Err(GatewayError::Conflict(
+            "Source is disabled".to_string(),
+        )));
+        assert_eq!(conflict.status_code, 409);
+    }
+
+    #[test]
     fn baseline_pattern_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "[]",
@@ -2972,6 +3465,7 @@ mod tests {
             ("GET", "/audit-events/{audit_event_id}"),
             ("GET", "/collection-runs"),
             ("GET", "/collection-runs/{collection_run_id}"),
+            ("POST", "/collection-runs/dry-run"),
             ("GET", "/work-items"),
             ("GET", "/work-items/{work_item_id}"),
             ("GET", "/reports"),
