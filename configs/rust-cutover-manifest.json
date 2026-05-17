@@ -232,9 +232,22 @@
       ]
     },
     "evidence_answer": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-099",
+      "verification": [
+        "DIFF-099 adds Rust deterministic evidence-answer packet construction in crates/igy6-evidence-answer.",
+        "Python/FastAPI chat routes, live retrieval, Qdrant, graph, and evidence-answer behavior remain active until a later parity DIFF explicitly replaces them.",
+        "Rust evidence answer operates on caller-provided hydrated retrieval context only and performs no external model calls.",
+        "git status --short checked DIFF-099 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-evidence-answer passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
     },
     "write_api_batch_1": {
       "status": "pending",

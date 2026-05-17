@@ -13,5 +13,6 @@ members = [
     "crates/igy6-read-only-api",
     "crates/igy6-agent-api",
     "crates/igy6-retrieval-preview",
+    "crates/igy6-evidence-answer",
 ]
 resolver = "2"

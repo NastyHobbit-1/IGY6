@@ -1,0 +1,7 @@
+[package]
+name = "igy6-evidence-answer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-retrieval-preview = { path = "../igy6-retrieval-preview" }

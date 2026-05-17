@@ -88,7 +88,7 @@ The planned sequence is:
 | `read_only_api` | DIFF-096 | Add Rust read-only API sidecar foundation while FastAPI remains primary. |
 | `agent_api` | DIFF-097 | Add Rust typed agent command-plane classification while Python execution remains primary. |
 | `retrieval_preview` | DIFF-098 | Add Rust retrieval-preview planning while preserving `answer_status: not_generated`. |
-| `evidence_answer` | Next | Move deterministic evidence-answer logic to Rust. |
+| `evidence_answer` | DIFF-099 | Add Rust deterministic evidence-answer packet construction. |
 | `write_api_batch_1` | Next | Move sources, approvals, audit, feedback, and outcomes. |
 | `work_queue_reports` | Next | Move work items, dispatch, reports, and report rendering. |
 | `rust_gateway` | Next | Make Rust Axum the main API gateway; FastAPI becomes fallback or disabled. |
