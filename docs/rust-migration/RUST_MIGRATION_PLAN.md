@@ -90,7 +90,7 @@ The planned sequence is:
 | `retrieval_preview` | DIFF-098 | Add Rust retrieval-preview planning while preserving `answer_status: not_generated`. |
 | `evidence_answer` | DIFF-099 | Add Rust deterministic evidence-answer packet construction. |
 | `write_api_batch_1` | DIFF-100 | Move sources, approvals, audit, feedback, and outcomes. |
-| `work_queue_reports` | Next | Move work items, dispatch, reports, and report rendering. |
+| `work_queue_reports` | DIFF-101 | Move work items, dispatch, reports, and report rendering. |
 | `rust_gateway` | Next | Make Rust Axum the main API gateway; FastAPI becomes fallback or disabled. |
 | final cutover | Final DIFF | Run the cutover script and archive deprecated legacy files. |
 
