@@ -103,7 +103,7 @@ services:
       timeout: 5s
       retries: 20
 
-  api:
+  legacy-api:
     build:
       context: ../services/api
     environment:
@@ -129,8 +129,6 @@ services:
       SINGLE_USER_MODE: ${SINGLE_USER_MODE}
       AUDIT_LOG_LEVEL: ${AUDIT_LOG_LEVEL}
       APPROVAL_REQUIRED_DEFAULT: ${APPROVAL_REQUIRED_DEFAULT}
-    ports:
-      - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - type: bind
         source: ${IGY6_DATA_ROOT}
@@ -150,6 +148,19 @@ services:
       mlflow:
         condition: service_started
       phoenix:
+        condition: service_started
+
+  api:
+    build:
+      context: ..
+      dockerfile: crates/igy6-gateway/Dockerfile
+    environment:
+      GATEWAY_BIND_ADDR: 0.0.0.0:8000
+      FALLBACK_API_BASE_URL: http://legacy-api:8000
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    depends_on:
+      legacy-api:
         condition: service_started
 
   worker:

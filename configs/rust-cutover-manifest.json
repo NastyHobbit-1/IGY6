@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "cutover_ready": false,
+  "cutover_ready": true,
   "target_architecture": "rust-primary",
   "required_phases": [
     "host_bridge",
@@ -288,9 +288,25 @@
       ]
     },
     "rust_gateway": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-102",
+      "crate": "crates/igy6-gateway",
+      "verification": [
+        "DIFF-102 adds a Rust primary gateway in crates/igy6-gateway and keeps FastAPI as legacy-api fallback.",
+        "The Rust gateway uses std-only HTTP handling because Axum/Tokio are not established workspace dependencies.",
+        "Compose now builds the Rust gateway as api and preserves FastAPI as legacy-api for unsupported routes.",
+        "git status --short checked DIFF-102 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-gateway passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false before manifest completion",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed",
+        "npm --prefix apps/web run build passed",
+        "docker compose -f infra/docker-compose.yml --env-file .env.example config passed"
+      ]
     }
   },
   "archive_plan": {
