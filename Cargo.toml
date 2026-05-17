@@ -11,5 +11,6 @@ members = [
     "crates/igy6-vector-memory",
     "crates/igy6-worker",
     "crates/igy6-read-only-api",
+    "crates/igy6-agent-api",
 ]
 resolver = "2"

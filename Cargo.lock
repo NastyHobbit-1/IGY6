@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "igy6-agent-api"
+version = "0.1.0"
+
+[[package]]
 name = "igy6-artifacts"
 version = "0.1.0"
 
