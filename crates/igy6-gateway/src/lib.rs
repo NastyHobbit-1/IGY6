@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -21,6 +22,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/analysis/hypotheses/{hypothesis_id}"),
     ("GET", "/analysis/patterns"),
     ("GET", "/analysis/patterns/{pattern_id}"),
+    ("POST", "/analysis/patterns"),
+    ("POST", "/analysis/patterns/detect-baseline"),
     ("GET", "/analysis/predictions"),
     ("GET", "/analysis/predictions/{prediction_id}"),
     ("GET", "/analysis/recommendations"),
@@ -224,6 +227,10 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
+        ("POST", "/analysis/patterns") => pattern_create_response(&request.body, database_url),
+        ("POST", "/analysis/patterns/detect-baseline") => {
+            baseline_patterns_response(&request.body, database_url)
+        }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
         ("POST", "/reports") => report_create_response(&request.body, database_url),
@@ -571,6 +578,14 @@ fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResp
     write_route_response(create_report(body, database_url))
 }
 
+fn pattern_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_pattern(body, database_url))
+}
+
+fn baseline_patterns_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(detect_baseline_patterns(body, database_url))
+}
+
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_approval_create(body)?;
     let database_url = database_url
@@ -615,6 +630,76 @@ fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, Gat
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn create_pattern(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_pattern_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    validate_evidence_ids(&mut transaction, &payload.evidence_ids)?;
+    let response_body = insert_pattern_with_audit(&mut transaction, &payload)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn detect_baseline_patterns(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_baseline_pattern_detect(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let evidence_items = load_evidence_items_for_baseline(&mut transaction)?;
+    let mut existing_keys = load_existing_detector_keys(&mut transaction)?;
+    let candidates = baseline_pattern_candidates(&evidence_items, payload.recurrence_threshold);
+    let mut responses = Vec::new();
+    for candidate in candidates {
+        if existing_keys.contains(&candidate.detector_key) {
+            continue;
+        }
+        let pattern_payload = PatternCreatePayload {
+            pattern_type: candidate.pattern_type,
+            summary: candidate.summary,
+            evidence_ids: candidate.evidence_ids,
+            confidence: Some(candidate.confidence),
+            status: "candidate".to_string(),
+            actor_id: payload.actor_id.clone(),
+            metadata_json: serde_json::json!({
+                "generated_by": "DIFF-069",
+                "detector": "baseline_local_v1",
+                "detector_key": candidate.detector_key
+            }),
+        };
+        let response = insert_pattern_with_audit(&mut transaction, &pattern_payload)?;
+        if let Some(detector_key) = pattern_payload
+            .metadata_json
+            .get("detector_key")
+            .and_then(Value::as_str)
+        {
+            existing_keys.insert(detector_key.to_string());
+        }
+        responses.push(response);
+    }
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(format!("[{}]", responses.join(",")))
 }
 
 fn create_report(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -665,6 +750,206 @@ fn create_report(body: &str, database_url: Option<&str>) -> Result<String, Gatew
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn insert_pattern_with_audit(
+    transaction: &mut postgres::Transaction<'_>,
+    payload: &PatternCreatePayload,
+) -> Result<String, GatewayError> {
+    let pattern_id = generated_record_id("pattern");
+    let evidence_ids_json = Value::Array(
+        payload
+            .evidence_ids
+            .iter()
+            .map(|id| Value::String(id.clone()))
+            .collect(),
+    );
+    transaction
+        .execute(
+            "INSERT INTO patterns (id, pattern_type, status, summary, evidence_ids, confidence, metadata_json) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)",
+            &[
+                &pattern_id,
+                &payload.pattern_type,
+                &payload.status,
+                &payload.summary,
+                &evidence_ids_json,
+                &payload.confidence,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "evidence_ids": payload.evidence_ids
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'analysis.pattern.created', 'recorded', 'pattern', $2, NULL, $3::jsonb)",
+            &[&payload.actor_id, &pattern_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, pattern_type, status, summary, evidence_ids, confidence, metadata_json, created_at, updated_at FROM patterns WHERE id = $1) t",
+            &[&pattern_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn validate_evidence_ids(
+    transaction: &mut postgres::Transaction<'_>,
+    evidence_ids: &[String],
+) -> Result<(), GatewayError> {
+    for evidence_id in evidence_ids {
+        let exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM evidence_items WHERE id = $1)",
+                &[evidence_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !exists {
+            return Err(GatewayError::Validation(
+                "Analysis records must reference existing evidence items".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct BaselineEvidenceItem {
+    id: String,
+    evidence_type: String,
+    statement: String,
+    source_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BaselinePatternCandidate {
+    pattern_type: String,
+    summary: String,
+    evidence_ids: Vec<String>,
+    confidence: i32,
+    detector_key: String,
+}
+
+fn load_evidence_items_for_baseline(
+    transaction: &mut postgres::Transaction<'_>,
+) -> Result<Vec<BaselineEvidenceItem>, GatewayError> {
+    transaction
+        .query(
+            "SELECT id, evidence_type, statement, source_id FROM evidence_items ORDER BY created_at DESC",
+            &[],
+        )
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| BaselineEvidenceItem {
+                    id: row.get::<_, String>(0),
+                    evidence_type: row.get::<_, String>(1),
+                    statement: row.get::<_, String>(2),
+                    source_id: row.get::<_, Option<String>>(3),
+                })
+                .collect()
+        })
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn load_existing_detector_keys(
+    transaction: &mut postgres::Transaction<'_>,
+) -> Result<HashSet<String>, GatewayError> {
+    transaction
+        .query(
+            "SELECT metadata_json->>'detector_key' FROM patterns WHERE metadata_json ? 'detector_key'",
+            &[],
+        )
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|row| row.get::<_, Option<String>>(0))
+                .collect()
+        })
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn baseline_pattern_candidates(
+    evidence_items: &[BaselineEvidenceItem],
+    recurrence_threshold: i32,
+) -> Vec<BaselinePatternCandidate> {
+    if evidence_items.is_empty() {
+        return vec![BaselinePatternCandidate {
+            pattern_type: "missing_information_gap".to_string(),
+            summary: "No evidence items exist yet, so the system cannot detect grounded patterns."
+                .to_string(),
+            evidence_ids: Vec::new(),
+            confidence: 100,
+            detector_key: "missing_information_gap:no_evidence".to_string(),
+        }];
+    }
+
+    let mut candidates = Vec::new();
+    let mut by_type: HashMap<String, Vec<&BaselineEvidenceItem>> = HashMap::new();
+    let mut by_statement: HashMap<String, Vec<&BaselineEvidenceItem>> = HashMap::new();
+    for item in evidence_items {
+        by_type
+            .entry(item.evidence_type.clone())
+            .or_default()
+            .push(item);
+        by_statement
+            .entry(normalize_statement(&item.statement))
+            .or_default()
+            .push(item);
+    }
+
+    let mut type_keys = by_type.keys().cloned().collect::<Vec<_>>();
+    type_keys.sort();
+    for evidence_type in type_keys {
+        let items = &by_type[&evidence_type];
+        if items.len() >= recurrence_threshold as usize {
+            candidates.push(BaselinePatternCandidate {
+                pattern_type: "recurrence".to_string(),
+                summary: format!(
+                    "{} evidence items share evidence type `{}`.",
+                    items.len(),
+                    evidence_type
+                ),
+                evidence_ids: items.iter().take(10).map(|item| item.id.clone()).collect(),
+                confidence: std::cmp::min(90, 50 + items.len() as i32 * 5),
+                detector_key: format!("recurrence:evidence_type:{evidence_type}"),
+            });
+        }
+    }
+
+    let mut statement_keys = by_statement.keys().cloned().collect::<Vec<_>>();
+    statement_keys.sort();
+    for normalized_statement in statement_keys {
+        let items = &by_statement[&normalized_statement];
+        let source_ids = items
+            .iter()
+            .filter_map(|item| item.source_id.as_deref())
+            .collect::<HashSet<_>>();
+        if source_ids.len() >= 2 {
+            candidates.push(BaselinePatternCandidate {
+                pattern_type: "cross_source_conflict".to_string(),
+                summary: "Multiple sources contain the same normalized evidence statement; review whether they agree, duplicate, or conflict.".to_string(),
+                evidence_ids: items.iter().take(10).map(|item| item.id.clone()).collect(),
+                confidence: 60,
+                detector_key: format!("cross_source_statement:{normalized_statement}"),
+            });
+        }
+    }
+
+    candidates
+}
+
+fn normalize_statement(value: &str) -> String {
+    value
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
 }
 
 fn create_source(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -1066,6 +1351,21 @@ struct ReportCreatePayload {
     metadata_json: Value,
 }
 
+struct PatternCreatePayload {
+    pattern_type: String,
+    summary: String,
+    evidence_ids: Vec<String>,
+    confidence: Option<i32>,
+    status: String,
+    actor_id: String,
+    metadata_json: Value,
+}
+
+struct BaselinePatternDetectPayload {
+    actor_id: String,
+    recurrence_threshold: i32,
+}
+
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
@@ -1275,6 +1575,37 @@ fn parse_report_create(body: &str) -> Result<ReportCreatePayload, GatewayError> 
     })
 }
 
+fn parse_pattern_create(body: &str) -> Result<PatternCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Pattern request body")?;
+    let pattern_type = required_string_field(&object, "pattern_type", 64)?;
+    let summary = required_text_field(&object, "summary")?;
+    let evidence_ids = required_string_array_field(&object, "evidence_ids")?;
+    let confidence = optional_i32_field(&object, "confidence", 0, 100)?;
+    let status = optional_string_field_with_max(&object, "status", "candidate", 64)?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    Ok(PatternCreatePayload {
+        pattern_type,
+        summary,
+        evidence_ids,
+        confidence,
+        status,
+        actor_id,
+        metadata_json,
+    })
+}
+
+fn parse_baseline_pattern_detect(body: &str) -> Result<BaselinePatternDetectPayload, GatewayError> {
+    let object = parse_json_object(body, "Baseline pattern detect request body")?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    let recurrence_threshold =
+        optional_i32_field(&object, "recurrence_threshold", 2, 20)?.unwrap_or(3);
+    Ok(BaselinePatternDetectPayload {
+        actor_id,
+        recurrence_threshold,
+    })
+}
+
 fn parse_json_object(
     body: &str,
     description: &str,
@@ -1305,6 +1636,22 @@ fn required_string_field(
         return Err(GatewayError::Validation(format!(
             "{key} must be {max_len} characters or fewer."
         )));
+    }
+    Ok(value)
+}
+
+fn required_text_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, GatewayError> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        return Err(GatewayError::Validation(format!("{key} is required.")));
     }
     Ok(value)
 }
@@ -1366,6 +1713,33 @@ fn optional_bool_field(
     }
 }
 
+fn optional_i32_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    min: i32,
+    max: i32,
+) -> Result<Option<i32>, GatewayError> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => {
+            let Some(value) = number.as_i64() else {
+                return Err(GatewayError::Validation(format!(
+                    "{key} must be an integer."
+                )));
+            };
+            if value < min as i64 || value > max as i64 {
+                return Err(GatewayError::Validation(format!(
+                    "{key} must be between {min} and {max}."
+                )));
+            }
+            Ok(Some(value as i32))
+        }
+        Some(_) => Err(GatewayError::Validation(format!(
+            "{key} must be an integer."
+        ))),
+    }
+}
+
 fn optional_object_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -1407,6 +1781,19 @@ fn optional_string_array_field(
         if !result.iter().any(|existing| existing == item) {
             result.push(item.to_string());
         }
+    }
+    Ok(result)
+}
+
+fn required_string_array_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, GatewayError> {
+    let result = optional_string_array_field(object, key)?;
+    if result.is_empty() {
+        return Err(GatewayError::Validation(format!(
+            "{key} must contain at least one ID."
+        )));
     }
     Ok(result)
 }
@@ -1647,7 +2034,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -2398,6 +2785,100 @@ mod tests {
     }
 
     #[test]
+    fn analysis_pattern_writes_are_rust_native_and_require_database_url() {
+        for (path, body) in [
+            (
+                "/analysis/patterns",
+                r#"{"pattern_type":"recurrence","summary":"Repeated signal","evidence_ids":["evidence-1"],"confidence":80}"#,
+            ),
+            (
+                "/analysis/patterns/detect-baseline",
+                r#"{"recurrence_threshold":3}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
+    fn analysis_pattern_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"pattern_type":"","summary":"x","evidence_ids":["e1"]}"#,
+            r#"{"pattern_type":"recurrence","summary":"","evidence_ids":["e1"]}"#,
+            r#"{"pattern_type":"recurrence","summary":"x","evidence_ids":[]}"#,
+            r#"{"pattern_type":"recurrence","summary":"x","evidence_ids":[""]}"#,
+            r#"{"pattern_type":"recurrence","summary":"x","evidence_ids":["e1"],"confidence":101}"#,
+            r#"{"pattern_type":"recurrence","summary":"x","evidence_ids":["e1"],"confidence":1.5}"#,
+            r#"{"pattern_type":"recurrence","summary":"x","evidence_ids":["e1"],"metadata_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/analysis/patterns", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn baseline_pattern_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "[]",
+            r#"{"actor_id":""}"#,
+            r#"{"recurrence_threshold":1}"#,
+            r#"{"recurrence_threshold":21}"#,
+            r#"{"recurrence_threshold":2.5}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/analysis/patterns/detect-baseline", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn baseline_pattern_candidates_are_deterministic() {
+        let evidence = vec![
+            BaselineEvidenceItem {
+                id: "e1".to_string(),
+                evidence_type: "log".to_string(),
+                statement: "Same Signal".to_string(),
+                source_id: Some("s1".to_string()),
+            },
+            BaselineEvidenceItem {
+                id: "e2".to_string(),
+                evidence_type: "log".to_string(),
+                statement: "same   signal".to_string(),
+                source_id: Some("s2".to_string()),
+            },
+        ];
+        let candidates = baseline_pattern_candidates(&evidence, 2);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].pattern_type, "recurrence");
+        assert_eq!(candidates[0].evidence_ids, vec!["e1", "e2"]);
+        assert_eq!(candidates[1].pattern_type, "cross_source_conflict");
+        assert_eq!(
+            candidates[1].detector_key,
+            "cross_source_statement:same signal"
+        );
+    }
+
+    #[test]
     fn source_create_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -2474,6 +2955,8 @@ mod tests {
             ("POST", "/sources"),
             ("GET", "/analysis/patterns"),
             ("GET", "/analysis/patterns/{pattern_id}"),
+            ("POST", "/analysis/patterns"),
+            ("POST", "/analysis/patterns/detect-baseline"),
             ("GET", "/analysis/hypotheses"),
             ("GET", "/analysis/hypotheses/{hypothesis_id}"),
             ("GET", "/analysis/predictions"),

@@ -17,7 +17,8 @@ Rust gateway service: api
     |   agent intent, retrieval preview, evidence answer, DIFF-106 and
     |   DIFF-107 read-only DB routes, DIFF-108 status/config routes,
     |   DIFF-109 approval request creation, DIFF-110 feedback/outcome
-    |   writes, DIFF-111 source creation, and DIFF-112 report creation
+    |   writes, DIFF-111 source creation, DIFF-112 report creation, and
+    |   DIFF-113 analysis pattern writes
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -60,6 +61,8 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/approvals` | Rust-native DB write with audit event |
 | GET | `/analysis/patterns` | Rust-native DB read |
 | GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
+| POST | `/analysis/patterns` | Rust-native DB write with evidence validation and audit event |
+| POST | `/analysis/patterns/detect-baseline` | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/hypotheses` | Rust-native DB read |
 | GET | `/analysis/hypotheses/{hypothesis_id}` | Rust-native DB read |
 | GET | `/analysis/predictions` | Rust-native DB read |
@@ -103,13 +106,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 |
 
 ## Web-Used Route Matrix
 
@@ -119,8 +122,8 @@ Route parity counts:
 | POST | `/agent/intent` | Next.js proxy and page intent preview | Rust-native |
 | POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Proxied to FastAPI |
 | GET | `/analysis/patterns` | Page data load | Rust-native DB read |
-| POST | `/analysis/patterns` | Page pattern create | Proxied to FastAPI |
-| POST | `/analysis/patterns/detect-baseline` | Page baseline pattern detection | Proxied to FastAPI |
+| POST | `/analysis/patterns` | Page pattern create | Rust-native DB write with evidence validation and audit event |
+| POST | `/analysis/patterns/detect-baseline` | Page baseline pattern detection | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/hypotheses` | Page data load | Rust-native DB read |
 | GET | `/analysis/predictions` | Page data load | Rust-native DB read |
 | GET | `/analysis/recommendations` | Page data load | Rust-native DB read |
@@ -165,9 +168,9 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/agent/intent` | Rust-native |
 | POST | `/agent/actions/{action_name}/execute` | Proxied to FastAPI |
 | GET | `/analysis/patterns` | Rust-native DB read |
-| POST | `/analysis/patterns` | Proxied to FastAPI |
+| POST | `/analysis/patterns` | Rust-native DB write with evidence validation and audit event |
 | POST | `/analysis/patterns/{pattern_id}/review` | Proxied to FastAPI |
-| POST | `/analysis/patterns/detect-baseline` | Proxied to FastAPI |
+| POST | `/analysis/patterns/detect-baseline` | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
 | GET | `/analysis/hypotheses` | Rust-native DB read |
 | POST | `/analysis/hypotheses` | Proxied to FastAPI |
@@ -273,7 +276,10 @@ their Python side-effect parity for source trust, weak-feedback improvement
 items, and outcome target updates. DIFF-111 adds Rust-native source creation
 with optional initial permission insertion and the deterministic
 `source.created` audit event. DIFF-112 adds Rust-native report creation with
-deterministic validation and the `report.created` audit event.
+deterministic validation and the `report.created` audit event. DIFF-113 adds
+Rust-native analysis pattern creation and baseline pattern detection with
+evidence validation, deterministic local candidate generation, duplicate
+detector-key suppression, and `analysis.pattern.created` audit events.
 
 ## Manifest Finding
 
@@ -306,12 +312,14 @@ deliberately retired:
    `source.created` audit parity.
 8. DIFF-112: migrate report creation with explicit `report.created` audit
    parity.
-9. DIFF-113: continue with the remaining write/action fallback routes only
+9. DIFF-113: migrate analysis pattern creation and baseline detection with
+   explicit evidence validation and `analysis.pattern.created` audit parity.
+10. DIFF-114: continue with the remaining write/action fallback routes only
    where approval, audit, and response-shape parity can be explicit and
    testable.
-10. Later DIFFs: migrate settings/env write/verify, agent action execution,
+11. Later DIFFs: migrate settings/env write/verify, agent action execution,
    report render/work-item writes, collection writes, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-11. Final retirement DIFF: remove or disable `legacy-api` only after route
+12. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
