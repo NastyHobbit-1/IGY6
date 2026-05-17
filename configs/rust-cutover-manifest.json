@@ -5,19 +5,19 @@
   "operational_status": "rust-primary-with-required-fastapi-fallback",
   "fastapi_fallback_required": true,
   "route_parity": {
-    "diff": "DIFF-106",
+    "diff": "DIFF-107",
     "status": "partial",
-    "rust_native_routes": 24,
+    "rust_native_routes": 42,
     "fastapi_router_routes": 90,
     "fastapi_total_routes": 91,
-    "fastapi_routes_missing_from_rust": 68,
+    "fastapi_routes_missing_from_rust": 50,
     "web_used_routes": 41,
-    "web_routes_requiring_fallback": 28,
+    "web_routes_requiring_fallback": 19,
     "fastapi_root_route": true,
     "unsupported_routes_proxy_to_legacy_api": true,
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-107"
+    "next_required_diff": "DIFF-108"
   },
   "required_phases": [
     "host_bridge",
@@ -328,12 +328,13 @@
     },
     "route_parity": {
       "status": "partial",
-      "diff": "DIFF-106",
+      "diff": "DIFF-107",
       "verification": [
         "FastAPI route parity guard found 90 APIRouter routes plus root route.",
-        "Rust gateway route inventory found 24 Rust-native routes after DIFF-106.",
-        "apps/web route inventory found 28 active routes still requiring FastAPI fallback after DIFF-106.",
+        "Rust gateway route inventory found 42 Rust-native routes after DIFF-107.",
+        "apps/web route inventory found 19 active routes still requiring FastAPI fallback after DIFF-107.",
         "DIFF-106 migrates read-only DB-backed sources, approvals, evidence documents/items/chunks/claims, reports, and work-items route reads into the Rust gateway.",
+        "DIFF-107 migrates read-only DB-backed audit events, artifacts, collection runs, feedback, outcomes, and analysis pattern/hypothesis/prediction/recommendation reads into the Rust gateway.",
         "infra/docker-compose.yml confirms Rust api service depends on legacy-api fallback.",
         "scripts/rust-cutover.sh validates governance cutover readiness but does not validate full route parity.",
         "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan.",

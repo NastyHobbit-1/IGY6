@@ -15,7 +15,7 @@ Rust gateway service: api
     |
     +-- Rust-native routes for health, migration status, agent capability,
     |   agent intent, retrieval preview, evidence answer, and the DIFF-106
-    |   read-only DB route batch
+    |   DIFF-106 and DIFF-107 read-only DB route batches
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -52,8 +52,22 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/agent/intent` | Rust-native |
 | POST | `/chat/retrieval-preview` | Rust-native contract response |
 | POST | `/chat/evidence-answer` | Rust-native contract response |
+| GET | `/analysis/patterns` | Rust-native DB read |
+| GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
+| GET | `/analysis/hypotheses` | Rust-native DB read |
+| GET | `/analysis/hypotheses/{hypothesis_id}` | Rust-native DB read |
+| GET | `/analysis/predictions` | Rust-native DB read |
+| GET | `/analysis/predictions/{prediction_id}` | Rust-native DB read |
+| GET | `/analysis/recommendations` | Rust-native DB read |
+| GET | `/analysis/recommendations/{recommendation_id}` | Rust-native DB read |
 | GET | `/approvals` | Rust-native DB read |
 | GET | `/approvals/{approval_id}` | Rust-native DB read |
+| GET | `/artifacts` | Rust-native DB read |
+| GET | `/artifacts/{artifact_id}` | Rust-native DB read |
+| GET | `/audit-events` | Rust-native DB read |
+| GET | `/audit-events/{audit_event_id}` | Rust-native DB read |
+| GET | `/collection-runs` | Rust-native DB read |
+| GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
 | GET | `/evidence/documents` | Rust-native DB read |
 | GET | `/evidence/documents/{document_id}` | Rust-native DB read |
 | GET | `/evidence/items` | Rust-native DB read |
@@ -62,6 +76,10 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/evidence/chunks/{chunk_id}` | Rust-native DB read |
 | GET | `/evidence/claims` | Rust-native DB read |
 | GET | `/evidence/claims/{claim_id}` | Rust-native DB read |
+| GET | `/feedback` | Rust-native DB read |
+| GET | `/feedback/{feedback_id}` | Rust-native DB read |
+| GET | `/outcomes` | Rust-native DB read |
+| GET | `/outcomes/{outcome_id}` | Rust-native DB read |
 | GET | `/reports` | Rust-native DB read |
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | GET | `/sources` | Rust-native DB read |
@@ -73,15 +91,15 @@ These routes are handled directly by `crates/igy6-gateway`:
 All other routes are forwarded to `legacy-api` when the fallback origin is
 configured.
 
-DIFF-106 route parity counts:
+Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 |
-| --- | ---: | ---: |
-| FastAPI total routes | 91 | 91 |
-| Rust-native routes | 7 | 24 |
-| FastAPI routes missing from Rust | 85 | 68 |
-| Web-used routes | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 |
+| --- | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 |
+| Web-used routes | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 |
 
 ## Web-Used Route Matrix
 
@@ -90,15 +108,28 @@ DIFF-106 route parity counts:
 | GET | `/agent/capabilities` | Next.js proxy and page data load | Rust-native |
 | POST | `/agent/intent` | Next.js proxy and page intent preview | Rust-native |
 | POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Proxied to FastAPI |
+| GET | `/analysis/patterns` | Page data load | Rust-native DB read |
+| POST | `/analysis/patterns` | Page pattern create | Proxied to FastAPI |
+| POST | `/analysis/patterns/detect-baseline` | Page baseline pattern detection | Proxied to FastAPI |
+| GET | `/analysis/hypotheses` | Page data load | Rust-native DB read |
+| GET | `/analysis/predictions` | Page data load | Rust-native DB read |
+| GET | `/analysis/recommendations` | Page data load | Rust-native DB read |
 | GET | `/approvals` | Next.js proxy and page data load | Rust-native DB read |
 | POST | `/approvals` | Next.js proxy and page approval request | Proxied to FastAPI |
 | POST | `/approvals/{approval_id}/decision` | Page approval decision | Proxied to FastAPI |
 | POST | `/chat/retrieval-preview` | Next.js proxy and page chat preview | Rust-native contract response |
 | POST | `/chat/evidence-answer` | Page evidence answer | Rust-native contract response |
+| GET | `/artifacts` | Page data load | Rust-native DB read |
+| GET | `/audit-events` | Page data load | Rust-native DB read |
+| GET | `/collection-runs` | Page data load | Rust-native DB read |
 | GET | `/evidence/documents` | Page data load | Rust-native DB read |
 | GET | `/evidence/chunks` | Page data load | Rust-native DB read |
 | GET | `/evidence/items` | Page data load | Rust-native DB read |
 | GET | `/evidence/claims` | Page data load | Rust-native DB read |
+| GET | `/feedback` | Page data load | Rust-native DB read |
+| GET | `/outcomes` | Page data load | Rust-native DB read |
+| GET | `/memory/graph/schema` | Page data load | Proxied to FastAPI |
+| GET | `/memory/vector/chunks` | Page data load | Proxied to FastAPI |
 | POST | `/reports` | Page report create | Proxied to FastAPI |
 | GET | `/reports` | Page data load | Rust-native DB read |
 | POST | `/reports/{report_id}/render` | Page report render | Proxied to FastAPI |
@@ -121,38 +152,38 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/agent/capabilities` | Rust-native |
 | POST | `/agent/intent` | Rust-native |
 | POST | `/agent/actions/{action_name}/execute` | Proxied to FastAPI |
-| GET | `/analysis/patterns` | Proxied to FastAPI |
+| GET | `/analysis/patterns` | Rust-native DB read |
 | POST | `/analysis/patterns` | Proxied to FastAPI |
 | POST | `/analysis/patterns/{pattern_id}/review` | Proxied to FastAPI |
 | POST | `/analysis/patterns/detect-baseline` | Proxied to FastAPI |
-| GET | `/analysis/patterns/{pattern_id}` | Proxied to FastAPI |
-| GET | `/analysis/hypotheses` | Proxied to FastAPI |
+| GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
+| GET | `/analysis/hypotheses` | Rust-native DB read |
 | POST | `/analysis/hypotheses` | Proxied to FastAPI |
-| GET | `/analysis/hypotheses/{hypothesis_id}` | Proxied to FastAPI |
-| GET | `/analysis/predictions` | Proxied to FastAPI |
+| GET | `/analysis/hypotheses/{hypothesis_id}` | Rust-native DB read |
+| GET | `/analysis/predictions` | Rust-native DB read |
 | POST | `/analysis/predictions` | Proxied to FastAPI |
-| GET | `/analysis/predictions/{prediction_id}` | Proxied to FastAPI |
-| GET | `/analysis/recommendations` | Proxied to FastAPI |
+| GET | `/analysis/predictions/{prediction_id}` | Rust-native DB read |
+| GET | `/analysis/recommendations` | Rust-native DB read |
 | POST | `/analysis/recommendations` | Proxied to FastAPI |
-| GET | `/analysis/recommendations/{recommendation_id}` | Proxied to FastAPI |
+| GET | `/analysis/recommendations/{recommendation_id}` | Rust-native DB read |
 | GET | `/approvals` | Rust-native DB read |
 | POST | `/approvals` | Proxied to FastAPI |
 | GET | `/approvals/{approval_id}` | Rust-native DB read |
 | POST | `/approvals/{approval_id}/decision` | Proxied to FastAPI |
-| GET | `/artifacts` | Proxied to FastAPI |
+| GET | `/artifacts` | Rust-native DB read |
 | POST | `/artifacts` | Proxied to FastAPI |
-| GET | `/artifacts/{artifact_id}` | Proxied to FastAPI |
-| GET | `/audit-events` | Proxied to FastAPI |
-| GET | `/audit-events/{audit_event_id}` | Proxied to FastAPI |
+| GET | `/artifacts/{artifact_id}` | Rust-native DB read |
+| GET | `/audit-events` | Rust-native DB read |
+| GET | `/audit-events/{audit_event_id}` | Rust-native DB read |
 | POST | `/chat/retrieval-preview` | Rust-native |
 | POST | `/chat/evidence-answer` | Rust-native |
-| GET | `/collection-runs` | Proxied to FastAPI |
+| GET | `/collection-runs` | Rust-native DB read |
 | POST | `/collection-runs` | Proxied to FastAPI |
 | POST | `/collection-runs/dry-run` | Proxied to FastAPI |
 | POST | `/collection-runs/manual-upload` | Proxied to FastAPI |
 | POST | `/collection-runs/manual-upload/ingest` | Proxied to FastAPI |
 | POST | `/collection-runs/local-project` | Proxied to FastAPI |
-| GET | `/collection-runs/{collection_run_id}` | Proxied to FastAPI |
+| GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
 | GET | `/evidence/documents` | Rust-native DB read |
 | GET | `/evidence/documents/{document_id}` | Rust-native DB read |
 | POST | `/evidence/documents` | Proxied to FastAPI |
@@ -168,9 +199,9 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/experiments` | Proxied to FastAPI |
 | POST | `/experiments/{experiment_run_id}/status` | Proxied to FastAPI |
 | GET | `/experiments/{experiment_run_id}` | Proxied to FastAPI |
-| GET | `/feedback` | Proxied to FastAPI |
+| GET | `/feedback` | Rust-native DB read |
 | POST | `/feedback` | Proxied to FastAPI |
-| GET | `/feedback/{feedback_id}` | Proxied to FastAPI |
+| GET | `/feedback/{feedback_id}` | Rust-native DB read |
 | GET | `/health/live` | Rust-native |
 | GET | `/health/ready` | Rust-native |
 | GET | `/improvements` | Proxied to FastAPI |
@@ -184,9 +215,9 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/memory/vector/chunks/ensure` | Proxied to FastAPI |
 | POST | `/memory/vector/chunks/upsert` | Proxied to FastAPI |
 | POST | `/memory/vector/chunks/search` | Proxied to FastAPI |
-| GET | `/outcomes` | Proxied to FastAPI |
+| GET | `/outcomes` | Rust-native DB read |
 | POST | `/outcomes` | Proxied to FastAPI |
-| GET | `/outcomes/{outcome_id}` | Proxied to FastAPI |
+| GET | `/outcomes/{outcome_id}` | Rust-native DB read |
 | GET | `/reports` | Rust-native DB read |
 | POST | `/reports` | Proxied to FastAPI |
 | POST | `/reports/{report_id}/status` | Proxied to FastAPI |
@@ -220,7 +251,8 @@ DIFF-105 adds `scripts/rust-route-parity.py` and runs it from
 `scripts/rust-cutover.sh --check`. The guard inventories source-defined routes
 and validates that the manifest still marks FastAPI fallback as required while
 parity is incomplete. DIFF-106 extends the guard to count the Rust gateway route
-registry and records the reduced fallback counts.
+registry and records the reduced fallback counts. DIFF-107 records the second
+DB read batch and reduces web route fallback dependency again.
 
 ## Manifest Finding
 
@@ -240,11 +272,15 @@ deliberately retired:
    read-only DB route batch: sources, approvals, work-items, reports, and
    evidence document/item/chunk/claim list/detail reads.
 3. DIFF-107: continue fallback reduction with the next safest web-critical
-   read routes, likely audit events, artifacts, collection runs, feedback,
-   outcomes, and analysis list/detail reads.
-4. Later DIFFs: migrate settings/env write/verify, agent action execution,
+   read routes: audit events, artifacts, collection runs, feedback, outcomes,
+   and analysis list/detail reads.
+4. DIFF-108: continue with the remaining web fallbacks that are not simple
+   PostgreSQL reads: settings/env, vector/graph memory status, writes,
+   approval decisions, report creation/rendering, collection write workflows,
+   and agent action execution.
+5. Later DIFFs: migrate settings/env write/verify, agent action execution,
    source/report/work-item writes, collection writes, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-5. Final retirement DIFF: remove or disable `legacy-api` only after route
+6. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.

@@ -13,11 +13,25 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
     ("GET", "/agent/capabilities"),
+    ("GET", "/analysis/hypotheses"),
+    ("GET", "/analysis/hypotheses/{hypothesis_id}"),
+    ("GET", "/analysis/patterns"),
+    ("GET", "/analysis/patterns/{pattern_id}"),
+    ("GET", "/analysis/predictions"),
+    ("GET", "/analysis/predictions/{prediction_id}"),
+    ("GET", "/analysis/recommendations"),
+    ("GET", "/analysis/recommendations/{recommendation_id}"),
     ("POST", "/agent/intent"),
     ("POST", "/chat/retrieval-preview"),
     ("POST", "/chat/evidence-answer"),
     ("GET", "/approvals"),
     ("GET", "/approvals/{approval_id}"),
+    ("GET", "/artifacts"),
+    ("GET", "/artifacts/{artifact_id}"),
+    ("GET", "/audit-events"),
+    ("GET", "/audit-events/{audit_event_id}"),
+    ("GET", "/collection-runs"),
+    ("GET", "/collection-runs/{collection_run_id}"),
     ("GET", "/evidence/documents"),
     ("GET", "/evidence/documents/{document_id}"),
     ("GET", "/evidence/items"),
@@ -26,6 +40,10 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/evidence/chunks/{chunk_id}"),
     ("GET", "/evidence/claims"),
     ("GET", "/evidence/claims/{claim_id}"),
+    ("GET", "/feedback"),
+    ("GET", "/feedback/{feedback_id}"),
+    ("GET", "/outcomes"),
+    ("GET", "/outcomes/{outcome_id}"),
     ("GET", "/reports"),
     ("GET", "/reports/{report_id}"),
     ("GET", "/sources"),
@@ -243,6 +261,27 @@ fn db_read_route(path: &str) -> Option<DbReadRoute> {
         "/approvals" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals ORDER BY created_at DESC) t), '[]')",
         }),
+        "/analysis/patterns" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, pattern_type, status, summary, evidence_ids, confidence, metadata_json, created_at, updated_at FROM patterns ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/analysis/hypotheses" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, hypothesis_text, status, supporting_evidence_ids, missing_evidence_json, confidence, metadata_json, created_at, updated_at FROM hypotheses ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/analysis/predictions" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, prediction_text, expected_result, disproof_condition, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM predictions ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/analysis/recommendations" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, recommendation_text, risk_level, approval_required, expected_result, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM recommendations ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/artifacts" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json, created_at, updated_at FROM raw_artifacts ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/audit-events" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, created_at, actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json FROM audit_events ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/collection-runs" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs ORDER BY created_at DESC) t), '[]')",
+        }),
         "/evidence/documents" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json, created_at, updated_at FROM normalized_documents ORDER BY created_at DESC) t), '[]')",
         }),
@@ -254,6 +293,12 @@ fn db_read_route(path: &str) -> Option<DbReadRoute> {
         }),
         "/evidence/claims" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/feedback" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, target_type, target_id, label, actor_id, note, metadata_json, created_at, updated_at FROM feedback_events ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/outcomes" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json, created_at, updated_at FROM outcomes ORDER BY created_at DESC) t), '[]')",
         }),
         "/reports" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports ORDER BY created_at DESC) t), '[]')",
@@ -276,6 +321,41 @@ fn db_detail_route(path: &str) -> Option<DbReadRoute> {
             "Approval not found",
             "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t), '')",
         )),
+        ["analysis", "patterns", id] => Some(detail(
+            id,
+            "Pattern not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, pattern_type, status, summary, evidence_ids, confidence, metadata_json, created_at, updated_at FROM patterns WHERE id = $1) t), '')",
+        )),
+        ["analysis", "hypotheses", id] => Some(detail(
+            id,
+            "Hypothesis not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, hypothesis_text, status, supporting_evidence_ids, missing_evidence_json, confidence, metadata_json, created_at, updated_at FROM hypotheses WHERE id = $1) t), '')",
+        )),
+        ["analysis", "predictions", id] => Some(detail(
+            id,
+            "Prediction not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, prediction_text, expected_result, disproof_condition, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM predictions WHERE id = $1) t), '')",
+        )),
+        ["analysis", "recommendations", id] => Some(detail(
+            id,
+            "Recommendation not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, recommendation_text, risk_level, approval_required, expected_result, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM recommendations WHERE id = $1) t), '')",
+        )),
+        ["artifacts", id] => Some(detail(
+            id,
+            "Artifact not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json, created_at, updated_at FROM raw_artifacts WHERE id = $1) t), '')",
+        )),
+        ["audit-events", id] => Some(detail(
+            id,
+            "Audit event not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, created_at, actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json FROM audit_events WHERE id = $1::integer) t), '')",
+        )),
+        ["collection-runs", id] => Some(detail(
+            id,
+            "Collection run not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs WHERE id = $1) t), '')",
+        )),
         ["evidence", "documents", id] => Some(detail(
             id,
             "Document not found",
@@ -295,6 +375,16 @@ fn db_detail_route(path: &str) -> Option<DbReadRoute> {
             id,
             "Claim not found",
             "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims WHERE id = $1) t), '')",
+        )),
+        ["feedback", id] => Some(detail(
+            id,
+            "Feedback event not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, target_type, target_id, label, actor_id, note, metadata_json, created_at, updated_at FROM feedback_events WHERE id = $1) t), '')",
+        )),
+        ["outcomes", id] => Some(detail(
+            id,
+            "Outcome not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json, created_at, updated_at FROM outcomes WHERE id = $1) t), '')",
         )),
         ["reports", id] => Some(detail(
             id,
@@ -470,7 +560,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn agent_capabilities_json() -> String {
@@ -781,12 +871,30 @@ mod tests {
             ("GET", "/sources"),
             ("GET", "/sources/source-1"),
             ("GET", "/sources/source-1/permissions"),
+            ("GET", "/analysis/patterns"),
+            ("GET", "/analysis/patterns/pattern-1"),
+            ("GET", "/analysis/hypotheses"),
+            ("GET", "/analysis/hypotheses/hypothesis-1"),
+            ("GET", "/analysis/predictions"),
+            ("GET", "/analysis/predictions/prediction-1"),
+            ("GET", "/analysis/recommendations"),
+            ("GET", "/analysis/recommendations/recommendation-1"),
             ("GET", "/approvals"),
             ("GET", "/approvals/approval-1"),
+            ("GET", "/artifacts"),
+            ("GET", "/artifacts/artifact-1"),
+            ("GET", "/audit-events"),
+            ("GET", "/audit-events/1"),
+            ("GET", "/collection-runs"),
+            ("GET", "/collection-runs/run-1"),
             ("GET", "/work-items"),
             ("GET", "/work-items/work-1"),
             ("GET", "/reports"),
             ("GET", "/reports/report-1"),
+            ("GET", "/feedback"),
+            ("GET", "/feedback/feedback-1"),
+            ("GET", "/outcomes"),
+            ("GET", "/outcomes/outcome-1"),
             ("GET", "/evidence/documents"),
             ("GET", "/evidence/documents/document-1"),
             ("GET", "/evidence/items"),
@@ -827,12 +935,30 @@ mod tests {
             ("GET", "/sources"),
             ("GET", "/sources/{source_id}"),
             ("GET", "/sources/{source_id}/permissions"),
+            ("GET", "/analysis/patterns"),
+            ("GET", "/analysis/patterns/{pattern_id}"),
+            ("GET", "/analysis/hypotheses"),
+            ("GET", "/analysis/hypotheses/{hypothesis_id}"),
+            ("GET", "/analysis/predictions"),
+            ("GET", "/analysis/predictions/{prediction_id}"),
+            ("GET", "/analysis/recommendations"),
+            ("GET", "/analysis/recommendations/{recommendation_id}"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
+            ("GET", "/artifacts"),
+            ("GET", "/artifacts/{artifact_id}"),
+            ("GET", "/audit-events"),
+            ("GET", "/audit-events/{audit_event_id}"),
+            ("GET", "/collection-runs"),
+            ("GET", "/collection-runs/{collection_run_id}"),
             ("GET", "/work-items"),
             ("GET", "/work-items/{work_item_id}"),
             ("GET", "/reports"),
             ("GET", "/reports/{report_id}"),
+            ("GET", "/feedback"),
+            ("GET", "/feedback/{feedback_id}"),
+            ("GET", "/outcomes"),
+            ("GET", "/outcomes/{outcome_id}"),
             ("GET", "/evidence/documents"),
             ("GET", "/evidence/documents/{document_id}"),
             ("GET", "/evidence/items"),
