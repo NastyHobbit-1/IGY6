@@ -309,10 +309,43 @@
       ]
     }
   },
-  "archive_plan": {
-    "move": [],
-    "keep": [],
-    "rewrite": [],
-    "create_if_missing": []
-  }
+    "archive_plan": {
+        "move": [],
+        "keep": [
+            {
+                "path": "AGENTS.md",
+                "reason": "governance entrypoint remains active after cutover"
+            },
+            {
+                "path": "docs/diffs/",
+                "reason": "DIFF governance remains active after cutover"
+            },
+            {
+                "path": "docs/agents/",
+                "reason": "agent operating instructions remain active after cutover"
+            },
+            {
+                "path": "configs/rust-cutover-manifest.json",
+                "reason": "manifest remains the cutover audit record"
+            },
+            {
+                "path": "infra/docker-compose.yml",
+                "reason": "active local deployment config with Rust api and legacy-api fallback"
+            },
+            {
+                "path": "services/api/",
+                "reason": "FastAPI legacy-api fallback remains required for unsupported routes"
+            },
+            {
+                "path": "services/worker/",
+                "reason": "Python/Celery workers remain required where Rust worker behavior is still deterministic planning"
+            },
+            {
+                "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
+                "reason": "rollback expectations remain active documentation"
+            }
+        ],
+        "rewrite": [],
+        "create_if_missing": []
+    }
 }
