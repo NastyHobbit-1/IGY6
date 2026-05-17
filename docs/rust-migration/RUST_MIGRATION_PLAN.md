@@ -82,7 +82,7 @@ The planned sequence is:
 | `config` | DIFF-090 | Add Rust `.env` validation without replacing Python settings until parity. |
 | `artifact_store` | DIFF-091 | Add Rust content-addressed artifact storage bounded by `IGY6_DATA_ROOT`. |
 | `normalization` | DIFF-092 | Add UTF-8 text normalization in Rust. |
-| `chunking` | Next | Add deterministic chunking and evidence-item generation in Rust. |
+| `chunking` | DIFF-093 | Add deterministic chunking and evidence-item generation in Rust. |
 | `vector_memory` | Next | Add Qdrant ensure/upsert/search and deterministic vectors in Rust. |
 | `worker` | Next | Add Rust worker MVP for normalization, chunking, and vector upsert. |
 | `read_only_api` | Next | Add Rust read-only API sidecar while FastAPI remains primary. |
