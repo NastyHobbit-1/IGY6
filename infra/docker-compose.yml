@@ -157,6 +157,7 @@ services:
     environment:
       GATEWAY_BIND_ADDR: 0.0.0.0:8000
       FALLBACK_API_BASE_URL: http://legacy-api:8000
+      DATABASE_URL: ${DATABASE_URL}
     ports:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     depends_on:

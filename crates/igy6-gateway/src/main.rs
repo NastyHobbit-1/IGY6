@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
 use igy6_gateway::{
-    build_fallback_proxy_plan, handle_gateway_request, help_text, parse_gateway_request,
+    build_fallback_proxy_plan, handle_gateway_request_with_db, help_text, parse_gateway_request,
     render_fallback_http_request, render_http_response, GatewayResponse, DEFAULT_BIND_ADDR,
     DEFAULT_FALLBACK_ORIGIN,
 };
@@ -23,8 +23,9 @@ fn main() {
     let fallback_origin = parse_arg_value(&args, "--fallback")
         .or_else(|| env::var("FALLBACK_API_BASE_URL").ok())
         .unwrap_or_else(|| DEFAULT_FALLBACK_ORIGIN.to_string());
+    let database_url = env::var("DATABASE_URL").ok();
 
-    if let Err(error) = serve(&bind_addr, &fallback_origin) {
+    if let Err(error) = serve(&bind_addr, &fallback_origin, database_url.as_deref()) {
         eprintln!("igy6-gateway failed: {error}");
         std::process::exit(1);
     }
@@ -36,13 +37,17 @@ fn parse_arg_value(args: &[String], flag: &str) -> Option<String> {
         .map(|pair| pair[1].clone())
 }
 
-fn serve(bind_addr: &str, fallback_origin: &str) -> std::io::Result<()> {
+fn serve(
+    bind_addr: &str,
+    fallback_origin: &str,
+    database_url: Option<&str>,
+) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr)?;
     println!("igy6-gateway listening on http://{bind_addr}");
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(error) = handle_stream(&mut stream, fallback_origin) {
+                if let Err(error) = handle_stream(&mut stream, fallback_origin, database_url) {
                     eprintln!("request failed: {error}");
                 }
             }
@@ -52,14 +57,23 @@ fn serve(bind_addr: &str, fallback_origin: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn handle_stream(stream: &mut TcpStream, fallback_origin: &str) -> std::io::Result<()> {
+fn handle_stream(
+    stream: &mut TcpStream,
+    fallback_origin: &str,
+    database_url: Option<&str>,
+) -> std::io::Result<()> {
     let mut buffer = [0_u8; 64 * 1024];
     let bytes_read = stream.read(&mut buffer)?;
     let raw = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
     let manifest = fs::read_to_string("configs/rust-cutover-manifest.json").ok();
     let response = match parse_gateway_request(&raw) {
         Ok(request) => {
-            let response = handle_gateway_request(&request, manifest.as_deref(), fallback_origin);
+            let response = handle_gateway_request_with_db(
+                &request,
+                manifest.as_deref(),
+                fallback_origin,
+                database_url,
+            );
             if response.proxied_to_fallback {
                 match proxy_to_fallback(&request, fallback_origin) {
                     Ok(proxied) => proxied,

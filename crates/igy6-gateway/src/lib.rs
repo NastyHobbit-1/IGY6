@@ -4,9 +4,36 @@ use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY}
 use igy6_evidence_answer::build_evidence_answer_packet;
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
+use postgres::{Client, NoTls};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
+pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/health/live"),
+    ("GET", "/health/ready"),
+    ("GET", "/rust-migration/status"),
+    ("GET", "/agent/capabilities"),
+    ("POST", "/agent/intent"),
+    ("POST", "/chat/retrieval-preview"),
+    ("POST", "/chat/evidence-answer"),
+    ("GET", "/approvals"),
+    ("GET", "/approvals/{approval_id}"),
+    ("GET", "/evidence/documents"),
+    ("GET", "/evidence/documents/{document_id}"),
+    ("GET", "/evidence/items"),
+    ("GET", "/evidence/items/{evidence_item_id}"),
+    ("GET", "/evidence/chunks"),
+    ("GET", "/evidence/chunks/{chunk_id}"),
+    ("GET", "/evidence/claims"),
+    ("GET", "/evidence/claims/{claim_id}"),
+    ("GET", "/reports"),
+    ("GET", "/reports/{report_id}"),
+    ("GET", "/sources"),
+    ("GET", "/sources/{source_id}"),
+    ("GET", "/sources/{source_id}/permissions"),
+    ("GET", "/work-items"),
+    ("GET", "/work-items/{work_item_id}"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewayError {
@@ -14,6 +41,8 @@ pub enum GatewayError {
     MalformedRequest,
     InvalidContentLength,
     InvalidFallbackOrigin(String),
+    MissingDatabaseUrl,
+    Database(String),
 }
 
 impl fmt::Display for GatewayError {
@@ -25,6 +54,10 @@ impl fmt::Display for GatewayError {
             Self::InvalidFallbackOrigin(origin) => {
                 write!(formatter, "fallback origin is invalid: {origin}")
             }
+            Self::MissingDatabaseUrl => {
+                write!(formatter, "DATABASE_URL is required for this route")
+            }
+            Self::Database(error) => write!(formatter, "database error: {error}"),
         }
     }
 }
@@ -111,6 +144,15 @@ pub fn handle_gateway_request(
     manifest_content: Option<&str>,
     fallback_origin: &str,
 ) -> GatewayResponse {
+    handle_gateway_request_with_db(request, manifest_content, fallback_origin, None)
+}
+
+pub fn handle_gateway_request_with_db(
+    request: &GatewayRequest,
+    manifest_content: Option<&str>,
+    fallback_origin: &str,
+    database_url: Option<&str>,
+) -> GatewayResponse {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/health/live") => json_response(
             200,
@@ -147,30 +189,207 @@ pub fn handle_gateway_request(
         ("POST", "/chat/evidence-answer") => {
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
-        _ => match build_fallback_proxy_plan(request, fallback_origin) {
-            Ok(plan) => json_response(
-                502,
-                "Bad Gateway",
-                format!(
-                    "{{\"detail\":\"Rust gateway fallback proxy is required at runtime\",\"fallback_host\":\"{}\",\"fallback_port\":{},\"fallback_path\":\"{}\"}}",
-                    escape_json(&plan.host),
-                    plan.port,
-                    escape_json(&plan.request_target)
-                ),
-                true,
-            ),
-            Err(error) => json_response(
-                500,
-                "Internal Server Error",
-                format!(
-                    "{{\"detail\":\"{}\",\"fallback_origin\":\"{}\"}}",
-                    escape_json(&error.to_string()),
-                    escape_json(fallback_origin)
-                ),
-                false,
-            ),
-        },
+        ("GET", _) => {
+            if let Some(route) = db_read_route(&request.path) {
+                db_read_response(route, database_url)
+            } else {
+                fallback_or_error(request, fallback_origin)
+            }
+        }
+        _ => fallback_or_error(request, fallback_origin),
     }
+}
+
+fn fallback_or_error(request: &GatewayRequest, fallback_origin: &str) -> GatewayResponse {
+    match build_fallback_proxy_plan(request, fallback_origin) {
+        Ok(plan) => json_response(
+            502,
+            "Bad Gateway",
+            format!(
+                "{{\"detail\":\"Rust gateway fallback proxy is required at runtime\",\"fallback_host\":\"{}\",\"fallback_port\":{},\"fallback_path\":\"{}\"}}",
+                escape_json(&plan.host),
+                plan.port,
+                escape_json(&plan.request_target)
+            ),
+            true,
+        ),
+        Err(error) => json_response(
+            500,
+            "Internal Server Error",
+            format!(
+                "{{\"detail\":\"{}\",\"fallback_origin\":\"{}\"}}",
+                escape_json(&error.to_string()),
+                escape_json(fallback_origin)
+            ),
+            false,
+        ),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DbReadRoute {
+    List {
+        sql: &'static str,
+    },
+    Detail {
+        id: String,
+        sql: &'static str,
+        _not_found_detail: &'static str,
+    },
+}
+
+fn db_read_route(path: &str) -> Option<DbReadRoute> {
+    match path {
+        "/approvals" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/evidence/documents" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json, created_at, updated_at FROM normalized_documents ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/evidence/items" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json, created_at, updated_at FROM evidence_items ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/evidence/chunks" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json, created_at, updated_at FROM chunks ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/evidence/claims" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/reports" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/sources" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT s.id, s.name, s.source_type, s.location, s.owner_actor_id, s.sensitivity, s.trust_level, s.enabled, s.metadata_json, s.created_at, s.updated_at, COALESCE((SELECT json_agg(row_to_json(p)) FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE source_id = s.id ORDER BY created_at ASC) p), '[]'::json) AS permissions FROM sources s ORDER BY s.created_at DESC) t), '[]')",
+        }),
+        "/work-items" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items ORDER BY created_at DESC) t), '[]')",
+        }),
+        _ => db_detail_route(path),
+    }
+}
+
+fn db_detail_route(path: &str) -> Option<DbReadRoute> {
+    let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["approvals", id] => Some(detail(
+            id,
+            "Approval not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t), '')",
+        )),
+        ["evidence", "documents", id] => Some(detail(
+            id,
+            "Document not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json, created_at, updated_at FROM normalized_documents WHERE id = $1) t), '')",
+        )),
+        ["evidence", "items", id] => Some(detail(
+            id,
+            "Evidence item not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json, created_at, updated_at FROM evidence_items WHERE id = $1) t), '')",
+        )),
+        ["evidence", "chunks", id] => Some(detail(
+            id,
+            "Chunk not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json, created_at, updated_at FROM chunks WHERE id = $1) t), '')",
+        )),
+        ["evidence", "claims", id] => Some(detail(
+            id,
+            "Claim not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims WHERE id = $1) t), '')",
+        )),
+        ["reports", id] => Some(detail(
+            id,
+            "Report not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t), '')",
+        )),
+        ["sources", id] => Some(detail(
+            id,
+            "Source not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT s.id, s.name, s.source_type, s.location, s.owner_actor_id, s.sensitivity, s.trust_level, s.enabled, s.metadata_json, s.created_at, s.updated_at, COALESCE((SELECT json_agg(row_to_json(p)) FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE source_id = s.id ORDER BY created_at ASC) p), '[]'::json) AS permissions FROM sources s WHERE s.id = $1) t), '')",
+        )),
+        ["sources", source_id, "permissions"] => Some(detail(
+            source_id,
+            "Source not found",
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM sources WHERE id = $1) THEN COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE source_id = $1 ORDER BY created_at ASC) t), '[]') ELSE '' END",
+        )),
+        ["work-items", id] => Some(detail(
+            id,
+            "Work item not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items WHERE id = $1) t), '')",
+        )),
+        _ => None,
+    }
+}
+
+fn detail(id: &str, not_found_detail: &'static str, sql: &'static str) -> DbReadRoute {
+    DbReadRoute::Detail {
+        id: id.to_string(),
+        sql,
+        _not_found_detail: not_found_detail,
+    }
+}
+
+fn db_read_response(route: DbReadRoute, database_url: Option<&str>) -> GatewayResponse {
+    match query_db_route(route, database_url) {
+        Ok(Some(body)) => json_response(200, "OK", body, false),
+        Ok(None) => json_response(
+            404,
+            "Not Found",
+            "{\"detail\":\"Not found\"}".to_string(),
+            false,
+        ),
+        Err(GatewayError::MissingDatabaseUrl) => json_response(
+            503,
+            "Service Unavailable",
+            "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(error) => json_response(
+            502,
+            "Bad Gateway",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
+}
+
+fn query_db_route(
+    route: DbReadRoute,
+    database_url: Option<&str>,
+) -> Result<Option<String>, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    match route {
+        DbReadRoute::List { sql } => client
+            .query_one(sql, &[])
+            .map(|row| Some(row.get::<_, String>(0)))
+            .map_err(|error| GatewayError::Database(error.to_string())),
+        DbReadRoute::Detail { id, sql, .. } => {
+            let body = client
+                .query_one(sql, &[&id])
+                .map(|row| row.get::<_, String>(0))
+                .map_err(|error| GatewayError::Database(error.to_string()))?;
+            if body.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(body))
+            }
+        }
+    }
+}
+
+fn postgres_client_url(database_url: &str) -> String {
+    for prefix in ["postgresql+", "postgres+"] {
+        if let Some(driver_url) = database_url.strip_prefix(prefix) {
+            if let Some((_, rest)) = driver_url.split_once("://") {
+                return format!("{}://{}", prefix.trim_end_matches('+'), rest);
+            }
+        }
+    }
+    database_url.to_string()
 }
 
 pub fn build_fallback_proxy_plan(
@@ -251,7 +470,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn agent_capabilities_json() -> String {
@@ -554,6 +773,89 @@ mod tests {
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
         assert!(response.proxied_to_fallback);
+    }
+
+    #[test]
+    fn db_read_routes_are_rust_native_and_require_database_url() {
+        for (method, path) in [
+            ("GET", "/sources"),
+            ("GET", "/sources/source-1"),
+            ("GET", "/sources/source-1/permissions"),
+            ("GET", "/approvals"),
+            ("GET", "/approvals/approval-1"),
+            ("GET", "/work-items"),
+            ("GET", "/work-items/work-1"),
+            ("GET", "/reports"),
+            ("GET", "/reports/report-1"),
+            ("GET", "/evidence/documents"),
+            ("GET", "/evidence/documents/document-1"),
+            ("GET", "/evidence/items"),
+            ("GET", "/evidence/items/evidence-1"),
+            ("GET", "/evidence/chunks"),
+            ("GET", "/evidence/chunks/chunk-1"),
+            ("GET", "/evidence/claims"),
+            ("GET", "/evidence/claims/claim-1"),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request(method, path, ""),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
+    fn db_read_routes_report_database_errors_without_fallback() {
+        let response = handle_gateway_request_with_db(
+            &request("GET", "/sources", ""),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            Some("not-a-postgres-url"),
+        );
+        assert_eq!(response.status_code, 502);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("database error"));
+    }
+
+    #[test]
+    fn rust_native_route_registry_covers_db_read_batch() {
+        for expected in [
+            ("GET", "/sources"),
+            ("GET", "/sources/{source_id}"),
+            ("GET", "/sources/{source_id}/permissions"),
+            ("GET", "/approvals"),
+            ("GET", "/approvals/{approval_id}"),
+            ("GET", "/work-items"),
+            ("GET", "/work-items/{work_item_id}"),
+            ("GET", "/reports"),
+            ("GET", "/reports/{report_id}"),
+            ("GET", "/evidence/documents"),
+            ("GET", "/evidence/documents/{document_id}"),
+            ("GET", "/evidence/items"),
+            ("GET", "/evidence/items/{evidence_item_id}"),
+            ("GET", "/evidence/chunks"),
+            ("GET", "/evidence/chunks/{chunk_id}"),
+            ("GET", "/evidence/claims"),
+            ("GET", "/evidence/claims/{claim_id}"),
+        ] {
+            assert!(RUST_NATIVE_ROUTES.contains(&expected), "{expected:?}");
+        }
+    }
+
+    #[test]
+    fn postgres_client_url_accepts_sqlalchemy_driver_urls() {
+        assert_eq!(
+            postgres_client_url("postgresql+psycopg://user:pass@postgres:5432/db"),
+            "postgresql://user:pass@postgres:5432/db"
+        );
+        assert_eq!(
+            postgres_client_url("postgres://user:pass@postgres:5432/db"),
+            "postgres://user:pass@postgres:5432/db"
+        );
     }
 
     #[test]

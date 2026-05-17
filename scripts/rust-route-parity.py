@@ -73,8 +73,23 @@ def fastapi_routes() -> set[Route]:
 
 def rust_gateway_routes() -> set[Route]:
     source = GATEWAY_LIB.read_text(encoding="utf-8")
-    pattern = re.compile(r'\("([A-Z]+)",\s*"([^"]+)"\)\s*=>')
-    return {Route(method, path) for method, path in pattern.findall(source)}
+    match_arm_pattern = re.compile(r'\("([A-Z]+)",\s*"([^"]+)"\)\s*=>')
+    routes = {
+        Route(method, path)
+        for method, path in match_arm_pattern.findall(source)
+    }
+    registry_match = re.search(
+        r"pub const RUST_NATIVE_ROUTES:.*?&\[(?P<body>.*?)\];",
+        source,
+        flags=re.DOTALL,
+    )
+    if registry_match:
+        declared_pattern = re.compile(r'\("([A-Z]+)",\s*"([^"]+)"\),')
+        routes.update(
+            Route(method, path)
+            for method, path in declared_pattern.findall(registry_match.group("body"))
+        )
+    return routes
 
 
 def web_used_routes() -> set[Route]:
