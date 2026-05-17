@@ -44,3 +44,7 @@ version = "0.1.0"
 dependencies = [
  "igy6-core",
 ]
+
+[[package]]
+name = "igy6-vector-memory"
+version = "0.1.0"

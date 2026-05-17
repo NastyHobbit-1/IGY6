@@ -141,9 +141,22 @@
       ]
     },
     "vector_memory": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-094",
+      "verification": [
+        "DIFF-094 adds Rust deterministic vector-memory helpers in crates/igy6-vector-memory.",
+        "Python API database routes and worker vector behavior remain active until a later parity DIFF explicitly replaces them.",
+        "Qdrant request planning is local/client-provided HTTP only and is not executed during verification.",
+        "git status --short checked DIFF-094 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-vector-memory passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
     },
     "worker": {
       "status": "pending",

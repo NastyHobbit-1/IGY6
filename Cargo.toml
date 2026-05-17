@@ -8,5 +8,6 @@ members = [
     "crates/igy6-artifacts",
     "crates/igy6-normalization",
     "crates/igy6-chunking",
+    "crates/igy6-vector-memory",
 ]
 resolver = "2"
