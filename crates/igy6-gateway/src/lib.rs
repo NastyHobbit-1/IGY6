@@ -59,6 +59,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/sources"),
     ("GET", "/sources/{source_id}"),
     ("GET", "/sources/{source_id}/permissions"),
+    ("POST", "/sources"),
     ("GET", "/work-items"),
     ("GET", "/work-items/{work_item_id}"),
 ];
@@ -224,6 +225,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
+        ("POST", "/sources") => source_create_response(&request.body, database_url),
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
         }
@@ -559,6 +561,10 @@ fn outcome_create_response(body: &str, database_url: Option<&str>) -> GatewayRes
     write_route_response(create_outcome(body, database_url))
 }
 
+fn source_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_source(body, database_url))
+}
+
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_approval_create(body)?;
     let database_url = database_url
@@ -596,6 +602,86 @@ fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, Gat
         .query_one(
             "SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t",
             &[&approval_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_source(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_source_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source_id = generated_record_id("source");
+
+    transaction
+        .execute(
+            "INSERT INTO sources (id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)",
+            &[
+                &source_id,
+                &payload.name,
+                &payload.source_type,
+                &payload.location,
+                &payload.owner_actor_id,
+                &payload.sensitivity,
+                &payload.trust_level,
+                &payload.enabled,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    if let Some(permission) = &payload.permission {
+        let permission_id = generated_record_id("permission");
+        let allowed_operations_json = Value::Array(
+            permission
+                .allowed_operations
+                .iter()
+                .map(|operation| Value::String(operation.clone()))
+                .collect(),
+        );
+        transaction
+            .execute(
+                "INSERT INTO source_permissions (id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7)",
+                &[
+                    &permission_id,
+                    &source_id,
+                    &permission.scope_json,
+                    &allowed_operations_json,
+                    &permission.external_model_policy,
+                    &permission.approval_required,
+                    &permission.created_by_actor_id,
+                ],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+
+    let details_json = serde_json::json!({
+        "source_type": payload.source_type,
+        "sensitivity": payload.sensitivity,
+        "permission_included": payload.permission.is_some()
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'source.created', 'recorded', 'source', $2, NULL, $3::jsonb)",
+            &[&payload.owner_actor_id, &source_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT s.id, s.name, s.source_type, s.location, s.owner_actor_id, s.sensitivity, s.trust_level, s.enabled, s.metadata_json, s.created_at, s.updated_at, COALESCE((SELECT json_agg(row_to_json(p)) FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE source_id = s.id ORDER BY created_at ASC) p), '[]'::json) AS permissions FROM sources s WHERE s.id = $1) t",
+            &[&source_id],
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -895,6 +981,26 @@ struct OutcomeCreatePayload {
     metadata_json: Value,
 }
 
+struct SourceCreatePayload {
+    name: String,
+    source_type: String,
+    location: Option<String>,
+    owner_actor_id: String,
+    sensitivity: String,
+    trust_level: String,
+    enabled: bool,
+    metadata_json: Value,
+    permission: Option<SourcePermissionCreatePayload>,
+}
+
+struct SourcePermissionCreatePayload {
+    scope_json: Value,
+    allowed_operations: Vec<String>,
+    external_model_policy: String,
+    approval_required: bool,
+    created_by_actor_id: String,
+}
+
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
@@ -998,6 +1104,82 @@ fn parse_outcome_create(body: &str) -> Result<OutcomeCreatePayload, GatewayError
     })
 }
 
+fn parse_source_create(body: &str) -> Result<SourceCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Source request body")?;
+    let name = required_string_field(&object, "name", 255)?;
+    let source_type = required_string_field(&object, "source_type", 64)?;
+    if !is_source_type(&source_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown source type: {source_type}"
+        )));
+    }
+    let location = optional_nullable_string_field(&object, "location")?;
+    let owner_actor_id =
+        optional_string_field_with_max(&object, "owner_actor_id", "local-owner", 128)?;
+    let sensitivity = optional_string_field_with_max(&object, "sensitivity", "internal", 64)?;
+    if !is_sensitivity_label(&sensitivity) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown sensitivity label: {sensitivity}"
+        )));
+    }
+    let trust_level = optional_string_field_with_max(&object, "trust_level", "unreviewed", 64)?;
+    let enabled = optional_bool_field(&object, "enabled", true)?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    let permission = match object.get("permission") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(permission)) => Some(parse_source_permission_create(permission)?),
+        Some(_) => {
+            return Err(GatewayError::Validation(
+                "permission must be a JSON object or null.".to_string(),
+            ))
+        }
+    };
+
+    Ok(SourceCreatePayload {
+        name,
+        source_type,
+        location,
+        owner_actor_id,
+        sensitivity,
+        trust_level,
+        enabled,
+        metadata_json,
+        permission,
+    })
+}
+
+fn parse_source_permission_create(
+    object: &serde_json::Map<String, Value>,
+) -> Result<SourcePermissionCreatePayload, GatewayError> {
+    let scope_json = optional_object_field(object, "scope_json")?;
+    let allowed_operations = optional_string_array_field(object, "allowed_operations")?;
+    for operation in &allowed_operations {
+        if !is_allowed_source_operation(operation) {
+            return Err(GatewayError::Validation(format!(
+                "Unknown allowed operation: {operation}"
+            )));
+        }
+    }
+    let external_model_policy =
+        optional_string_field_with_max(object, "external_model_policy", "blocked", 64)?;
+    if !is_external_model_policy(&external_model_policy) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown external model policy: {external_model_policy}"
+        )));
+    }
+    let approval_required = optional_bool_field(object, "approval_required", true)?;
+    let created_by_actor_id =
+        optional_string_field_with_max(object, "created_by_actor_id", "local-owner", 128)?;
+
+    Ok(SourcePermissionCreatePayload {
+        scope_json,
+        allowed_operations,
+        external_model_policy,
+        approval_required,
+        created_by_actor_id,
+    })
+}
+
 fn parse_json_object(
     body: &str,
     description: &str,
@@ -1047,6 +1229,21 @@ fn optional_string_field(
     }
 }
 
+fn optional_string_field_with_max(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: &str,
+    max_len: usize,
+) -> Result<String, GatewayError> {
+    let value = optional_string_field(object, key, default)?;
+    if value.len() > max_len {
+        return Err(GatewayError::Validation(format!(
+            "{key} must be {max_len} characters or fewer."
+        )));
+    }
+    Ok(value)
+}
+
 fn optional_nullable_string_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -1056,6 +1253,20 @@ fn optional_nullable_string_field(
         Some(Value::String(value)) => Ok(Some(value.to_string())),
         Some(_) => Err(GatewayError::Validation(format!(
             "{key} must be a string or null."
+        ))),
+    }
+}
+
+fn optional_bool_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: bool,
+) -> Result<bool, GatewayError> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(GatewayError::Validation(format!(
+            "{key} must be a boolean."
         ))),
     }
 }
@@ -1103,6 +1314,35 @@ fn optional_string_array_field(
         }
     }
     Ok(result)
+}
+
+fn is_source_type(value: &str) -> bool {
+    matches!(
+        value,
+        "manual_upload"
+            | "local_project"
+            | "local_pc_diagnostics"
+            | "web_public"
+            | "web_authorized_account"
+            | "router_network"
+            | "user_observation"
+            | "conversation_history"
+    )
+}
+
+fn is_allowed_source_operation(value: &str) -> bool {
+    matches!(
+        value,
+        "dry_run" | "read" | "collect" | "normalize" | "classify_sensitivity" | "extract_metadata"
+    )
+}
+
+fn is_sensitivity_label(value: &str) -> bool {
+    matches!(value, "public" | "internal" | "sensitive" | "secret")
+}
+
+fn is_external_model_policy(value: &str) -> bool {
+    matches!(value, "blocked" | "metadata_only" | "allowed_with_approval")
 }
 
 fn is_feedback_target_type(value: &str) -> bool {
@@ -1298,7 +1538,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -1822,11 +2062,11 @@ mod tests {
 
     #[test]
     fn unsupported_routes_plan_fastapi_fallback() {
-        let request = request("POST", "/sources", "{\"name\":\"x\"}");
+        let request = request("POST", "/collection-runs/dry-run", "{\"source_id\":\"x\"}");
         let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
         assert_eq!(plan.host, "legacy-api");
         assert_eq!(plan.port, 8000);
-        assert_eq!(plan.request_target, "/sources");
+        assert_eq!(plan.request_target, "/collection-runs/dry-run");
 
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
@@ -1993,6 +2233,50 @@ mod tests {
     }
 
     #[test]
+    fn source_create_is_rust_native_and_requires_database_url() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/sources",
+                r#"{"name":"Manual notes","source_type":"manual_upload","sensitivity":"internal","permission":{"scope_json":{},"allowed_operations":["dry_run","read"],"external_model_policy":"blocked","approval_required":true}}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn source_create_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"name":"","source_type":"manual_upload"}"#,
+            r#"{"name":"x","source_type":"generic_chatbot"}"#,
+            r#"{"name":"x","source_type":"manual_upload","sensitivity":"classified"}"#,
+            r#"{"name":"x","source_type":"manual_upload","enabled":"yes"}"#,
+            r#"{"name":"x","source_type":"manual_upload","metadata_json":[]}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":[]}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":{"scope_json":[]}}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":{"allowed_operations":["write"]}}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":{"external_model_policy":"allow_all"}}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":{"approval_required":"yes"}}"#,
+            r#"{"name":"x","source_type":"manual_upload","permission":{"created_by_actor_id":""}}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/sources", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
     fn feedback_write_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -2039,6 +2323,7 @@ mod tests {
             ("GET", "/sources"),
             ("GET", "/sources/{source_id}"),
             ("GET", "/sources/{source_id}/permissions"),
+            ("POST", "/sources"),
             ("GET", "/analysis/patterns"),
             ("GET", "/analysis/patterns/{pattern_id}"),
             ("GET", "/analysis/hypotheses"),

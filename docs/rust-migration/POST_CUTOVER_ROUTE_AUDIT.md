@@ -16,8 +16,8 @@ Rust gateway service: api
     +-- Rust-native routes for health, migration status, agent capability,
     |   agent intent, retrieval preview, evidence answer, DIFF-106 and
     |   DIFF-107 read-only DB routes, DIFF-108 status/config routes,
-    |   DIFF-109 approval request creation, and DIFF-110 feedback/outcome
-    |   writes
+    |   DIFF-109 approval request creation, DIFF-110 feedback/outcome
+    |   writes, and DIFF-111 source creation
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -93,6 +93,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/sources` | Rust-native DB read |
 | GET | `/sources/{source_id}` | Rust-native DB read |
 | GET | `/sources/{source_id}/permissions` | Rust-native DB read |
+| POST | `/sources` | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Rust-native DB read |
 | GET | `/work-items/{work_item_id}` | Rust-native DB read |
 
@@ -101,13 +102,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 |
 
 ## Web-Used Route Matrix
 
@@ -147,7 +148,7 @@ Route parity counts:
 | POST | `/settings/env/verify` | Next.js proxy and page settings verify | Proxied to FastAPI |
 | POST | `/settings/env/apply` | Next.js proxy and page settings apply | Proxied to FastAPI |
 | GET | `/sources` | Page data load | Rust-native DB read |
-| POST | `/sources` | Page source create | Proxied to FastAPI |
+| POST | `/sources` | Page source create | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Page data load | Rust-native DB read |
 | POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Proxied to FastAPI |
 
@@ -240,7 +241,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/settings/env/verify` | Proxied to FastAPI |
 | POST | `/settings/env/apply` | Proxied to FastAPI |
 | GET | `/sources` | Rust-native DB read |
-| POST | `/sources` | Proxied to FastAPI |
+| POST | `/sources` | Rust-native DB write with optional permission and audit event |
 | GET | `/sources/{source_id}` | Rust-native DB read |
 | GET | `/sources/{source_id}/permissions` | Rust-native DB read |
 | POST | `/sources/{source_id}/permissions` | Proxied to FastAPI |
@@ -268,7 +269,9 @@ routes without reading `.env` contents or mutating Qdrant/Neo4j. DIFF-109 adds
 Rust-native approval request creation with audit event insertion. DIFF-110 adds
 Rust-native feedback and outcome writes with validation, audit insertion, and
 their Python side-effect parity for source trust, weak-feedback improvement
-items, and outcome target updates.
+items, and outcome target updates. DIFF-111 adds Rust-native source creation
+with optional initial permission insertion and the deterministic
+`source.created` audit event.
 
 ## Manifest Finding
 
@@ -297,12 +300,14 @@ deliberately retired:
    parity.
 6. DIFF-110: migrate feedback and outcome write routes with explicit validation
    and audit parity.
-7. DIFF-111: continue with the remaining write/action fallback routes only
+7. DIFF-111: migrate source creation with optional permission and explicit
+   `source.created` audit parity.
+8. DIFF-112: continue with the remaining write/action fallback routes only
    where approval, audit, and response-shape parity can be explicit and
    testable.
-8. Later DIFFs: migrate settings/env write/verify, agent action execution,
-   source/report/work-item writes, collection writes, retrieval hydration,
+9. Later DIFFs: migrate settings/env write/verify, agent action execution,
+   report/work-item writes, collection writes, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-9. Final retirement DIFF: remove or disable `legacy-api` only after route
+10. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
