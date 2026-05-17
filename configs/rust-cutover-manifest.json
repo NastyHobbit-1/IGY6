@@ -250,9 +250,23 @@
       ]
     },
     "write_api_batch_1": {
-      "status": "pending",
-      "diff": null,
-      "verification": []
+      "status": "complete",
+      "diff": "DIFF-100",
+      "crate": "crates/igy6-write-api",
+      "verification": [
+        "DIFF-100 adds Rust write API batch 1 contract planning in crates/igy6-write-api.",
+        "Python/FastAPI sources, approvals, audit, feedback, and outcomes routes remain active until a later parity DIFF explicitly replaces them.",
+        "Rust write API batch 1 validates contracts and builds deterministic audit/side-effect plans without database writes, runtime/private data access, or external service calls.",
+        "git status --short checked DIFF-100 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-write-api passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
     },
     "work_queue_reports": {
       "status": "pending",
