@@ -1,4 +1,7 @@
+use std::env;
 use std::fmt;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY};
 use igy6_evidence_answer::build_evidence_answer_packet;
@@ -42,10 +45,13 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/evidence/claims/{claim_id}"),
     ("GET", "/feedback"),
     ("GET", "/feedback/{feedback_id}"),
+    ("GET", "/memory/graph/schema"),
+    ("GET", "/memory/vector/chunks"),
     ("GET", "/outcomes"),
     ("GET", "/outcomes/{outcome_id}"),
     ("GET", "/reports"),
     ("GET", "/reports/{report_id}"),
+    ("GET", "/settings/env"),
     ("GET", "/sources"),
     ("GET", "/sources/{source_id}"),
     ("GET", "/sources/{source_id}/permissions"),
@@ -206,6 +212,15 @@ pub fn handle_gateway_request_with_db(
         }
         ("POST", "/chat/evidence-answer") => {
             json_response(200, "OK", evidence_answer_json(&request.body), false)
+        }
+        ("GET", "/settings/env") => {
+            json_response(200, "OK", settings_env_status_json(), false)
+        }
+        ("GET", "/memory/vector/chunks") => {
+            json_response(200, "OK", vector_collection_status_json(), false)
+        }
+        ("GET", "/memory/graph/schema") => {
+            json_response(200, "OK", graph_schema_status_json(), false)
         }
         ("GET", _) => {
             if let Some(route) = db_read_route(&request.path) {
@@ -560,7 +575,237 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /sources and selected source detail/permission reads\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+}
+
+fn settings_env_status_json() -> String {
+    const GROUPS: &[(&str, &str)] = &[
+        ("app", "App"),
+        ("postgres", "PostgreSQL"),
+        ("redis", "Redis"),
+        ("qdrant", "Qdrant"),
+        ("neo4j", "Neo4j"),
+        ("storage", "Storage"),
+        ("policy", "Policy"),
+    ];
+    const SETTINGS: &[(&str, &str, &str, bool, bool)] = &[
+        (
+            "APP_ENV",
+            "app",
+            "Application environment label.",
+            false,
+            true,
+        ),
+        ("APP_HOST", "app", "API host binding.", false, true),
+        ("APP_PORT", "app", "API port.", false, true),
+        (
+            "DATABASE_URL",
+            "postgres",
+            "PostgreSQL connection URL.",
+            true,
+            true,
+        ),
+        ("REDIS_URL", "redis", "Redis connection URL.", true, true),
+        ("QDRANT_URL", "qdrant", "Qdrant service URL.", false, true),
+        (
+            "QDRANT_CHUNK_COLLECTION",
+            "qdrant",
+            "Qdrant collection for chunk vectors.",
+            false,
+            true,
+        ),
+        (
+            "QDRANT_CHUNK_VECTOR_SIZE",
+            "qdrant",
+            "Deterministic chunk vector size.",
+            false,
+            true,
+        ),
+        (
+            "NEO4J_URI",
+            "neo4j",
+            "Neo4j Bolt URI used by the API.",
+            false,
+            true,
+        ),
+        ("NEO4J_USER", "neo4j", "Neo4j username.", false, true),
+        ("NEO4J_PASSWORD", "neo4j", "Neo4j password.", true, true),
+        (
+            "ARTIFACT_STORE_PATH",
+            "storage",
+            "Container path for content-addressed artifacts.",
+            false,
+            true,
+        ),
+        (
+            "EXPORT_STORE_PATH",
+            "storage",
+            "Container path for report/export output.",
+            false,
+            true,
+        ),
+        (
+            "ENV_FILE_PATH",
+            "storage",
+            "Controlled container path to the mounted local .env file.",
+            false,
+            true,
+        ),
+        (
+            "ENV_BACKUP_DIR",
+            "storage",
+            "Controlled backup directory for .env backups.",
+            false,
+            true,
+        ),
+        (
+            "IGY6_DATA_ROOT",
+            "storage",
+            "Host-side folder for local IGY6 runtime data.",
+            false,
+            true,
+        ),
+        (
+            "EXTERNAL_MODEL_POLICY_DEFAULT",
+            "policy",
+            "Default external model policy.",
+            false,
+            true,
+        ),
+        (
+            "SINGLE_USER_MODE",
+            "policy",
+            "Local single-user mode toggle.",
+            false,
+            true,
+        ),
+        (
+            "APPROVAL_REQUIRED_DEFAULT",
+            "policy",
+            "Default approval-required toggle.",
+            false,
+            true,
+        ),
+    ];
+
+    let groups = GROUPS
+        .iter()
+        .map(|(key, label)| format!("{{\"key\":\"{}\",\"label\":\"{}\"}}", key, label))
+        .collect::<Vec<_>>()
+        .join(",");
+    let settings = SETTINGS
+        .iter()
+        .map(|(key, group, description, secret, restart_required)| {
+            let value = env::var(key).ok();
+            let has_value = value.as_ref().is_some_and(|value| !value.is_empty());
+            let value_json = if *secret {
+                "null".to_string()
+            } else {
+                option_string_json(value.as_deref())
+            };
+            let masked_value = if *secret && has_value {
+                "\"********\"".to_string()
+            } else {
+                "\"\"".to_string()
+            };
+            format!(
+                "{{\"key\":\"{}\",\"group\":\"{}\",\"group_label\":\"{}\",\"description\":\"{}\",\"value\":{},\"masked_value\":{},\"has_value\":{},\"secret\":{},\"read_only\":true,\"restart_required\":{},\"source\":\"process_env\"}}",
+                escape_json(key),
+                escape_json(group),
+                escape_json(group_label(group)),
+                escape_json(description),
+                value_json,
+                masked_value,
+                has_value,
+                secret,
+                restart_required
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let env_path =
+        env::var("ENV_FILE_PATH").unwrap_or_else(|_| "/workspace/project/.env".to_string());
+    let backup_dir =
+        env::var("ENV_BACKUP_DIR").unwrap_or_else(|_| "/workspace/storage/env_backups".to_string());
+    format!(
+        "{{\"file_status\":{{\"path\":\"{}\",\"backup_dir\":\"{}\",\"exists\":false,\"writable\":false,\"unknown_key_count\":0,\"output_format\":\"process_env_redacted\"}},\"groups\":[{}],\"settings\":[{}],\"unmanaged\":[],\"warnings\":[\"Rust gateway settings status uses process environment metadata only and does not read .env contents.\"]}}",
+        escape_json(&env_path),
+        escape_json(&backup_dir),
+        groups,
+        settings
+    )
+}
+
+fn group_label(group: &str) -> &str {
+    match group {
+        "app" => "App",
+        "postgres" => "PostgreSQL",
+        "redis" => "Redis",
+        "qdrant" => "Qdrant",
+        "neo4j" => "Neo4j",
+        "storage" => "Storage",
+        "policy" => "Policy",
+        _ => group,
+    }
+}
+
+fn vector_collection_status_json() -> String {
+    let collection_name =
+        env::var("QDRANT_CHUNK_COLLECTION").unwrap_or_else(|_| "igy6_chunks".to_string());
+    let qdrant_url = env::var("QDRANT_URL").unwrap_or_else(|_| "http://qdrant:6333".to_string());
+    let reachability = tcp_reachability_from_url(&qdrant_url);
+    format!(
+        "{{\"collection_name\":\"{}\",\"exists\":false,\"detail\":{{\"rust_gateway_status\":\"read_only_status\",\"configured_url\":\"{}\",\"tcp_reachable\":{},\"collection_existence_verified\":false,\"note\":\"Rust gateway does not create, mutate, or inspect Qdrant collections in DIFF-108.\"}}}}",
+        escape_json(&collection_name),
+        escape_json(&redact_url(&qdrant_url)),
+        reachability
+    )
+}
+
+fn graph_schema_status_json() -> String {
+    let neo4j_uri = env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://neo4j:7687".to_string());
+    let reachability = tcp_reachability_from_url(&neo4j_uri);
+    format!(
+        "{{\"constraints\":[{{\"rust_gateway_status\":\"read_only_status\",\"configured_uri\":\"{}\",\"tcp_reachable\":{},\"constraints_verified\":false,\"note\":\"Rust gateway does not query, create, or mutate Neo4j constraints in DIFF-108.\"}}]}}",
+        escape_json(&redact_url(&neo4j_uri)),
+        reachability
+    )
+}
+
+fn tcp_reachability_from_url(url: &str) -> bool {
+    let Some((host, port)) = host_port_from_url(url) else {
+        return false;
+    };
+    let Ok(addrs) = (host.as_str(), port).to_socket_addrs() else {
+        return false;
+    };
+    for addr in addrs {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+fn host_port_from_url(url: &str) -> Option<(String, u16)> {
+    let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = without_scheme.split('/').next()?.split('@').next_back()?;
+    let (host, port) = authority.rsplit_once(':')?;
+    let port = port.parse::<u16>().ok()?;
+    if host.trim().is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port))
+}
+
+fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    if let Some((_, after_auth)) = rest.rsplit_once('@') {
+        return format!("{scheme}://***@{after_auth}");
+    }
+    url.to_string()
 }
 
 fn agent_capabilities_json() -> String {
@@ -930,6 +1175,41 @@ mod tests {
     }
 
     #[test]
+    fn status_config_routes_are_rust_native_without_fallback() {
+        for (path, expected) in [
+            ("/settings/env", "\"file_status\""),
+            ("/memory/vector/chunks", "\"collection_name\""),
+            ("/memory/graph/schema", "\"constraints\""),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("GET", path, ""),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 200, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains(expected), "{path}");
+        }
+    }
+
+    #[test]
+    fn settings_env_status_redacts_secrets_and_does_not_read_env_file() {
+        let response = handle_gateway_request_with_db(
+            &request("GET", "/settings/env", ""),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 200);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("\"key\":\"DATABASE_URL\""));
+        assert!(response.body.contains("\"value\":null"));
+        assert!(response.body.contains("does not read .env contents"));
+        assert!(!response.body.contains("change-me-local-only"));
+    }
+
+    #[test]
     fn rust_native_route_registry_covers_db_read_batch() {
         for expected in [
             ("GET", "/sources"),
@@ -957,8 +1237,11 @@ mod tests {
             ("GET", "/reports/{report_id}"),
             ("GET", "/feedback"),
             ("GET", "/feedback/{feedback_id}"),
+            ("GET", "/memory/graph/schema"),
+            ("GET", "/memory/vector/chunks"),
             ("GET", "/outcomes"),
             ("GET", "/outcomes/{outcome_id}"),
+            ("GET", "/settings/env"),
             ("GET", "/evidence/documents"),
             ("GET", "/evidence/documents/{document_id}"),
             ("GET", "/evidence/items"),
@@ -981,6 +1264,18 @@ mod tests {
         assert_eq!(
             postgres_client_url("postgres://user:pass@postgres:5432/db"),
             "postgres://user:pass@postgres:5432/db"
+        );
+    }
+
+    #[test]
+    fn status_url_helpers_redact_credentials_and_parse_ports() {
+        assert_eq!(
+            redact_url("postgresql://user:secret@postgres:5432/db"),
+            "postgresql://***@postgres:5432/db"
+        );
+        assert_eq!(
+            host_port_from_url("bolt://neo4j:7687"),
+            Some(("neo4j".to_string(), 7687))
         );
     }
 

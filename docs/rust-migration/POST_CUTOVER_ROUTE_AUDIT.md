@@ -14,8 +14,8 @@ Next.js web
 Rust gateway service: api
     |
     +-- Rust-native routes for health, migration status, agent capability,
-    |   agent intent, retrieval preview, evidence answer, and the DIFF-106
-    |   DIFF-106 and DIFF-107 read-only DB route batches
+    |   agent intent, retrieval preview, evidence answer, DIFF-106 and
+    |   DIFF-107 read-only DB routes, and DIFF-108 status/config routes
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -48,6 +48,9 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/health/live` | Rust-native |
 | GET | `/health/ready` | Rust-native |
 | GET | `/rust-migration/status` | Rust-native |
+| GET | `/settings/env` | Rust-native redacted config metadata |
+| GET | `/memory/vector/chunks` | Rust-native read-only status |
+| GET | `/memory/graph/schema` | Rust-native read-only status |
 | GET | `/agent/capabilities` | Rust-native |
 | POST | `/agent/intent` | Rust-native |
 | POST | `/chat/retrieval-preview` | Rust-native contract response |
@@ -93,13 +96,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 |
-| --- | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 |
-| Web-used routes | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 |
+| --- | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 |
+| Web-used routes | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 |
 
 ## Web-Used Route Matrix
 
@@ -128,12 +131,12 @@ Route parity counts:
 | GET | `/evidence/claims` | Page data load | Rust-native DB read |
 | GET | `/feedback` | Page data load | Rust-native DB read |
 | GET | `/outcomes` | Page data load | Rust-native DB read |
-| GET | `/memory/graph/schema` | Page data load | Proxied to FastAPI |
-| GET | `/memory/vector/chunks` | Page data load | Proxied to FastAPI |
+| GET | `/memory/graph/schema` | Page data load | Rust-native read-only status |
+| GET | `/memory/vector/chunks` | Page data load | Rust-native read-only status |
 | POST | `/reports` | Page report create | Proxied to FastAPI |
 | GET | `/reports` | Page data load | Rust-native DB read |
 | POST | `/reports/{report_id}/render` | Page report render | Proxied to FastAPI |
-| GET | `/settings/env` | Next.js proxy and page settings load | Proxied to FastAPI |
+| GET | `/settings/env` | Next.js proxy and page settings load | Rust-native redacted config metadata |
 | POST | `/settings/env/verify` | Next.js proxy and page settings verify | Proxied to FastAPI |
 | POST | `/settings/env/apply` | Next.js proxy and page settings apply | Proxied to FastAPI |
 | GET | `/sources` | Page data load | Rust-native DB read |
@@ -207,11 +210,11 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/improvements` | Proxied to FastAPI |
 | POST | `/improvements` | Proxied to FastAPI |
 | GET | `/improvements/{improvement_item_id}` | Proxied to FastAPI |
-| GET | `/memory/graph/schema` | Proxied to FastAPI |
+| GET | `/memory/graph/schema` | Rust-native read-only status |
 | POST | `/memory/graph/schema/ensure` | Proxied to FastAPI |
 | POST | `/memory/graph/lineage/sync` | Proxied to FastAPI |
 | GET | `/memory/graph/nodes/{node_label}/{node_id}/relationships` | Proxied to FastAPI |
-| GET | `/memory/vector/chunks` | Proxied to FastAPI |
+| GET | `/memory/vector/chunks` | Rust-native read-only status |
 | POST | `/memory/vector/chunks/ensure` | Proxied to FastAPI |
 | POST | `/memory/vector/chunks/upsert` | Proxied to FastAPI |
 | POST | `/memory/vector/chunks/search` | Proxied to FastAPI |
@@ -226,7 +229,7 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | GET | `/retrieval/chunks/{chunk_id}/trail` | Proxied to FastAPI |
 | POST | `/retrieval/chunks/search` | Proxied to FastAPI |
-| GET | `/settings/env` | Proxied to FastAPI |
+| GET | `/settings/env` | Rust-native redacted config metadata |
 | POST | `/settings/env/verify` | Proxied to FastAPI |
 | POST | `/settings/env/apply` | Proxied to FastAPI |
 | GET | `/sources` | Rust-native DB read |
@@ -252,7 +255,9 @@ DIFF-105 adds `scripts/rust-route-parity.py` and runs it from
 and validates that the manifest still marks FastAPI fallback as required while
 parity is incomplete. DIFF-106 extends the guard to count the Rust gateway route
 registry and records the reduced fallback counts. DIFF-107 records the second
-DB read batch and reduces web route fallback dependency again.
+DB read batch and reduces web route fallback dependency again. DIFF-108 adds
+Rust-native read-only settings/env metadata, vector status, and graph status
+routes without reading `.env` contents or mutating Qdrant/Neo4j.
 
 ## Manifest Finding
 
@@ -274,13 +279,14 @@ deliberately retired:
 3. DIFF-107: continue fallback reduction with the next safest web-critical
    read routes: audit events, artifacts, collection runs, feedback, outcomes,
    and analysis list/detail reads.
-4. DIFF-108: continue with the remaining web fallbacks that are not simple
-   PostgreSQL reads: settings/env, vector/graph memory status, writes,
-   approval decisions, report creation/rendering, collection write workflows,
-   and agent action execution.
-5. Later DIFFs: migrate settings/env write/verify, agent action execution,
+4. DIFF-108: migrate Rust-native read-only settings/env metadata,
+   vector-memory status, and graph-memory status without `.env` reads or
+   Qdrant/Neo4j mutation.
+5. DIFF-109: address remaining write/action fallback routes only where
+   approval and audit parity can be explicit and testable.
+6. Later DIFFs: migrate settings/env write/verify, agent action execution,
    source/report/work-item writes, collection writes, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-6. Final retirement DIFF: remove or disable `legacy-api` only after route
+7. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
