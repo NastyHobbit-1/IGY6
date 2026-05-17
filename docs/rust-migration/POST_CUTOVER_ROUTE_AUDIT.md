@@ -1,0 +1,208 @@
+# DIFF-104 Post-Cutover Route Audit
+
+Date: 2026-05-17
+
+## Summary
+
+DIFF-103 completed cutover governance, but the runtime is not Rust-only. The
+current topology is Rust-primary with required FastAPI fallback:
+
+```text
+Next.js web
+    |
+    v
+Rust gateway service: api
+    |
+    +-- Rust-native routes for health, migration status, agent capability,
+    |   agent intent, retrieval preview, and evidence answer
+    |
+    +-- FastAPI fallback service: legacy-api
+        for all unsupported routes
+```
+
+FastAPI is still required. It must not be archived, removed, or disabled until
+route parity proves every active route is served by Rust or deliberately
+retired.
+
+## Runtime Topology
+
+`infra/docker-compose.yml` currently defines:
+
+| Service | Runtime role |
+| --- | --- |
+| `api` | Rust gateway built from `crates/igy6-gateway/Dockerfile`, published on `127.0.0.1:${APP_PORT:-8000}:8000`. |
+| `legacy-api` | FastAPI backend built from `services/api`, not directly published, used by Rust gateway as fallback at `http://legacy-api:8000`. |
+| `web` | Next.js UI with `API_BASE_URL=http://api:8000`; browser-side helpers also call `http://127.0.0.1:8000`. |
+| `worker` and `beat` | Python/Celery execution remains active. |
+
+The web UI calls the Rust gateway endpoint, but many web workflows still depend
+on gateway proxying to `legacy-api`.
+
+## Rust-Native Gateway Routes
+
+These routes are handled directly by `crates/igy6-gateway`:
+
+| Method | Route | Rust status |
+| --- | --- | --- |
+| GET | `/health/live` | Rust-native |
+| GET | `/health/ready` | Rust-native |
+| GET | `/rust-migration/status` | Rust-native |
+| GET | `/agent/capabilities` | Rust-native |
+| POST | `/agent/intent` | Rust-native |
+| POST | `/chat/retrieval-preview` | Rust-native contract response |
+| POST | `/chat/evidence-answer` | Rust-native contract response |
+
+All other routes are forwarded to `legacy-api` when the fallback origin is
+configured.
+
+## Web-Used Route Matrix
+
+| Method | Route | Web usage | Gateway behavior |
+| --- | --- | --- | --- |
+| GET | `/agent/capabilities` | Next.js proxy and page data load | Rust-native |
+| POST | `/agent/intent` | Next.js proxy and page intent preview | Rust-native |
+| POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Proxied to FastAPI |
+| GET | `/approvals` | Next.js proxy and page data load | Proxied to FastAPI |
+| POST | `/approvals` | Next.js proxy and page approval request | Proxied to FastAPI |
+| POST | `/approvals/{approval_id}/decision` | Page approval decision | Proxied to FastAPI |
+| POST | `/chat/retrieval-preview` | Next.js proxy and page chat preview | Rust-native contract response |
+| POST | `/chat/evidence-answer` | Page evidence answer | Rust-native contract response |
+| GET | `/evidence/documents` | Page data load | Proxied to FastAPI |
+| GET | `/evidence/chunks` | Page data load | Proxied to FastAPI |
+| GET | `/evidence/items` | Page data load | Proxied to FastAPI |
+| GET | `/evidence/claims` | Page data load | Proxied to FastAPI |
+| POST | `/reports` | Page report create | Proxied to FastAPI |
+| GET | `/reports` | Page data load | Proxied to FastAPI |
+| POST | `/reports/{report_id}/render` | Page report render | Proxied to FastAPI |
+| GET | `/settings/env` | Next.js proxy and page settings load | Proxied to FastAPI |
+| POST | `/settings/env/verify` | Next.js proxy and page settings verify | Proxied to FastAPI |
+| POST | `/settings/env/apply` | Next.js proxy and page settings apply | Proxied to FastAPI |
+| GET | `/sources` | Page data load | Proxied to FastAPI |
+| POST | `/sources` | Page source create | Proxied to FastAPI |
+| GET | `/work-items` | Page data load | Proxied to FastAPI |
+| POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Proxied to FastAPI |
+
+## FastAPI Route Inventory
+
+FastAPI exposes `/` plus the following APIRouter routes:
+
+| Method | Route | Gateway behavior |
+| --- | --- | --- |
+| GET | `/agent/capabilities` | Rust-native |
+| POST | `/agent/intent` | Rust-native |
+| POST | `/agent/actions/{action_name}/execute` | Proxied to FastAPI |
+| GET | `/analysis/patterns` | Proxied to FastAPI |
+| POST | `/analysis/patterns` | Proxied to FastAPI |
+| POST | `/analysis/patterns/{pattern_id}/review` | Proxied to FastAPI |
+| POST | `/analysis/patterns/detect-baseline` | Proxied to FastAPI |
+| GET | `/analysis/patterns/{pattern_id}` | Proxied to FastAPI |
+| GET | `/analysis/hypotheses` | Proxied to FastAPI |
+| POST | `/analysis/hypotheses` | Proxied to FastAPI |
+| GET | `/analysis/hypotheses/{hypothesis_id}` | Proxied to FastAPI |
+| GET | `/analysis/predictions` | Proxied to FastAPI |
+| POST | `/analysis/predictions` | Proxied to FastAPI |
+| GET | `/analysis/predictions/{prediction_id}` | Proxied to FastAPI |
+| GET | `/analysis/recommendations` | Proxied to FastAPI |
+| POST | `/analysis/recommendations` | Proxied to FastAPI |
+| GET | `/analysis/recommendations/{recommendation_id}` | Proxied to FastAPI |
+| GET | `/approvals` | Proxied to FastAPI |
+| POST | `/approvals` | Proxied to FastAPI |
+| GET | `/approvals/{approval_id}` | Proxied to FastAPI |
+| POST | `/approvals/{approval_id}/decision` | Proxied to FastAPI |
+| GET | `/artifacts` | Proxied to FastAPI |
+| POST | `/artifacts` | Proxied to FastAPI |
+| GET | `/artifacts/{artifact_id}` | Proxied to FastAPI |
+| GET | `/audit-events` | Proxied to FastAPI |
+| GET | `/audit-events/{audit_event_id}` | Proxied to FastAPI |
+| POST | `/chat/retrieval-preview` | Rust-native |
+| POST | `/chat/evidence-answer` | Rust-native |
+| GET | `/collection-runs` | Proxied to FastAPI |
+| POST | `/collection-runs` | Proxied to FastAPI |
+| POST | `/collection-runs/dry-run` | Proxied to FastAPI |
+| POST | `/collection-runs/manual-upload` | Proxied to FastAPI |
+| POST | `/collection-runs/manual-upload/ingest` | Proxied to FastAPI |
+| POST | `/collection-runs/local-project` | Proxied to FastAPI |
+| GET | `/collection-runs/{collection_run_id}` | Proxied to FastAPI |
+| GET | `/evidence/documents` | Proxied to FastAPI |
+| GET | `/evidence/documents/{document_id}` | Proxied to FastAPI |
+| POST | `/evidence/documents` | Proxied to FastAPI |
+| POST | `/evidence/documents/{document_id}/chunks` | Proxied to FastAPI |
+| GET | `/evidence/items` | Proxied to FastAPI |
+| GET | `/evidence/items/{evidence_item_id}` | Proxied to FastAPI |
+| GET | `/evidence/chunks` | Proxied to FastAPI |
+| GET | `/evidence/chunks/{chunk_id}` | Proxied to FastAPI |
+| GET | `/evidence/claims` | Proxied to FastAPI |
+| GET | `/evidence/claims/{claim_id}` | Proxied to FastAPI |
+| POST | `/evidence/items` | Proxied to FastAPI |
+| GET | `/experiments` | Proxied to FastAPI |
+| POST | `/experiments` | Proxied to FastAPI |
+| POST | `/experiments/{experiment_run_id}/status` | Proxied to FastAPI |
+| GET | `/experiments/{experiment_run_id}` | Proxied to FastAPI |
+| GET | `/feedback` | Proxied to FastAPI |
+| POST | `/feedback` | Proxied to FastAPI |
+| GET | `/feedback/{feedback_id}` | Proxied to FastAPI |
+| GET | `/health/live` | Rust-native |
+| GET | `/health/ready` | Rust-native |
+| GET | `/improvements` | Proxied to FastAPI |
+| POST | `/improvements` | Proxied to FastAPI |
+| GET | `/improvements/{improvement_item_id}` | Proxied to FastAPI |
+| GET | `/memory/graph/schema` | Proxied to FastAPI |
+| POST | `/memory/graph/schema/ensure` | Proxied to FastAPI |
+| POST | `/memory/graph/lineage/sync` | Proxied to FastAPI |
+| GET | `/memory/graph/nodes/{node_label}/{node_id}/relationships` | Proxied to FastAPI |
+| GET | `/memory/vector/chunks` | Proxied to FastAPI |
+| POST | `/memory/vector/chunks/ensure` | Proxied to FastAPI |
+| POST | `/memory/vector/chunks/upsert` | Proxied to FastAPI |
+| POST | `/memory/vector/chunks/search` | Proxied to FastAPI |
+| GET | `/outcomes` | Proxied to FastAPI |
+| POST | `/outcomes` | Proxied to FastAPI |
+| GET | `/outcomes/{outcome_id}` | Proxied to FastAPI |
+| GET | `/reports` | Proxied to FastAPI |
+| POST | `/reports` | Proxied to FastAPI |
+| POST | `/reports/{report_id}/status` | Proxied to FastAPI |
+| POST | `/reports/{report_id}/work-item` | Proxied to FastAPI |
+| POST | `/reports/{report_id}/render` | Proxied to FastAPI |
+| GET | `/reports/{report_id}` | Proxied to FastAPI |
+| GET | `/retrieval/chunks/{chunk_id}/trail` | Proxied to FastAPI |
+| POST | `/retrieval/chunks/search` | Proxied to FastAPI |
+| GET | `/settings/env` | Proxied to FastAPI |
+| POST | `/settings/env/verify` | Proxied to FastAPI |
+| POST | `/settings/env/apply` | Proxied to FastAPI |
+| GET | `/sources` | Proxied to FastAPI |
+| POST | `/sources` | Proxied to FastAPI |
+| GET | `/sources/{source_id}` | Proxied to FastAPI |
+| GET | `/sources/{source_id}/permissions` | Proxied to FastAPI |
+| POST | `/sources/{source_id}/permissions` | Proxied to FastAPI |
+| GET | `/work-items` | Proxied to FastAPI |
+| POST | `/work-items` | Proxied to FastAPI |
+| POST | `/work-items/{work_item_id}/dispatch` | Proxied to FastAPI |
+| POST | `/work-items/{work_item_id}/status` | Proxied to FastAPI |
+| GET | `/work-items/{work_item_id}` | Proxied to FastAPI |
+
+## Cutover Script Finding
+
+`scripts/rust-cutover.sh` correctly enforces manifest shape, Rust checks,
+`cutover_ready=true`, and a clean worktree before `--execute`. It does not prove
+route parity and did not claim to do so in code. The DIFF-103 outcome was
+therefore governance-complete, not operationally Rust-complete.
+
+## Manifest Finding
+
+The manifest accurately showed the DIFF-102 gateway phase complete, but it did
+not include an explicit post-cutover route-parity phase or a machine-readable
+statement that FastAPI fallback remains required. DIFF-104 adds that status so
+future cutover checks cannot be read as proof that FastAPI is removable.
+
+## Follow-Up DIFF Plan
+
+FastAPI remains required until these parity batches are implemented or
+deliberately retired:
+
+1. DIFF-105: implement Rust native handling for web-critical metadata routes:
+   sources, approvals, work-items, reports, evidence list reads, settings/env
+   read/verify/apply, and agent action execution.
+2. Later DIFFs: migrate collection runs, artifacts, retrieval hydration,
+   vector/graph memory, analysis, feedback, outcomes, improvements, and
+   experiments.
+3. Final retirement DIFF: remove or disable `legacy-api` only after route
+   parity tests prove no active route depends on it.

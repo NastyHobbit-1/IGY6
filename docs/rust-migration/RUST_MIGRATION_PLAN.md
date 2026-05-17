@@ -70,6 +70,29 @@ must not introduce external model calls, arbitrary shell execution, Docker
 socket access in the API container, browser/router/account automation, or
 system-changing actions without approval.
 
+## Current Post-Cutover Reality
+
+DIFF-103 executed the cutover workflow, but DIFF-104 verified that the runtime
+is not Rust-only. The current operational state is Rust-primary with required
+FastAPI fallback:
+
+```text
+Next.js web UI
+        |
+        v
+Rust gateway service: api
+        |
+        +--> Rust-native health, migration status, agent capability,
+        |    agent intent, retrieval preview, and evidence answer routes
+        |
+        +--> FastAPI service: legacy-api
+             for unsupported routes
+```
+
+FastAPI must remain active until later route-parity DIFFs prove that every
+active route is served by Rust or intentionally retired. See
+`docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`.
+
 ## DIFF-By-DIFF Migration Sequence
 
 The planned sequence is:
@@ -92,7 +115,8 @@ The planned sequence is:
 | `write_api_batch_1` | DIFF-100 | Move sources, approvals, audit, feedback, and outcomes. |
 | `work_queue_reports` | DIFF-101 | Move work items, dispatch, reports, and report rendering. |
 | `rust_gateway` | DIFF-102 | Make Rust the main API gateway; FastAPI becomes fallback. |
-| final cutover | Final DIFF | Run the cutover script and archive deprecated legacy files. |
+| final cutover | DIFF-103 | Run the cutover script with no archive moves because FastAPI fallback remains required. |
+| `route_parity` | DIFF-104 | Audit actual Rust/FastAPI/web route parity and document follow-up implementation work. |
 
 Because DIFF-085 is the migration-control DIFF, the next implementation DIFF
 should normally be the Rust Host Control Bridge unless a later repository state

@@ -21,7 +21,7 @@ Implemented or scaffolded behavior in the current repository:
 | --- | --- |
 | Local stack | Docker Compose starts the web UI, API, PostgreSQL, Redis, Celery worker, Celery beat, Qdrant, Neo4j, MLflow, and Phoenix on localhost-bound ports. |
 | Web UI | Next.js dark AI-console shell with source, evidence, memory, work, approval, report, audit, retrieval preview, Agent Command, and MVP Action Console panels. |
-| API | FastAPI gateway with health, source, approval, collection, artifact, evidence, retrieval, chat, graph, vector, feedback, outcome, report, improvement, experiment, work-item, and audit routes. |
+| API | Rust gateway is the published `api` service. It serves a small Rust-native route set and proxies unsupported routes to the FastAPI `legacy-api` service. FastAPI remains required until route parity is complete. |
 | State and audit | PostgreSQL stores sources, permissions, collection runs, artifacts, normalized documents, chunks, evidence, claims, patterns, hypotheses, predictions, recommendations, work items, approvals, feedback, outcomes, reports, experiments, improvements, and audit events. |
 | Source registry | Sources can be registered with type, location, sensitivity, trust, enabled state, metadata, and optional permission. |
 | Source permissions | Permissions store scope JSON, allowed operations, external model policy, and approval requirement. |
@@ -42,6 +42,14 @@ Implemented or scaffolded behavior in the current repository:
 | Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
 | Settings | The UI can edit the local `.env` through a backend verify-dry-run-before-save workflow with secret masking, backups, atomic writes, and audit events. |
 | Agent command plane | `/agent/capabilities`, `/agent/intent`, and `/agent/actions/{action_name}/execute` provide a deterministic local typed action registry. The web UI can preview intent, execute read-only actions, request approvals, and show runtime blockers honestly. Stack start/stop/recover actions require approval and only execute if the API runtime can actually access Docker CLI, Compose, and Docker control. |
+
+## Rust Cutover Status
+
+The current deployment is Rust-primary, not Rust-only. Docker Compose publishes
+the Rust gateway as `api` on `127.0.0.1:8000` and keeps FastAPI running as the
+internal `legacy-api` fallback. Unsupported gateway routes are proxied to
+FastAPI. Do not remove, disable, or archive `services/api` until route parity is
+proved by a later DIFF.
 
 ## Not Implemented Yet
 
