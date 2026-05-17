@@ -6,5 +6,6 @@ members = [
     "crates/igy6-host-bridge",
     "crates/igy6-cli",
     "crates/igy6-artifacts",
+    "crates/igy6-normalization",
 ]
 resolver = "2"

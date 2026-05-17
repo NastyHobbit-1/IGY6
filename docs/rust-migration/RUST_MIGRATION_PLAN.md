@@ -81,7 +81,7 @@ The planned sequence is:
 | `cli` | DIFF-088, corrected by DIFF-089 | Add `igy6` CLI for health, run, stop, run-last-healthy, config check, and snapshot show. |
 | `config` | DIFF-090 | Add Rust `.env` validation without replacing Python settings until parity. |
 | `artifact_store` | DIFF-091 | Add Rust content-addressed artifact storage bounded by `IGY6_DATA_ROOT`. |
-| `normalization` | Next | Add UTF-8 text normalization in Rust. |
+| `normalization` | DIFF-092 | Add UTF-8 text normalization in Rust. |
 | `chunking` | Next | Add deterministic chunking and evidence-item generation in Rust. |
 | `vector_memory` | Next | Add Qdrant ensure/upsert/search and deterministic vectors in Rust. |
 | `worker` | Next | Add Rust worker MVP for normalization, chunking, and vector upsert. |

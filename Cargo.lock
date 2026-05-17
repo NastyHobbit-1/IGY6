@@ -31,6 +31,10 @@ name = "igy6-host-bridge"
 version = "0.1.0"
 
 [[package]]
+name = "igy6-normalization"
+version = "0.1.0"
+
+[[package]]
 name = "igy6-policy"
 version = "0.1.0"
 dependencies = [
