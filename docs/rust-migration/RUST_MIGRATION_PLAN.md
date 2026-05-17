@@ -117,6 +117,7 @@ The planned sequence is:
 | `rust_gateway` | DIFF-102 | Make Rust the main API gateway; FastAPI becomes fallback. |
 | final cutover | DIFF-103 | Run the cutover script with no archive moves because FastAPI fallback remains required. |
 | `route_parity` | DIFF-104 | Audit actual Rust/FastAPI/web route parity and document follow-up implementation work. |
+| `route_parity_guard` | DIFF-105 | Add an automated route parity guard to `scripts/rust-cutover.sh --check`. |
 
 Because DIFF-085 is the migration-control DIFF, the next implementation DIFF
 should normally be the Rust Host Control Bridge unless a later repository state

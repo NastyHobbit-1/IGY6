@@ -84,7 +84,9 @@ configured.
 
 ## FastAPI Route Inventory
 
-FastAPI exposes `/` plus the following APIRouter routes:
+FastAPI exposes `/` plus the following APIRouter routes. DIFF-105 automated the
+count and found 90 APIRouter routes plus `/`; DIFF-104's manual table remains a
+human-readable inventory of the active route families and gateway behavior.
 
 | Method | Route | Gateway behavior |
 | --- | --- | --- |
@@ -186,6 +188,11 @@ FastAPI exposes `/` plus the following APIRouter routes:
 route parity and did not claim to do so in code. The DIFF-103 outcome was
 therefore governance-complete, not operationally Rust-complete.
 
+DIFF-105 adds `scripts/rust-route-parity.py` and runs it from
+`scripts/rust-cutover.sh --check`. The guard inventories source-defined routes
+and validates that the manifest still marks FastAPI fallback as required while
+parity is incomplete.
+
 ## Manifest Finding
 
 The manifest accurately showed the DIFF-102 gateway phase complete, but it did
@@ -198,11 +205,13 @@ future cutover checks cannot be read as proof that FastAPI is removable.
 FastAPI remains required until these parity batches are implemented or
 deliberately retired:
 
-1. DIFF-105: implement Rust native handling for web-critical metadata routes:
+1. DIFF-105: add an automated route parity guard so fallback dependency cannot
+   become an undocumented manual finding.
+2. DIFF-106: implement Rust native handling for web-critical metadata routes:
    sources, approvals, work-items, reports, evidence list reads, settings/env
    read/verify/apply, and agent action execution.
-2. Later DIFFs: migrate collection runs, artifacts, retrieval hydration,
+3. Later DIFFs: migrate collection runs, artifacts, retrieval hydration,
    vector/graph memory, analysis, feedback, outcomes, improvements, and
    experiments.
-3. Final retirement DIFF: remove or disable `legacy-api` only after route
+4. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.

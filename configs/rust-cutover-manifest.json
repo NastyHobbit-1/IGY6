@@ -5,14 +5,16 @@
   "operational_status": "rust-primary-with-required-fastapi-fallback",
   "fastapi_fallback_required": true,
   "route_parity": {
-    "diff": "DIFF-104",
+    "diff": "DIFF-105",
     "status": "partial",
     "rust_native_routes": 7,
-    "fastapi_router_routes": 82,
+    "fastapi_router_routes": 90,
+    "fastapi_total_routes": 91,
     "fastapi_root_route": true,
     "unsupported_routes_proxy_to_legacy_api": true,
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
-    "next_required_diff": "DIFF-105"
+    "guard_script": "scripts/rust-route-parity.py",
+    "next_required_diff": "DIFF-106"
   },
   "required_phases": [
     "host_bridge",
@@ -323,14 +325,15 @@
     },
     "route_parity": {
       "status": "partial",
-      "diff": "DIFF-104",
+      "diff": "DIFF-105",
       "verification": [
-        "FastAPI route inventory found 82 APIRouter routes plus root route.",
+        "FastAPI route parity guard found 90 APIRouter routes plus root route.",
         "Rust gateway route inventory found 7 Rust-native routes.",
         "apps/web route inventory found active dependencies on proxied FastAPI routes.",
         "infra/docker-compose.yml confirms Rust api service depends on legacy-api fallback.",
         "scripts/rust-cutover.sh validates governance cutover readiness but does not validate full route parity.",
-        "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan."
+        "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan.",
+        "DIFF-105 adds scripts/rust-route-parity.py and runs it from scripts/rust-cutover.sh --check."
       ]
     }
   },

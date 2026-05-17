@@ -159,6 +159,10 @@ run_check() {
 
   validate_manifest
   run_cargo_checks_if_present
+  if [[ -f "${REPO_ROOT}/scripts/rust-route-parity.py" ]]; then
+    info "Running Rust/FastAPI route parity guard..."
+    python3 "${REPO_ROOT}/scripts/rust-route-parity.py" --check
+  fi
 
   local ready
   ready="$(json_value "cutover_ready")"
