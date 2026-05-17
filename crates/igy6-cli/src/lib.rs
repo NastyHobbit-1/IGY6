@@ -1,16 +1,45 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use igy6_policy::{ActionRisk, ApprovalRequirement};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_SCRIPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RUN_SCRIPT: &[&str] = &["scripts/run.sh"];
+const STOP_SCRIPT: &[&str] = &["scripts/stop.sh"];
+const RUN_LAST_HEALTHY_SCRIPT: &[&str] = &["scripts/run-last-healthy-config.sh"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestSummary {
     pub cutover_ready: bool,
     pub phases: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliOutcome {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+struct EnvPair {
+    key: String,
+}
+
+impl CliOutcome {
+    pub fn success(stdout: String) -> Self {
+        Self {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +49,12 @@ pub enum CliError {
     MissingManifest(String),
     InvalidManifest(String),
     UnknownPhase(String),
+    InvalidCommandShape(&'static str),
+    RepoRootNotFound,
+    RepoCheckFailed(Vec<String>),
+    ConfigCheckFailed(Vec<String>),
+    ProcessLaunch(String),
+    ProcessTimeout(String),
 }
 
 impl fmt::Display for CliError {
@@ -34,28 +69,112 @@ impl fmt::Display for CliError {
             }
             Self::InvalidManifest(reason) => write!(formatter, "invalid manifest: {reason}"),
             Self::UnknownPhase(phase) => write!(formatter, "unknown phase: {phase}"),
+            Self::InvalidCommandShape(shape) => write!(formatter, "invalid command shape: {shape}"),
+            Self::RepoRootNotFound => write!(formatter, "could not find IGY6 repository root"),
+            Self::RepoCheckFailed(items) => {
+                write!(formatter, "repo health checks failed: {}", items.join(", "))
+            }
+            Self::ConfigCheckFailed(items) => {
+                write!(formatter, "config checks failed: {}", items.join(", "))
+            }
+            Self::ProcessLaunch(reason) => write!(formatter, "process launch failed: {reason}"),
+            Self::ProcessTimeout(command) => write!(formatter, "process timed out: {command}"),
         }
     }
 }
 
 impl std::error::Error for CliError {}
 
+enum CommandAction {
+    Render(String),
+    RunFixedArgv(&'static [&'static str]),
+}
+
+pub fn execute_cli<I>(args: I) -> Result<CliOutcome, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let repo_root = find_repo_root(&env::current_dir().map_err(|_| CliError::RepoRootNotFound)?)?;
+    let action = plan_cli(args, &repo_root)?;
+    match action {
+        CommandAction::Render(output) => Ok(CliOutcome::success(output)),
+        CommandAction::RunFixedArgv(argv) => {
+            run_fixed_argv(argv, &repo_root, DEFAULT_SCRIPT_TIMEOUT)
+        }
+    }
+}
+
 pub fn run_cli<I>(args: I) -> Result<String, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let outcome = execute_cli(args)?;
+    if outcome.exit_code == 0 {
+        Ok(format!("{}{}", outcome.stdout, outcome.stderr))
+    } else {
+        Err(CliError::ProcessLaunch(format!(
+            "fixed-argv command exited with code {}",
+            outcome.exit_code
+        )))
+    }
+}
+
+fn plan_cli<I>(args: I, repo_root: &Path) -> Result<CommandAction, CliError>
 where
     I: IntoIterator<Item = String>,
 {
     let args: Vec<String> = args.into_iter().collect();
     let Some(command) = args.first().map(String::as_str) else {
-        return Ok(help_text());
+        return Ok(CommandAction::Render(help_text()));
     };
 
     match command {
-        "--help" | "-h" | "help" => Ok(help_text()),
-        "version" => Ok(format!("igy6-cli {VERSION}\n")),
+        "--help" | "-h" | "help" => Ok(CommandAction::Render(help_text())),
+        "version" => Ok(CommandAction::Render(format!("igy6 {VERSION}\n"))),
+        "health" => {
+            require_exact_len(&args, 1, "igy6 health")?;
+            Ok(CommandAction::Render(render_health(repo_root)?))
+        }
+        "run" => {
+            require_exact_len(&args, 1, "igy6 run")?;
+            Ok(CommandAction::RunFixedArgv(RUN_SCRIPT))
+        }
+        "stop" => {
+            require_exact_len(&args, 1, "igy6 stop")?;
+            Ok(CommandAction::RunFixedArgv(STOP_SCRIPT))
+        }
+        "run-last-healthy" => {
+            require_exact_len(&args, 1, "igy6 run-last-healthy")?;
+            Ok(CommandAction::RunFixedArgv(RUN_LAST_HEALTHY_SCRIPT))
+        }
+        "config" => {
+            let subcommand = args
+                .get(1)
+                .ok_or(CliError::MissingArgument("config subcommand"))?;
+            match subcommand.as_str() {
+                "check" => {
+                    require_exact_len(&args, 2, "igy6 config check")?;
+                    Ok(CommandAction::Render(render_config_check(repo_root)?))
+                }
+                other => Err(CliError::UnsupportedCommand(format!("config {other}"))),
+            }
+        }
+        "snapshot" => {
+            let subcommand = args
+                .get(1)
+                .ok_or(CliError::MissingArgument("snapshot subcommand"))?;
+            match subcommand.as_str() {
+                "show" => {
+                    require_exact_len(&args, 2, "igy6 snapshot show")?;
+                    Ok(CommandAction::Render(snapshot_show_placeholder()))
+                }
+                other => Err(CliError::UnsupportedCommand(format!("snapshot {other}"))),
+            }
+        }
         "phases" => {
             let manifest_path = manifest_arg(&args[1..])?;
             let manifest = load_manifest(&manifest_path)?;
-            Ok(render_phases(&manifest))
+            Ok(CommandAction::Render(render_phases(&manifest)))
         }
         "phase-status" => {
             let phase = args
@@ -64,19 +183,22 @@ where
                 .to_string();
             let manifest_path = manifest_arg(&args[2..])?;
             let manifest = load_manifest(&manifest_path)?;
-            render_phase_status(&manifest, &phase)
+            Ok(CommandAction::Render(render_phase_status(
+                &manifest, &phase,
+            )?))
         }
         "validate-manifest" => {
             let path = args
                 .get(1)
                 .ok_or(CliError::MissingArgument("manifest path"))?
                 .to_string();
+            require_exact_len(&args, 2, "igy6 validate-manifest <path>")?;
             let manifest = load_manifest(&path)?;
-            Ok(format!(
+            Ok(CommandAction::Render(format!(
                 "manifest valid\ncutover_ready: {}\nphase_count: {}\n",
                 manifest.cutover_ready,
                 manifest.phases.len()
-            ))
+            )))
         }
         other => Err(CliError::UnsupportedCommand(other.to_string())),
     }
@@ -85,20 +207,238 @@ where
 pub fn help_text() -> String {
     let read_only = ApprovalRequirement::for_action(ActionRisk::ReadOnly);
     format!(
-        "IGY6 local Rust CLI foundation\n\n\
+        "IGY6 local Rust CLI\n\n\
 Usage:\n  \
-igy6-cli --help\n  \
-igy6-cli version\n  \
-igy6-cli phases --manifest <path>\n  \
-igy6-cli phase-status <phase> --manifest <path>\n  \
-igy6-cli validate-manifest <path>\n\n\
+igy6 --help\n  \
+igy6 health\n  \
+igy6 run\n  \
+igy6 stop\n  \
+igy6 run-last-healthy\n  \
+igy6 config check\n  \
+igy6 snapshot show\n  \
+igy6 version\n\n\
+Admin manifest commands:\n  \
+igy6 phases --manifest <path>\n  \
+igy6 phase-status <phase> --manifest <path>\n  \
+igy6 validate-manifest <path>\n\n\
 Safety:\n  \
 local-only: true\n  \
-action_type: read-only\n  \
-approval_required: {}\n  \
+health/config/snapshot: read-only\n  \
+script wrappers: fixed argv only\n  \
+approval_required_for_read_only: {}\n  \
 external_model_calls: false\n",
         read_only.required
     )
+}
+
+pub fn render_health(repo_root: &Path) -> Result<String, CliError> {
+    let required_files = [
+        "AGENTS.md",
+        "Cargo.toml",
+        "infra/docker-compose.yml",
+        "scripts/run.sh",
+        "scripts/stop.sh",
+        "scripts/run-last-healthy-config.sh",
+        "scripts/lib/igy6-ops.sh",
+        "configs/rust-cutover-manifest.json",
+    ];
+    let mut failures = Vec::new();
+    let mut output = String::from("IGY6 local health\n");
+
+    for relative in required_files {
+        let exists = repo_root.join(relative).is_file();
+        output.push_str(&format!(
+            "{}: {}\n",
+            relative,
+            if exists { "ok" } else { "missing" }
+        ));
+        if !exists {
+            failures.push(relative.to_string());
+        }
+    }
+
+    for command in ["cargo", "git"] {
+        let available = command_available(command);
+        output.push_str(&format!(
+            "tool {command}: {}\n",
+            if available { "ok" } else { "missing" }
+        ));
+        if !available {
+            failures.push(format!("tool {command}"));
+        }
+    }
+
+    let docker_available = command_available("docker");
+    output.push_str(&format!(
+        "tool docker: {}\n",
+        if docker_available {
+            "available"
+        } else {
+            "not found; script wrappers will report this if used"
+        }
+    ));
+
+    if failures.is_empty() {
+        output.push_str("status: ok\n");
+        Ok(output)
+    } else {
+        Err(CliError::RepoCheckFailed(failures))
+    }
+}
+
+pub fn render_config_check(repo_root: &Path) -> Result<String, CliError> {
+    let mut failures = Vec::new();
+    let env_example_path = repo_root.join(".env.example");
+    let manifest_path = repo_root.join("configs/rust-cutover-manifest.json");
+    let compose_path = repo_root.join("infra/docker-compose.yml");
+
+    if !env_example_path.is_file() {
+        failures.push(".env.example missing".to_string());
+    }
+    if !manifest_path.is_file() {
+        failures.push("configs/rust-cutover-manifest.json missing".to_string());
+    }
+    if !compose_path.is_file() {
+        failures.push("infra/docker-compose.yml missing".to_string());
+    }
+
+    let mut parsed_keys = BTreeMap::new();
+    if env_example_path.is_file() {
+        let content = fs::read_to_string(&env_example_path)
+            .map_err(|error| CliError::ConfigCheckFailed(vec![error.to_string()]))?;
+        for (line_number, line) in content.lines().enumerate() {
+            if let Some(pair) = parse_repo_visible_env_line(line)
+                .map_err(|error| CliError::ConfigCheckFailed(vec![error.to_string()]))?
+            {
+                parsed_keys.insert(pair.key, line_number + 1);
+            }
+        }
+    }
+
+    let required_keys = [
+        "APP_ENV",
+        "APP_HOST",
+        "APP_PORT",
+        "API_BASE_URL",
+        "WEB_BASE_URL",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "QDRANT_URL",
+        "NEO4J_URI",
+        "MLFLOW_TRACKING_URI",
+        "PHOENIX_COLLECTOR_ENDPOINT",
+        "IGY6_DATA_ROOT",
+        "EXTERNAL_MODEL_POLICY_DEFAULT",
+        "APPROVAL_REQUIRED_DEFAULT",
+    ];
+    for key in required_keys {
+        if !parsed_keys.contains_key(key) {
+            failures.push(format!(".env.example missing key {key}"));
+        }
+    }
+
+    if manifest_path.is_file() {
+        let manifest = load_manifest(&manifest_path.to_string_lossy())?;
+        if !manifest.phases.contains_key("cli") {
+            failures.push("manifest missing cli phase".to_string());
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(format!(
+            "IGY6 config check\n.env.example: ok ({} keys, values redacted)\nmanifest: ok\ncompose file: ok\n.env: not read\nstatus: ok\n",
+            parsed_keys.len()
+        ))
+    } else {
+        Err(CliError::ConfigCheckFailed(failures))
+    }
+}
+
+fn parse_repo_visible_env_line(line: &str) -> Result<Option<EnvPair>, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return Ok(None);
+    }
+    let Some((key, _value)) = trimmed.split_once('=') else {
+        return Err("environment example line must contain '='".to_string());
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("environment example key must not be empty".to_string());
+    }
+    Ok(Some(EnvPair {
+        key: key.to_string(),
+    }))
+}
+
+pub fn snapshot_show_placeholder() -> String {
+    "IGY6 snapshot show\nstatus: not implemented in Rust yet\nbehavior: non-destructive placeholder\nruntime_data_read: false\nnote: existing Bash snapshot behavior remains in scripts/run-last-healthy-config.sh; Rust snapshot reading is deferred to a later DIFF that can safely define IGY6_DATA_ROOT access rules.\n".to_string()
+}
+
+pub fn run_fixed_argv(
+    argv: &'static [&'static str],
+    repo_root: &Path,
+    timeout: Duration,
+) -> Result<CliOutcome, CliError> {
+    if argv.is_empty() {
+        return Err(CliError::InvalidCommandShape(
+            "fixed argv must not be empty",
+        ));
+    }
+
+    let mut child = Command::new(argv[0])
+        .args(&argv[1..])
+        .current_dir(repo_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| CliError::ProcessLaunch(error.to_string()))?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| CliError::ProcessLaunch(error.to_string()))?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| CliError::ProcessLaunch(error.to_string()))?;
+            return Ok(CliOutcome {
+                stdout: redact_sensitive_output(&String::from_utf8_lossy(&output.stdout)),
+                stderr: redact_sensitive_output(&String::from_utf8_lossy(&output.stderr)),
+                exit_code: output.status.code().unwrap_or(1),
+            });
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CliError::ProcessTimeout(argv.join(" ")));
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+pub fn redact_sensitive_output(output: &str) -> String {
+    output
+        .lines()
+        .map(|line| {
+            let lower = line.to_ascii_lowercase();
+            if ["password", "token", "secret", "key=", "database_url"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+            {
+                "[REDACTED sensitive-looking output]".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if output.ends_with('\n') { "\n" } else { "" }
 }
 
 pub fn load_manifest(path: &str) -> Result<ManifestSummary, CliError> {
@@ -153,6 +493,34 @@ pub fn render_phase_status(manifest: &ManifestSummary, phase: &str) -> Result<St
         .get(phase)
         .ok_or_else(|| CliError::UnknownPhase(phase.to_string()))?;
     Ok(format!("{phase}: {status}\n"))
+}
+
+fn require_exact_len(
+    args: &[String],
+    expected: usize,
+    shape: &'static str,
+) -> Result<(), CliError> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(CliError::InvalidCommandShape(shape))
+    }
+}
+
+fn find_repo_root(start: &Path) -> Result<PathBuf, CliError> {
+    for candidate in start.ancestors() {
+        if candidate.join("AGENTS.md").is_file() && candidate.join("Cargo.toml").is_file() {
+            return Ok(candidate.to_path_buf());
+        }
+    }
+    Err(CliError::RepoRootNotFound)
+}
+
+fn command_available(command: &str) -> bool {
+    let Some(path_var) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path_var).any(|directory| directory.join(command).is_file())
 }
 
 fn manifest_arg(args: &[String]) -> Result<String, CliError> {
@@ -273,7 +641,6 @@ fn find_matching(content_after_open: &str, open: char, close: char) -> Option<us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -293,10 +660,63 @@ mod tests {
     fn help_and_version_are_available() {
         assert!(run_cli(["--help".to_string()])
             .expect("help")
-            .contains("IGY6 local Rust CLI foundation"));
+            .contains("igy6 health"));
         assert!(run_cli(["version".to_string()])
             .expect("version")
-            .starts_with("igy6-cli "));
+            .starts_with("igy6 "));
+    }
+
+    #[test]
+    fn required_commands_are_planned() {
+        let repo_root = find_repo_root(&env::current_dir().expect("cwd")).expect("repo");
+        assert!(matches!(
+            plan_cli(["run".to_string()], &repo_root).expect("run"),
+            CommandAction::RunFixedArgv(argv) if argv == RUN_SCRIPT
+        ));
+        assert!(matches!(
+            plan_cli(["stop".to_string()], &repo_root).expect("stop"),
+            CommandAction::RunFixedArgv(argv) if argv == STOP_SCRIPT
+        ));
+        assert!(matches!(
+            plan_cli(["run-last-healthy".to_string()], &repo_root).expect("last healthy"),
+            CommandAction::RunFixedArgv(argv) if argv == RUN_LAST_HEALTHY_SCRIPT
+        ));
+    }
+
+    #[test]
+    fn config_and_snapshot_commands_render_without_private_runtime_reads() {
+        let repo_root = find_repo_root(&env::current_dir().expect("cwd")).expect("repo");
+        let config =
+            plan_cli(["config".to_string(), "check".to_string()], &repo_root).expect("config");
+        assert!(
+            matches!(config, CommandAction::Render(output) if output.contains(".env: not read"))
+        );
+        let snapshot =
+            plan_cli(["snapshot".to_string(), "show".to_string()], &repo_root).expect("snapshot");
+        assert!(
+            matches!(snapshot, CommandAction::Render(output) if output.contains("runtime_data_read: false"))
+        );
+    }
+
+    #[test]
+    fn command_shapes_are_strict() {
+        let repo_root = find_repo_root(&env::current_dir().expect("cwd")).expect("repo");
+        assert!(matches!(
+            plan_cli(["run".to_string(), "--detached".to_string()], &repo_root),
+            Err(CliError::InvalidCommandShape("igy6 run"))
+        ));
+        assert!(matches!(
+            plan_cli(["config".to_string()], &repo_root),
+            Err(CliError::MissingArgument("config subcommand"))
+        ));
+    }
+
+    #[test]
+    fn redacts_sensitive_looking_output() {
+        let redacted = redact_sensitive_output("DATABASE_URL=postgres://x\nnormal line\n");
+        assert!(redacted.contains("[REDACTED sensitive-looking output]"));
+        assert!(redacted.contains("normal line"));
+        assert!(!redacted.contains("postgres://x"));
     }
 
     #[test]
@@ -357,5 +777,15 @@ mod tests {
         .expect("validate");
         fs::remove_file(&path).expect("remove manifest");
         assert!(output.contains("manifest valid"));
+    }
+
+    #[test]
+    fn fixed_argv_rejects_empty_input() {
+        assert!(matches!(
+            run_fixed_argv(&[], Path::new("."), Duration::from_millis(1)),
+            Err(CliError::InvalidCommandShape(
+                "fixed argv must not be empty"
+            ))
+        ));
     }
 }

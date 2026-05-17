@@ -8,5 +8,5 @@ igy6-core = { path = "../igy6-core" }
 igy6-policy = { path = "../igy6-policy" }
 
 [[bin]]
-name = "igy6-cli"
+name = "igy6"
 path = "src/main.rs"
