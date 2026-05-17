@@ -55,6 +55,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/outcomes"),
     ("GET", "/reports"),
     ("GET", "/reports/{report_id}"),
+    ("POST", "/reports"),
     ("GET", "/settings/env"),
     ("GET", "/sources"),
     ("GET", "/sources/{source_id}"),
@@ -225,6 +226,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
+        ("POST", "/reports") => report_create_response(&request.body, database_url),
         ("POST", "/sources") => source_create_response(&request.body, database_url),
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
@@ -565,6 +567,10 @@ fn source_create_response(body: &str, database_url: Option<&str>) -> GatewayResp
     write_route_response(create_source(body, database_url))
 }
 
+fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_report(body, database_url))
+}
+
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_approval_create(body)?;
     let database_url = database_url
@@ -602,6 +608,56 @@ fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, Gat
         .query_one(
             "SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t",
             &[&approval_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_report(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_report_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let report_id = generated_record_id("report");
+
+    transaction
+        .execute(
+            "INSERT INTO reports (id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)",
+            &[
+                &report_id,
+                &payload.title,
+                &payload.report_type,
+                &payload.status,
+                &payload.requested_by_actor_id,
+                &payload.artifact_path,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "report_type": payload.report_type,
+        "status": payload.status
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'report.created', 'recorded', 'report', $2, NULL, $3::jsonb)",
+            &[&payload.requested_by_actor_id, &report_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t",
+            &[&report_id],
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -1001,6 +1057,15 @@ struct SourcePermissionCreatePayload {
     created_by_actor_id: String,
 }
 
+struct ReportCreatePayload {
+    title: String,
+    report_type: String,
+    status: String,
+    requested_by_actor_id: String,
+    artifact_path: Option<String>,
+    metadata_json: Value,
+}
+
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
@@ -1180,6 +1245,36 @@ fn parse_source_permission_create(
     })
 }
 
+fn parse_report_create(body: &str) -> Result<ReportCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Report request body")?;
+    let title = required_string_field(&object, "title", 255)?;
+    let report_type = required_string_field(&object, "report_type", 64)?;
+    if !is_report_type(&report_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown report type: {report_type}"
+        )));
+    }
+    let status = optional_string_field_with_max(&object, "status", "requested", 64)?;
+    if !is_report_status(&status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown report status: {status}"
+        )));
+    }
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let artifact_path = optional_nullable_string_field(&object, "artifact_path")?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+
+    Ok(ReportCreatePayload {
+        title,
+        report_type,
+        status,
+        requested_by_actor_id,
+        artifact_path,
+        metadata_json,
+    })
+}
+
 fn parse_json_object(
     body: &str,
     description: &str,
@@ -1343,6 +1438,20 @@ fn is_sensitivity_label(value: &str) -> bool {
 
 fn is_external_model_policy(value: &str) -> bool {
     matches!(value, "blocked" | "metadata_only" | "allowed_with_approval")
+}
+
+fn is_report_type(value: &str) -> bool {
+    matches!(
+        value,
+        "summary" | "evidence_review" | "decision_note" | "handoff" | "experiment_summary"
+    )
+}
+
+fn is_report_status(value: &str) -> bool {
+    matches!(
+        value,
+        "placeholder" | "requested" | "draft" | "ready" | "archived"
+    )
 }
 
 fn is_feedback_target_type(value: &str) -> bool {
@@ -1538,7 +1647,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /reports and report detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /analysis patterns/hypotheses/predictions/recommendations and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -2250,6 +2359,45 @@ mod tests {
     }
 
     #[test]
+    fn report_create_is_rust_native_and_requires_database_url() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/reports",
+                r#"{"title":"MVP report","report_type":"summary","status":"requested","metadata_json":{"scope":"local"}}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn report_create_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"title":"","report_type":"summary"}"#,
+            r#"{"title":"x","report_type":"daily_brief"}"#,
+            r#"{"title":"x","report_type":"summary","status":"published"}"#,
+            r#"{"title":"x","report_type":"summary","requested_by_actor_id":""}"#,
+            r#"{"title":"x","report_type":"summary","artifact_path":[]}"#,
+            r#"{"title":"x","report_type":"summary","metadata_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/reports", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
     fn source_create_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -2345,6 +2493,7 @@ mod tests {
             ("GET", "/work-items/{work_item_id}"),
             ("GET", "/reports"),
             ("GET", "/reports/{report_id}"),
+            ("POST", "/reports"),
             ("GET", "/feedback"),
             ("GET", "/feedback/{feedback_id}"),
             ("POST", "/feedback"),
