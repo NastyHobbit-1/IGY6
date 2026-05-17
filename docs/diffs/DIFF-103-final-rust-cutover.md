@@ -1,6 +1,6 @@
 # DIFF-103: Final Rust Cutover
 
-Status: Active
+Status: Locked
 
 ## Type
 
@@ -79,6 +79,14 @@ Commit messages and final summaries must include `DIFF-103`.
 - Runtime/private data, `.env`, governance files, FastAPI fallback, and worker
   files are not archived.
 - DIFF-103 is locked after verification.
+
+## Completion Notes
+
+- `scripts/rust-cutover.sh --execute` completed successfully from a clean
+  worktree.
+- The manifest archive plan had no move or create actions.
+- FastAPI remains active as `legacy-api` fallback because unsupported routes
+  still depend on it.
 
 ## Out Of Scope Follow-Up
 
