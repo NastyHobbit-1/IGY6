@@ -84,7 +84,7 @@ The planned sequence is:
 | `normalization` | DIFF-092 | Add UTF-8 text normalization in Rust. |
 | `chunking` | DIFF-093 | Add deterministic chunking and evidence-item generation in Rust. |
 | `vector_memory` | DIFF-094 | Add Qdrant request planning, upsert/search payloads, and deterministic vectors in Rust. |
-| `worker` | Next | Add Rust worker MVP for normalization, chunking, and vector upsert. |
+| `worker` | DIFF-095 | Add Rust worker MVP for normalization, chunking, and vector-upsert planning. |
 | `read_only_api` | Next | Add Rust read-only API sidecar while FastAPI remains primary. |
 | `agent_api` | Next | Move typed agent command-plane logic into Rust after parity. |
 | `retrieval_preview` | Next | Move retrieval preview to Rust while preserving `answer_status: not_generated`. |

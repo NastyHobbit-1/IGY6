@@ -1,0 +1,9 @@
+[package]
+name = "igy6-worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-chunking = { path = "../igy6-chunking" }
+igy6-normalization = { path = "../igy6-normalization" }
+igy6-vector-memory = { path = "../igy6-vector-memory" }
