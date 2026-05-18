@@ -72,6 +72,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/sources"),
     ("GET", "/work-items"),
     ("GET", "/work-items/{work_item_id}"),
+    ("POST", "/work-items"),
+    ("POST", "/work-items/"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,6 +250,9 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
         ("POST", "/reports") => report_create_response(&request.body, database_url),
         ("POST", "/sources") => source_create_response(&request.body, database_url),
+        ("POST", "/work-items") | ("POST", "/work-items/") => {
+            work_item_create_response(&request.body, database_url)
+        }
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
         }
@@ -603,6 +608,10 @@ fn source_create_response(body: &str, database_url: Option<&str>) -> GatewayResp
 
 fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_report(body, database_url))
+}
+
+fn work_item_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_work_item(body, database_url))
 }
 
 fn pattern_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -1007,6 +1016,55 @@ fn create_report(body: &str, database_url: Option<&str>) -> Result<String, Gatew
         .query_one(
             "SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t",
             &[&report_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_work_item(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_work_item_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let work_item_id = generated_record_id("work");
+    let mut payload_json = payload.payload_json;
+    payload_json["intent_verification"] = payload.intent.clone();
+
+    transaction
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, $2, 'pending_intent_verification', $3, $4::jsonb, NULL)",
+            &[
+                &work_item_id,
+                &payload.work_type,
+                &payload.requested_by_actor_id,
+                &payload_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "work_type": payload.work_type,
+        "status": "pending_intent_verification"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'intent_verification_required', 'work_item', $2, NULL, $3::jsonb)",
+            &[&payload.requested_by_actor_id, &work_item_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items WHERE id = $1) t",
+            &[&work_item_id],
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -1615,6 +1673,13 @@ struct ReportCreatePayload {
     metadata_json: Value,
 }
 
+struct WorkItemCreatePayload {
+    work_type: String,
+    requested_by_actor_id: String,
+    intent: Value,
+    payload_json: Value,
+}
+
 struct PatternCreatePayload {
     pattern_type: String,
     summary: String,
@@ -1919,6 +1984,59 @@ fn parse_report_create(body: &str) -> Result<ReportCreatePayload, GatewayError> 
         artifact_path,
         metadata_json,
     })
+}
+
+fn parse_work_item_create(body: &str) -> Result<WorkItemCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Work item request body")?;
+    let work_type = required_string_field(&object, "work_type", 64)?;
+    if !is_supported_work_item_type(&work_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported work item type: {work_type}"
+        )));
+    }
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let intent = match object.get("intent") {
+        Some(Value::Object(intent)) => validate_work_item_intent(intent)?,
+        Some(_) => {
+            return Err(GatewayError::Validation(
+                "intent must be a JSON object.".to_string(),
+            ))
+        }
+        None => return Err(GatewayError::Validation("intent is required.".to_string())),
+    };
+    let payload_json = optional_object_field(&object, "payload_json")?;
+
+    Ok(WorkItemCreatePayload {
+        work_type,
+        requested_by_actor_id,
+        intent,
+        payload_json,
+    })
+}
+
+fn validate_work_item_intent(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Value, GatewayError> {
+    let original_request = required_text_field(object, "original_request")?;
+    let interpretation = required_text_field(object, "interpretation")?;
+    let proposed_work_type = required_text_field(object, "proposed_work_type")?;
+    let expected_output = required_text_field(object, "expected_output")?;
+    let safety_requirements = optional_string_array_field(object, "safety_requirements")?;
+    let assumptions = optional_string_array_field(object, "assumptions")?;
+    let missing_information = optional_string_array_field(object, "missing_information")?;
+    let sources_likely_used = optional_string_array_field(object, "sources_likely_used")?;
+
+    Ok(serde_json::json!({
+        "original_request": original_request,
+        "interpretation": interpretation,
+        "proposed_work_type": proposed_work_type,
+        "expected_output": expected_output,
+        "safety_requirements": safety_requirements,
+        "assumptions": assumptions,
+        "missing_information": missing_information,
+        "sources_likely_used": sources_likely_used
+    }))
 }
 
 fn parse_pattern_create(body: &str) -> Result<PatternCreatePayload, GatewayError> {
@@ -3390,6 +3508,16 @@ fn is_report_status(value: &str) -> bool {
     )
 }
 
+fn is_supported_work_item_type(value: &str) -> bool {
+    matches!(
+        value,
+        "collection_normalization"
+            | "document_chunking"
+            | "chunk_vector_upsert"
+            | "report_generation"
+    )
+}
+
 fn is_feedback_target_type(value: &str) -> bool {
     matches!(
         value,
@@ -3583,7 +3711,7 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -4441,6 +4569,60 @@ mod tests {
     }
 
     #[test]
+    fn work_item_create_is_rust_native_creation_only_and_requires_database_url() {
+        let response = handle_gateway_request_with_db(
+            &request("POST", "/work-items/", &valid_work_item_create_body()),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+
+        let parsed = parse_work_item_create(&valid_work_item_create_body()).expect("work item");
+        assert_eq!(parsed.work_type, "document_chunking");
+        assert_eq!(parsed.requested_by_actor_id, "local-owner");
+        assert_eq!(parsed.intent["proposed_work_type"], "document_chunking");
+        assert_eq!(parsed.payload_json["document_ids"][0], "doc-1");
+    }
+
+    #[test]
+    fn work_item_create_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"work_type":"","intent":{}}"#,
+            r#"{"work_type":"shell_command","intent":{"original_request":"x","interpretation":"x","proposed_work_type":"shell_command","expected_output":"x"}}"#,
+            r#"{"work_type":"document_chunking","requested_by_actor_id":"","intent":{"original_request":"x","interpretation":"x","proposed_work_type":"document_chunking","expected_output":"x"}}"#,
+            r#"{"work_type":"document_chunking","payload_json":[],"intent":{"original_request":"x","interpretation":"x","proposed_work_type":"document_chunking","expected_output":"x"}}"#,
+            r#"{"work_type":"document_chunking","intent":[]}"#,
+            r#"{"work_type":"document_chunking","intent":{"original_request":"","interpretation":"x","proposed_work_type":"document_chunking","expected_output":"x"}}"#,
+            r#"{"work_type":"document_chunking","intent":{"original_request":"x","interpretation":"x","proposed_work_type":"","expected_output":"x"}}"#,
+            r#"{"work_type":"document_chunking","intent":{"original_request":"x","interpretation":"x","proposed_work_type":"document_chunking","expected_output":"x","safety_requirements":[""]}}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/work-items/", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn work_item_created_audit_shape_is_deterministic() {
+        let payload = parse_work_item_create(&valid_work_item_create_body()).expect("payload");
+        let details = serde_json::json!({
+            "work_type": payload.work_type,
+            "status": "pending_intent_verification"
+        });
+        assert_eq!(details["work_type"], "document_chunking");
+        assert_eq!(details["status"], "pending_intent_verification");
+    }
+
+    #[test]
     fn report_create_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -4812,6 +4994,8 @@ mod tests {
             ("GET", "/evidence/chunks/{chunk_id}"),
             ("GET", "/evidence/claims"),
             ("GET", "/evidence/claims/{claim_id}"),
+            ("POST", "/work-items"),
+            ("POST", "/work-items/"),
         ] {
             assert!(RUST_NATIVE_ROUTES.contains(&expected), "{expected:?}");
         }
@@ -4962,5 +5146,27 @@ mod tests {
                 "true".to_string(),
             ),
         ])
+    }
+
+    fn valid_work_item_create_body() -> String {
+        serde_json::json!({
+            "work_type": "document_chunking",
+            "requested_by_actor_id": "local-owner",
+            "intent": {
+                "original_request": "Chunk selected documents.",
+                "interpretation": "Create a local document chunking work item without dispatching it.",
+                "proposed_work_type": "document_chunking",
+                "expected_output": "Queued chunking work item after explicit intent verification.",
+                "safety_requirements": ["No dispatch in DIFF-116"],
+                "assumptions": ["Documents already exist"],
+                "missing_information": [],
+                "sources_likely_used": ["local_project"]
+            },
+            "payload_json": {
+                "document_ids": ["doc-1"],
+                "chunk_size": 1000
+            }
+        })
+        .to_string()
     }
 }

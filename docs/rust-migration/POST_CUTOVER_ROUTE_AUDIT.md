@@ -18,8 +18,9 @@ Rust gateway service: api
     |   DIFF-107 read-only DB routes, DIFF-108 status/config routes,
     |   DIFF-109 approval request creation, DIFF-110 feedback/outcome
     |   writes, DIFF-111 source creation, DIFF-112 report creation, and
-    |   DIFF-113 analysis pattern writes, and DIFF-114 collection dry-run
-    |   previews, and DIFF-115 settings verify/apply
+    |   DIFF-113 analysis pattern writes, DIFF-114 collection dry-run
+    |   previews, DIFF-115 settings verify/apply, and DIFF-116 work-item
+    |   creation
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -104,19 +105,21 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/sources` | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Rust-native DB read |
 | GET | `/work-items/{work_item_id}` | Rust-native DB read |
+| POST | `/work-items` | Rust-native DB write with intent verification and audit event |
+| POST | `/work-items/` | Rust-native DB write with intent verification and audit event |
 
 All other routes are forwarded to `legacy-api` when the fallback origin is
 configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 |
 
 ## Web-Used Route Matrix
 
@@ -159,6 +162,7 @@ Route parity counts:
 | GET | `/sources` | Page data load | Rust-native DB read |
 | POST | `/sources` | Page source create | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Page data load | Rust-native DB read |
+| POST | `/work-items/` | Page work item creation | Rust-native DB write with intent verification and audit event |
 | POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Proxied to FastAPI |
 
 ## FastAPI Route Inventory
@@ -255,7 +259,7 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/sources/{source_id}/permissions` | Rust-native DB read |
 | POST | `/sources/{source_id}/permissions` | Proxied to FastAPI |
 | GET | `/work-items` | Rust-native DB read |
-| POST | `/work-items` | Proxied to FastAPI |
+| POST | `/work-items` | Rust-native DB write with intent verification and audit event |
 | POST | `/work-items/{work_item_id}/dispatch` | Proxied to FastAPI |
 | POST | `/work-items/{work_item_id}/status` | Proxied to FastAPI |
 | GET | `/work-items/{work_item_id}` | Rust-native DB read |
@@ -293,6 +297,11 @@ secret redaction, candidate-hash token compatibility, safe `.env` backup/write
 constraints, and `settings.env.updated` audit events. Rust intentionally does
 not execute Docker Compose from HTTP request handlers; Compose validation
 remains an operator verification step.
+DIFF-116 adds Rust-native work-item creation with intent verification context
+validation, supported-type validation, deterministic
+`pending_intent_verification` status, and `work_item.created` audit events. It
+does not dispatch work, execute agents, migrate manual upload, or change
+work-item status routes.
 
 ## Manifest Finding
 
@@ -331,10 +340,12 @@ deliberately retired:
    source/permission validation and audit parity.
 11. DIFF-115: migrate settings env verify/apply with safe redaction, token, and
    audit parity.
-12. DIFF-116: continue with the remaining write/action fallback routes only
+12. DIFF-116: migrate work-item creation with intent verification and
+   `work_item.created` audit parity, without dispatching work.
+13. DIFF-117: continue with the remaining write/action fallback routes only
    where approval, audit, and response-shape parity can be explicit and
    testable.
-13. Later DIFFs: migrate agent action execution, report render/work-item
+14. Later DIFFs: migrate agent action execution, report render/work-item
    writes, collection writes, retrieval hydration, vector/graph memory,
    analysis, feedback, outcomes, improvements, and experiments.
 14. Final retirement DIFF: remove or disable `legacy-api` only after route
