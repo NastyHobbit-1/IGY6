@@ -19,7 +19,7 @@ Rust gateway service: api
     |   DIFF-109 approval request creation, DIFF-110 feedback/outcome
     |   writes, DIFF-111 source creation, DIFF-112 report creation, and
     |   DIFF-113 analysis pattern writes, and DIFF-114 collection dry-run
-    |   previews
+    |   previews, and DIFF-115 settings verify/apply
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -53,6 +53,8 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/health/ready` | Rust-native |
 | GET | `/rust-migration/status` | Rust-native |
 | GET | `/settings/env` | Rust-native redacted config metadata |
+| POST | `/settings/env/verify` | Rust-native settings validation with redaction and token generation |
+| POST | `/settings/env/apply` | Rust-native settings apply with safe `.env` backup/write and audit event |
 | GET | `/memory/vector/chunks` | Rust-native read-only status |
 | GET | `/memory/graph/schema` | Rust-native read-only status |
 | GET | `/agent/capabilities` | Rust-native |
@@ -108,13 +110,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 |
 
 ## Web-Used Route Matrix
 
@@ -152,8 +154,8 @@ Route parity counts:
 | GET | `/reports` | Page data load | Rust-native DB read |
 | POST | `/reports/{report_id}/render` | Page report render | Proxied to FastAPI |
 | GET | `/settings/env` | Next.js proxy and page settings load | Rust-native redacted config metadata |
-| POST | `/settings/env/verify` | Next.js proxy and page settings verify | Proxied to FastAPI |
-| POST | `/settings/env/apply` | Next.js proxy and page settings apply | Proxied to FastAPI |
+| POST | `/settings/env/verify` | Next.js proxy and page settings verify | Rust-native settings validation with redaction and token generation |
+| POST | `/settings/env/apply` | Next.js proxy and page settings apply | Rust-native settings apply with safe `.env` backup/write and audit event |
 | GET | `/sources` | Page data load | Rust-native DB read |
 | POST | `/sources` | Page source create | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Page data load | Rust-native DB read |
@@ -245,8 +247,8 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/retrieval/chunks/{chunk_id}/trail` | Proxied to FastAPI |
 | POST | `/retrieval/chunks/search` | Proxied to FastAPI |
 | GET | `/settings/env` | Rust-native redacted config metadata |
-| POST | `/settings/env/verify` | Proxied to FastAPI |
-| POST | `/settings/env/apply` | Proxied to FastAPI |
+| POST | `/settings/env/verify` | Rust-native settings validation with redaction and token generation |
+| POST | `/settings/env/apply` | Rust-native settings apply with safe `.env` backup/write and audit event |
 | GET | `/sources` | Rust-native DB read |
 | POST | `/sources` | Rust-native DB write with optional permission and audit event |
 | GET | `/sources/{source_id}` | Rust-native DB read |
@@ -286,6 +288,11 @@ detector-key suppression, and `analysis.pattern.created` audit events.
 DIFF-114 adds Rust-native collection dry-run preview creation with
 source/permission validation, scaffold connector preview parity, and
 `collection_run.created` plus `collection_run.dry_run_preview` audit events.
+DIFF-115 adds Rust-native settings verify/apply with allowlisted validation,
+secret redaction, candidate-hash token compatibility, safe `.env` backup/write
+constraints, and `settings.env.updated` audit events. Rust intentionally does
+not execute Docker Compose from HTTP request handlers; Compose validation
+remains an operator verification step.
 
 ## Manifest Finding
 
@@ -322,12 +329,13 @@ deliberately retired:
    explicit evidence validation and `analysis.pattern.created` audit parity.
 10. DIFF-114: migrate collection dry-run preview creation with explicit
    source/permission validation and audit parity.
-11. DIFF-115: continue with the remaining write/action fallback routes only
+11. DIFF-115: migrate settings env verify/apply with safe redaction, token, and
+   audit parity.
+12. DIFF-116: continue with the remaining write/action fallback routes only
    where approval, audit, and response-shape parity can be explicit and
    testable.
-12. Later DIFFs: migrate settings/env write/verify, agent action execution,
-   report render/work-item writes, collection writes, retrieval hydration,
-   vector/graph memory, analysis, feedback, outcomes, improvements, and
-   experiments.
-13. Final retirement DIFF: remove or disable `legacy-api` only after route
+13. Later DIFFs: migrate agent action execution, report render/work-item
+   writes, collection writes, retrieval hydration, vector/graph memory,
+   analysis, feedback, outcomes, improvements, and experiments.
+14. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.

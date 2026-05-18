@@ -10,3 +10,4 @@ igy6-read-only-api = { path = "../igy6-read-only-api" }
 igy6-retrieval-preview = { path = "../igy6-retrieval-preview" }
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 serde_json = "1"
+sha2 = "0.11"

@@ -293,6 +293,7 @@ dependencies = [
  "igy6-retrieval-preview",
  "postgres",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

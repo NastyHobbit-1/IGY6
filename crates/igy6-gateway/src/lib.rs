@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
+use std::fs;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY};
@@ -10,6 +12,7 @@ use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
 use postgres::{Client, NoTls};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
@@ -61,6 +64,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/reports/{report_id}"),
     ("POST", "/reports"),
     ("GET", "/settings/env"),
+    ("POST", "/settings/env/apply"),
+    ("POST", "/settings/env/verify"),
     ("GET", "/sources"),
     ("GET", "/sources/{source_id}"),
     ("GET", "/sources/{source_id}/permissions"),
@@ -246,6 +251,8 @@ pub fn handle_gateway_request_with_db(
         ("GET", "/settings/env") => {
             json_response(200, "OK", settings_env_status_json(), false)
         }
+        ("POST", "/settings/env/verify") => settings_env_verify_response(&request.body),
+        ("POST", "/settings/env/apply") => settings_env_apply_response(&request.body, database_url),
         ("GET", "/memory/vector/chunks") => {
             json_response(200, "OK", vector_collection_status_json(), false)
         }
@@ -610,6 +617,49 @@ fn collection_dry_run_response(body: &str, database_url: Option<&str>) -> Gatewa
     write_route_response(create_collection_dry_run(body, database_url))
 }
 
+fn settings_env_verify_response(body: &str) -> GatewayResponse {
+    match verify_settings_env(body) {
+        Ok(response_body) => json_response(200, "OK", response_body, false),
+        Err(GatewayError::Validation(message)) => json_response(
+            422,
+            "Unprocessable Entity",
+            validation_body_json(&message),
+            false,
+        ),
+        Err(error) => json_response(
+            409,
+            "Conflict",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
+}
+
+fn settings_env_apply_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    match apply_settings_env(body, database_url) {
+        Ok(response_body) => json_response(200, "OK", response_body, false),
+        Err(GatewayError::Validation(message)) => json_response(
+            422,
+            "Unprocessable Entity",
+            validation_body_json(&message),
+            false,
+        ),
+        Err(GatewayError::Conflict(message)) => json_response(409, "Conflict", message, false),
+        Err(GatewayError::MissingDatabaseUrl) => json_response(
+            503,
+            "Service Unavailable",
+            "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(error) => json_response(
+            502,
+            "Bad Gateway",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
+}
+
 fn create_approval(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_approval_create(body)?;
     let database_url = database_url
@@ -835,6 +885,85 @@ fn create_collection_dry_run(
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn verify_settings_env(body: &str) -> Result<String, GatewayError> {
+    let payload = parse_settings_candidate(body, false)?;
+    let config = settings_env_config();
+    let parsed = read_current_settings_env(&config)?;
+    let (candidate, unmanaged, changed_keys) =
+        build_settings_candidate(&config, &parsed, &payload.values)?;
+    let validation = validate_settings_candidate(&candidate, &unmanaged, &changed_keys);
+    Ok(settings_verify_response_json(&candidate, &validation))
+}
+
+fn apply_settings_env(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_settings_candidate(body, true)?;
+    let config = settings_env_config();
+    let parsed = read_current_settings_env(&config)?;
+    let (candidate, unmanaged, changed_keys) =
+        build_settings_candidate(&config, &parsed, &payload.values)?;
+    let validation = validate_settings_candidate(&candidate, &unmanaged, &changed_keys);
+    if !validation.errors.is_empty() {
+        return Err(GatewayError::Conflict(format!(
+            "{{\"detail\":{{\"message\":\"Verified candidate no longer passes validation.\",\"errors\":{}}}}}",
+            validation_issues_json(&validation.errors)
+        )));
+    }
+    if payload.verification_token.as_deref() != Some(validation.candidate_hash.as_str()) {
+        return Err(GatewayError::Conflict(
+            "{\"detail\":\"Submitted settings do not match the passing dry-run verification token.\"}"
+                .to_string(),
+        ));
+    }
+    if !settings_env_paths_are_safe(&config.env_file_path, &config.backup_dir) {
+        return Err(GatewayError::Conflict(
+            "{\"detail\":\"Configured .env path is not safe.\"}".to_string(),
+        ));
+    }
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let backup_path = create_settings_env_backup(&config.env_file_path, &config.backup_dir)?;
+    atomic_write_settings_env(
+        &config.env_file_path,
+        &render_settings_env_content(&candidate, &unmanaged),
+    )?;
+    let audit_details = serde_json::json!({
+        "changed_keys": changed_keys,
+        "backup_path": backup_path.to_string_lossy(),
+        "restart_required": validation.restart_required,
+        "warning_count": validation.warnings.len(),
+        "error_count": validation.errors.len(),
+        "candidate_hash": validation.candidate_hash,
+        "secret_values_recorded": false
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'settings.env.updated', 'saved', 'settings_env', 'local-env', $2, $3::jsonb)",
+            &[&payload.actor_id, &validation.candidate_hash, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    let current = settings_env_response_from_values(&candidate, &unmanaged, &config, &parsed);
+    Ok(format!(
+        "{{\"saved\":true,\"backup_path\":\"{}\",\"changed_keys\":{},\"restart_required\":{},\"restart_notes\":{},\"warnings\":{},\"current\":{}}}",
+        escape_json(&backup_path.to_string_lossy()),
+        json_owned_string_array(&validation.changed_keys),
+        validation.restart_required,
+        json_owned_string_array(&validation.restart_notes),
+        validation_issues_json(&validation.warnings),
+        current
+    ))
 }
 
 fn create_report(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -1537,6 +1666,52 @@ struct CollectionDryRunConnectorResult {
     metadata: Value,
 }
 
+struct SettingsCandidatePayload {
+    values: HashMap<String, String>,
+    actor_id: String,
+    verification_token: Option<String>,
+}
+
+struct SettingsEnvConfig {
+    env_file_path: PathBuf,
+    backup_dir: PathBuf,
+    igy6_data_root: String,
+}
+
+struct ParsedSettingsEnv {
+    values: HashMap<String, String>,
+    unmanaged_order: Vec<String>,
+}
+
+#[derive(Clone)]
+struct SettingsValidationIssue {
+    key: Option<String>,
+    message: String,
+}
+
+struct SettingsValidation {
+    errors: Vec<SettingsValidationIssue>,
+    warnings: Vec<SettingsValidationIssue>,
+    changed_keys: Vec<String>,
+    restart_required: bool,
+    restart_notes: Vec<String>,
+    candidate_hash: String,
+    compose_validation: Value,
+}
+
+#[derive(Clone, Copy)]
+struct SettingDefinition {
+    key: &'static str,
+    group: &'static str,
+    description: &'static str,
+}
+
+type SettingsCandidateBuild = (
+    HashMap<String, String>,
+    HashMap<String, String>,
+    Vec<String>,
+);
+
 fn parse_approval_create(body: &str) -> Result<ApprovalCreatePayload, GatewayError> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| GatewayError::Validation("Request body must be valid JSON.".to_string()))?;
@@ -1790,6 +1965,1028 @@ fn parse_collection_dry_run(body: &str) -> Result<CollectionDryRunPayload, Gatew
         requested_by_actor_id,
         notes,
     })
+}
+
+const MASKED_VALUE: &str = "********";
+const DEFAULT_IGY6_DATA_ROOT: &str = "../IGY6_Data";
+const SAFE_ENV_FILE_PATH: &str = "/workspace/project/.env";
+const SAFE_BACKUP_ROOT: &str = "/workspace/storage";
+const SETTING_GROUPS: &[(&str, &str)] = &[
+    ("app", "App / Web"),
+    ("postgres", "PostgreSQL"),
+    ("redis", "Redis / Celery"),
+    ("qdrant", "Qdrant"),
+    ("neo4j", "Neo4j"),
+    ("mlflow", "MLflow"),
+    ("phoenix", "Phoenix"),
+    ("storage", "Storage"),
+    ("policy", "Policy / Safety"),
+];
+const SETTING_DEFINITIONS: &[SettingDefinition] = &[
+    SettingDefinition { key: "APP_ENV", group: "app", description: "Local application environment label." },
+    SettingDefinition { key: "APP_HOST", group: "app", description: "API bind host used by local configuration." },
+    SettingDefinition { key: "APP_PORT", group: "app", description: "Published local API port." },
+    SettingDefinition { key: "API_BASE_URL", group: "app", description: "Browser-facing API base URL." },
+    SettingDefinition { key: "WEB_BASE_URL", group: "app", description: "Browser-facing web UI base URL." },
+    SettingDefinition { key: "POSTGRES_HOST", group: "postgres", description: "PostgreSQL service hostname." },
+    SettingDefinition { key: "POSTGRES_PORT", group: "postgres", description: "Published local PostgreSQL port." },
+    SettingDefinition { key: "POSTGRES_DB", group: "postgres", description: "PostgreSQL database name." },
+    SettingDefinition { key: "POSTGRES_USER", group: "postgres", description: "PostgreSQL username." },
+    SettingDefinition { key: "POSTGRES_PASSWORD", group: "postgres", description: "PostgreSQL password." },
+    SettingDefinition { key: "DATABASE_URL", group: "postgres", description: "SQLAlchemy PostgreSQL connection URL." },
+    SettingDefinition { key: "REDIS_HOST", group: "redis", description: "Redis service hostname." },
+    SettingDefinition { key: "REDIS_PORT", group: "redis", description: "Published local Redis port." },
+    SettingDefinition { key: "REDIS_URL", group: "redis", description: "Redis URL used by API health checks." },
+    SettingDefinition { key: "CELERY_BROKER_URL", group: "redis", description: "Celery broker Redis URL." },
+    SettingDefinition { key: "CELERY_RESULT_BACKEND", group: "redis", description: "Celery result backend Redis URL." },
+    SettingDefinition { key: "QDRANT_HOST", group: "qdrant", description: "Qdrant service hostname." },
+    SettingDefinition { key: "QDRANT_PORT", group: "qdrant", description: "Published local Qdrant port." },
+    SettingDefinition { key: "QDRANT_URL", group: "qdrant", description: "Qdrant API URL used by API and worker." },
+    SettingDefinition { key: "QDRANT_CHUNK_COLLECTION", group: "qdrant", description: "Qdrant collection for chunk vectors." },
+    SettingDefinition { key: "QDRANT_CHUNK_VECTOR_SIZE", group: "qdrant", description: "Deterministic chunk vector size." },
+    SettingDefinition { key: "NEO4J_HOST", group: "neo4j", description: "Neo4j service hostname." },
+    SettingDefinition { key: "NEO4J_HTTP_PORT", group: "neo4j", description: "Published local Neo4j browser port." },
+    SettingDefinition { key: "NEO4J_BOLT_PORT", group: "neo4j", description: "Published local Neo4j Bolt port." },
+    SettingDefinition { key: "NEO4J_USER", group: "neo4j", description: "Neo4j username." },
+    SettingDefinition { key: "NEO4J_PASSWORD", group: "neo4j", description: "Neo4j password." },
+    SettingDefinition { key: "NEO4J_URI", group: "neo4j", description: "Neo4j Bolt URI used by the API." },
+    SettingDefinition { key: "MLFLOW_TRACKING_URI", group: "mlflow", description: "Reserved local MLflow tracking URI." },
+    SettingDefinition { key: "MLFLOW_ARTIFACT_ROOT", group: "mlflow", description: "Reserved MLflow artifact root inside the service." },
+    SettingDefinition { key: "PHOENIX_HOST", group: "phoenix", description: "Phoenix service hostname." },
+    SettingDefinition { key: "PHOENIX_PORT", group: "phoenix", description: "Published local Phoenix port." },
+    SettingDefinition { key: "PHOENIX_COLLECTOR_ENDPOINT", group: "phoenix", description: "Reserved local Phoenix endpoint." },
+    SettingDefinition { key: "ARTIFACT_STORE_PATH", group: "storage", description: "Container path for content-addressed artifacts." },
+    SettingDefinition { key: "EXPORT_STORE_PATH", group: "storage", description: "Container path for report/export output." },
+    SettingDefinition { key: "ENV_FILE_PATH", group: "storage", description: "Controlled container path to the mounted local .env file." },
+    SettingDefinition { key: "ENV_BACKUP_DIR", group: "storage", description: "Controlled backup directory for .env backups." },
+    SettingDefinition { key: "IGY6_DATA_ROOT", group: "storage", description: "Host-side folder where IGY6 stores database, vector, graph, artifact, report, backup, MLflow, and Phoenix runtime data." },
+    SettingDefinition { key: "EXTERNAL_MODEL_POLICY_DEFAULT", group: "policy", description: "Default external model policy." },
+    SettingDefinition { key: "SINGLE_USER_MODE", group: "policy", description: "Local single-user mode toggle." },
+    SettingDefinition { key: "AUDIT_LOG_LEVEL", group: "policy", description: "Audit logging verbosity label." },
+    SettingDefinition { key: "APPROVAL_REQUIRED_DEFAULT", group: "policy", description: "Default approval-required toggle." },
+];
+
+fn parse_settings_candidate(
+    body: &str,
+    require_token: bool,
+) -> Result<SettingsCandidatePayload, GatewayError> {
+    let object = parse_json_object(body, "Settings request body")?;
+    let values = match object.get("values") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(Value::Object(values)) => {
+            let mut result = HashMap::new();
+            for (key, value) in values {
+                let Some(value) = value.as_str() else {
+                    return Err(GatewayError::Validation(format!(
+                        "{{\"detail\":\"values.{key} must be a string.\"}}"
+                    )));
+                };
+                result.insert(key.to_string(), value.to_string());
+            }
+            result
+        }
+        Some(_) => {
+            return Err(GatewayError::Validation(
+                "{\"detail\":\"values must be a JSON object.\"}".to_string(),
+            ))
+        }
+    };
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    let verification_token = match object.get("verification_token") {
+        None | Some(Value::Null) if require_token => {
+            return Err(GatewayError::Validation(
+                "{\"detail\":\"verification_token is required.\"}".to_string(),
+            ))
+        }
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if !value.trim().is_empty() => Some(value.trim().to_string()),
+        Some(Value::String(_)) => {
+            return Err(GatewayError::Validation(
+                "{\"detail\":\"verification_token must not be empty.\"}".to_string(),
+            ))
+        }
+        Some(_) => {
+            return Err(GatewayError::Validation(
+                "{\"detail\":\"verification_token must be a string.\"}".to_string(),
+            ))
+        }
+    };
+    Ok(SettingsCandidatePayload {
+        values,
+        actor_id,
+        verification_token,
+    })
+}
+
+fn settings_env_config() -> SettingsEnvConfig {
+    SettingsEnvConfig {
+        env_file_path: PathBuf::from(
+            env::var("ENV_FILE_PATH").unwrap_or_else(|_| SAFE_ENV_FILE_PATH.to_string()),
+        ),
+        backup_dir: PathBuf::from(
+            env::var("ENV_BACKUP_DIR")
+                .unwrap_or_else(|_| "/workspace/storage/env_backups".to_string()),
+        ),
+        igy6_data_root: env::var("IGY6_DATA_ROOT")
+            .unwrap_or_else(|_| DEFAULT_IGY6_DATA_ROOT.to_string()),
+    }
+}
+
+fn read_current_settings_env(
+    config: &SettingsEnvConfig,
+) -> Result<ParsedSettingsEnv, GatewayError> {
+    if !config.env_file_path.exists() {
+        return Ok(ParsedSettingsEnv {
+            values: HashMap::new(),
+            unmanaged_order: Vec::new(),
+        });
+    }
+    let content = fs::read_to_string(&config.env_file_path)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(parse_settings_env_content(&content))
+}
+
+fn parse_settings_env_content(content: &str) -> ParsedSettingsEnv {
+    let mut values = HashMap::new();
+    let mut unmanaged_order = Vec::new();
+    for line in content.lines() {
+        let stripped = line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') || !line.contains('=') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut parsed_value = value.trim().to_string();
+        if parsed_value.len() >= 2 {
+            let first = parsed_value.as_bytes()[0] as char;
+            let last = parsed_value.as_bytes()[parsed_value.len() - 1] as char;
+            if first == last && matches!(first, '\'' | '"') {
+                parsed_value = parsed_value[1..parsed_value.len() - 1].to_string();
+            }
+        }
+        values.insert(key.to_string(), parsed_value);
+        if !setting_key_allowed(key) && !unmanaged_order.iter().any(|existing| existing == key) {
+            unmanaged_order.push(key.to_string());
+        }
+    }
+    ParsedSettingsEnv {
+        values,
+        unmanaged_order,
+    }
+}
+
+fn build_settings_candidate(
+    config: &SettingsEnvConfig,
+    parsed: &ParsedSettingsEnv,
+    requested_values: &HashMap<String, String>,
+) -> Result<SettingsCandidateBuild, GatewayError> {
+    let mut unknown_changes = requested_values
+        .keys()
+        .filter(|key| !setting_key_allowed(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    unknown_changes.sort();
+    if !unknown_changes.is_empty() {
+        return Err(GatewayError::Validation(format!(
+            "{{\"detail\":{{\"message\":\"Unknown settings keys are read-only unmanaged keys.\",\"keys\":{}}}}}",
+            json_owned_string_array(&unknown_changes)
+        )));
+    }
+    let mut read_only_changes = requested_values
+        .keys()
+        .filter(|key| setting_read_only(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    read_only_changes.sort();
+    if !read_only_changes.is_empty() {
+        return Err(GatewayError::Validation(format!(
+            "{{\"detail\":{{\"message\":\"Read-only settings cannot be changed.\",\"keys\":{}}}}}",
+            json_owned_string_array(&read_only_changes)
+        )));
+    }
+
+    let base = settings_base_values(config, parsed);
+    let unmanaged = settings_unmanaged_values(parsed);
+    let mut candidate = HashMap::new();
+    for definition in SETTING_DEFINITIONS {
+        candidate.insert(
+            definition.key.to_string(),
+            base.get(definition.key).cloned().unwrap_or_default(),
+        );
+    }
+    for (key, value) in requested_values {
+        candidate.insert(key.clone(), value.clone());
+    }
+    let mut changed_keys = candidate
+        .iter()
+        .filter_map(|(key, value)| {
+            if value != base.get(key).unwrap_or(&String::new()) {
+                Some(key.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    changed_keys.sort();
+    Ok((candidate, unmanaged, changed_keys))
+}
+
+fn settings_base_values(
+    config: &SettingsEnvConfig,
+    parsed: &ParsedSettingsEnv,
+) -> HashMap<String, String> {
+    let mut values = parsed
+        .values
+        .iter()
+        .filter(|(key, _)| setting_key_allowed(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<HashMap<_, _>>();
+    values
+        .entry("ENV_FILE_PATH".to_string())
+        .or_insert_with(|| config.env_file_path.to_string_lossy().to_string());
+    values
+        .entry("ENV_BACKUP_DIR".to_string())
+        .or_insert_with(|| config.backup_dir.to_string_lossy().to_string());
+    values
+        .entry("IGY6_DATA_ROOT".to_string())
+        .or_insert_with(|| config.igy6_data_root.clone());
+    values
+}
+
+fn settings_unmanaged_values(parsed: &ParsedSettingsEnv) -> HashMap<String, String> {
+    parsed
+        .unmanaged_order
+        .iter()
+        .filter_map(|key| {
+            parsed
+                .values
+                .get(key)
+                .map(|value| (key.clone(), value.clone()))
+        })
+        .collect()
+}
+
+fn validate_settings_candidate(
+    candidate: &HashMap<String, String>,
+    unmanaged: &HashMap<String, String>,
+    changed_keys: &[String],
+) -> SettingsValidation {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for definition in SETTING_DEFINITIONS {
+        if !setting_read_only(definition.key)
+            && candidate.get(definition.key).is_none_or(String::is_empty)
+        {
+            errors.push(settings_issue(
+                Some(definition.key),
+                "Required setting is missing.",
+            ));
+        }
+    }
+    for key in SETTINGS_PORT_KEYS {
+        match candidate
+            .get(*key)
+            .and_then(|value| value.parse::<u16>().ok())
+        {
+            Some(port) if port > 0 => {}
+            _ => errors.push(settings_issue(
+                Some(key),
+                "Port must be between 1 and 65535.",
+            )),
+        }
+    }
+    for key in SETTINGS_BOOLEAN_KEYS {
+        if !is_settings_bool(candidate.get(*key).map_or("", String::as_str)) {
+            errors.push(settings_issue(Some(key), "Boolean must be true or false."));
+        }
+    }
+    for key in SETTINGS_URL_KEYS {
+        let value = candidate.get(*key).map_or("", String::as_str);
+        if !value.is_empty() && !settings_url_plausible(key, value) {
+            errors.push(settings_issue(
+                Some(key),
+                "URL or URI is not syntactically plausible.",
+            ));
+        }
+    }
+    validate_settings_url_agreement(
+        candidate,
+        "DATABASE_URL",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        Some("POSTGRES_USER"),
+        Some("POSTGRES_PASSWORD"),
+        Some("POSTGRES_DB"),
+        &mut errors,
+    );
+    validate_settings_url_agreement(
+        candidate,
+        "NEO4J_URI",
+        "NEO4J_HOST",
+        "NEO4J_BOLT_PORT",
+        None,
+        None,
+        None,
+        &mut errors,
+    );
+    validate_settings_url_agreement(
+        candidate,
+        "QDRANT_URL",
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        None,
+        None,
+        None,
+        &mut errors,
+    );
+
+    for key in SETTINGS_STORAGE_KEYS {
+        let value = candidate.get(*key).map_or("", String::as_str);
+        if !value.is_empty() && !settings_storage_path_safe(value) {
+            errors.push(settings_issue(
+                Some(key),
+                "Storage path must be absolute and must not contain traversal.",
+            ));
+        }
+    }
+    if let Some(issue) = settings_host_data_root_issue(
+        candidate
+            .get("IGY6_DATA_ROOT")
+            .map_or("", std::string::String::as_str),
+    ) {
+        errors.push(settings_issue(Some("IGY6_DATA_ROOT"), issue));
+    }
+    let env_path = Path::new(candidate.get("ENV_FILE_PATH").map_or("", String::as_str));
+    let backup_dir = Path::new(candidate.get("ENV_BACKUP_DIR").map_or("", String::as_str));
+    if !settings_env_paths_are_safe(env_path, backup_dir) {
+        errors.push(settings_issue(
+            Some("ENV_FILE_PATH"),
+            "Settings editor can only target /workspace/project/.env with backups under /workspace/storage.",
+        ));
+    }
+    if !matches!(
+        candidate
+            .get("EXTERNAL_MODEL_POLICY_DEFAULT")
+            .map_or("", String::as_str),
+        "blocked" | "metadata_only" | "allowed_with_approval"
+    ) {
+        errors.push(settings_issue(
+            Some("EXTERNAL_MODEL_POLICY_DEFAULT"),
+            "External model policy must be blocked, metadata_only, or allowed_with_approval.",
+        ));
+    }
+    if !matches!(
+        candidate
+            .get("AUDIT_LOG_LEVEL")
+            .map_or("", String::as_str)
+            .to_ascii_lowercase()
+            .as_str(),
+        "debug" | "info" | "warning" | "error"
+    ) {
+        errors.push(settings_issue(
+            Some("AUDIT_LOG_LEVEL"),
+            "Audit log level must be debug, info, warning, or error.",
+        ));
+    }
+    match candidate
+        .get("QDRANT_CHUNK_VECTOR_SIZE")
+        .and_then(|value| value.parse::<i64>().ok())
+    {
+        Some(value) if value > 0 => {
+            if changed_keys
+                .iter()
+                .any(|key| key == "QDRANT_CHUNK_VECTOR_SIZE")
+            {
+                warnings.push(settings_issue(
+                    Some("QDRANT_CHUNK_VECTOR_SIZE"),
+                    "Changing vector size can require rebuilding vector storage.",
+                ));
+            }
+        }
+        _ => errors.push(settings_issue(
+            Some("QDRANT_CHUNK_VECTOR_SIZE"),
+            "Vector size must be a positive integer.",
+        )),
+    }
+
+    let restart_changed = changed_keys
+        .iter()
+        .filter(|key| {
+            SETTINGS_RESTART_KEYS
+                .iter()
+                .any(|restart| restart == &key.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let restart_required = !restart_changed.is_empty();
+    let mut restart_notes = vec![
+        "Saved settings are written to .env only; running containers do not receive them until restart or recreate.".to_string(),
+    ];
+    if restart_required {
+        restart_notes.push(format!(
+            "Changed keys likely requiring Docker stack restart/recreate: {}",
+            restart_changed.join(", ")
+        ));
+        add_restart_warnings(&restart_changed, &mut warnings);
+    }
+    if changed_keys.iter().any(|key| key == "IGY6_DATA_ROOT") {
+        warnings.push(settings_issue(
+            Some("IGY6_DATA_ROOT"),
+            "Changing IGY6_DATA_ROOT requires Docker stack restart/recreate and does not migrate existing data.",
+        ));
+        warnings.push(settings_issue(
+            Some("IGY6_DATA_ROOT"),
+            "The target data folder must already exist or be creatable by Docker.",
+        ));
+    }
+    warnings.push(settings_issue(
+        None,
+        "Rust gateway does not execute Docker Compose from HTTP request handlers; run docker compose config during verification.",
+    ));
+    let compose_validation = serde_json::json!({
+        "available": false,
+        "passed": Value::Null,
+        "message": "Rust gateway does not execute Docker Compose from HTTP request handlers; run docker compose config during verification."
+    });
+    let candidate_hash = settings_candidate_hash(candidate, unmanaged);
+    SettingsValidation {
+        errors,
+        warnings,
+        changed_keys: changed_keys.to_vec(),
+        restart_required,
+        restart_notes,
+        candidate_hash,
+        compose_validation,
+    }
+}
+
+const SETTINGS_READ_ONLY_KEYS: &[&str] = &["ENV_FILE_PATH", "ENV_BACKUP_DIR"];
+const SETTINGS_SECRET_KEYS: &[&str] = &["POSTGRES_PASSWORD", "DATABASE_URL", "NEO4J_PASSWORD"];
+const SETTINGS_BOOLEAN_KEYS: &[&str] = &["SINGLE_USER_MODE", "APPROVAL_REQUIRED_DEFAULT"];
+const SETTINGS_PORT_KEYS: &[&str] = &[
+    "APP_PORT",
+    "POSTGRES_PORT",
+    "REDIS_PORT",
+    "QDRANT_PORT",
+    "NEO4J_HTTP_PORT",
+    "NEO4J_BOLT_PORT",
+    "PHOENIX_PORT",
+];
+const SETTINGS_URL_KEYS: &[&str] = &[
+    "API_BASE_URL",
+    "WEB_BASE_URL",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "CELERY_BROKER_URL",
+    "CELERY_RESULT_BACKEND",
+    "QDRANT_URL",
+    "NEO4J_URI",
+    "MLFLOW_TRACKING_URI",
+    "PHOENIX_COLLECTOR_ENDPOINT",
+];
+const SETTINGS_STORAGE_KEYS: &[&str] = &[
+    "ARTIFACT_STORE_PATH",
+    "EXPORT_STORE_PATH",
+    "ENV_FILE_PATH",
+    "ENV_BACKUP_DIR",
+];
+const SETTINGS_RESTART_KEYS: &[&str] = &[
+    "APP_ENV",
+    "APP_HOST",
+    "APP_PORT",
+    "API_BASE_URL",
+    "WEB_BASE_URL",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DB",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "DATABASE_URL",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_URL",
+    "CELERY_BROKER_URL",
+    "CELERY_RESULT_BACKEND",
+    "QDRANT_HOST",
+    "QDRANT_PORT",
+    "QDRANT_URL",
+    "QDRANT_CHUNK_COLLECTION",
+    "QDRANT_CHUNK_VECTOR_SIZE",
+    "NEO4J_HOST",
+    "NEO4J_HTTP_PORT",
+    "NEO4J_BOLT_PORT",
+    "NEO4J_USER",
+    "NEO4J_PASSWORD",
+    "NEO4J_URI",
+    "MLFLOW_TRACKING_URI",
+    "MLFLOW_ARTIFACT_ROOT",
+    "PHOENIX_HOST",
+    "PHOENIX_PORT",
+    "PHOENIX_COLLECTOR_ENDPOINT",
+    "ARTIFACT_STORE_PATH",
+    "EXPORT_STORE_PATH",
+    "EXTERNAL_MODEL_POLICY_DEFAULT",
+    "SINGLE_USER_MODE",
+    "AUDIT_LOG_LEVEL",
+    "APPROVAL_REQUIRED_DEFAULT",
+    "ENV_FILE_PATH",
+    "ENV_BACKUP_DIR",
+    "IGY6_DATA_ROOT",
+];
+
+fn setting_key_allowed(key: &str) -> bool {
+    SETTING_DEFINITIONS
+        .iter()
+        .any(|definition| definition.key == key)
+}
+
+fn setting_read_only(key: &str) -> bool {
+    SETTINGS_READ_ONLY_KEYS
+        .iter()
+        .any(|candidate| candidate == &key)
+}
+
+fn settings_secret_key(key: &str) -> bool {
+    if SETTINGS_SECRET_KEYS
+        .iter()
+        .any(|candidate| candidate == &key)
+    {
+        return true;
+    }
+    let upper = key.to_ascii_uppercase();
+    if upper.contains("PASSWORD") || upper.contains("TOKEN") || upper.contains("SECRET") {
+        return true;
+    }
+    upper.contains("KEY") && upper != "QDRANT_CHUNK_COLLECTION"
+}
+
+fn settings_issue(key: Option<&str>, message: &str) -> SettingsValidationIssue {
+    SettingsValidationIssue {
+        key: key.map(std::string::ToString::to_string),
+        message: message.to_string(),
+    }
+}
+
+fn is_settings_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on" | "false" | "0" | "no" | "off"
+    )
+}
+
+fn settings_storage_path_safe(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn settings_env_paths_are_safe(env_path: &Path, backup_dir: &Path) -> bool {
+    env_path == Path::new(SAFE_ENV_FILE_PATH) && backup_dir.starts_with(SAFE_BACKUP_ROOT)
+}
+
+fn settings_host_data_root_issue(value: &str) -> Option<&'static str> {
+    let stripped = value.trim();
+    if stripped.is_empty() {
+        return Some("IGY6_DATA_ROOT must not be empty.");
+    }
+    let normalized = stripped.replace('\\', "/");
+    if normalized == DEFAULT_IGY6_DATA_ROOT {
+        return None;
+    }
+    if matches!(normalized.as_str(), "/" | "~") {
+        return Some("IGY6_DATA_ROOT must point to a dedicated folder, not a filesystem root.");
+    }
+    let windows_drive_root =
+        normalized.len() == 3 && normalized.as_bytes()[1] == b':' && normalized.ends_with('/');
+    if windows_drive_root {
+        return Some("IGY6_DATA_ROOT must not be a drive root such as C:/ or D:/.");
+    }
+    if stripped.contains('\\') {
+        return Some("Use forward slashes in IGY6_DATA_ROOT, for example D:/Projects/IGY6_Data.");
+    }
+    let windows_absolute =
+        normalized.len() > 3 && normalized.as_bytes()[1] == b':' && &normalized[2..3] == "/";
+    let linux_absolute = normalized.starts_with('/');
+    if !windows_absolute && !linux_absolute && normalized != DEFAULT_IGY6_DATA_ROOT {
+        return Some("Use ../IGY6_Data or an absolute path such as D:/Projects/IGY6_Data or /home/user/IGY6_Data.");
+    }
+    let parts = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.iter().any(|part| part == &"..") {
+        return Some(
+            "IGY6_DATA_ROOT must not contain path traversal, except for the default ../IGY6_Data.",
+        );
+    }
+    None
+}
+
+#[derive(Default)]
+struct ParsedSettingsUrl {
+    scheme: String,
+    username: Option<String>,
+    password: Option<String>,
+    hostname: Option<String>,
+    port: Option<u16>,
+    path: String,
+}
+
+fn parse_settings_url(value: &str) -> ParsedSettingsUrl {
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return ParsedSettingsUrl::default();
+    };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let (userinfo, hostport) = authority
+        .rsplit_once('@')
+        .map_or((None, authority), |(user, host)| (Some(user), host));
+    let (username, password) = userinfo.map_or((None, None), |user| {
+        let (name, pass) = user.split_once(':').unwrap_or((user, ""));
+        (
+            Some(name.to_string()),
+            if pass.is_empty() {
+                None
+            } else {
+                Some(pass.to_string())
+            },
+        )
+    });
+    let (host, port) = hostport
+        .rsplit_once(':')
+        .map_or((hostport, None), |(host, port)| {
+            (host, port.parse::<u16>().ok())
+        });
+    ParsedSettingsUrl {
+        scheme: scheme.to_string(),
+        username,
+        password,
+        hostname: if host.is_empty() {
+            None
+        } else {
+            Some(host.to_string())
+        },
+        port,
+        path: path.to_string(),
+    }
+}
+
+fn settings_url_plausible(key: &str, value: &str) -> bool {
+    let parsed = parse_settings_url(value);
+    match key {
+        "NEO4J_URI" => {
+            matches!(parsed.scheme.as_str(), "bolt" | "neo4j") && parsed.hostname.is_some()
+        }
+        "DATABASE_URL" => {
+            parsed.scheme.starts_with("postgresql")
+                && parsed.hostname.is_some()
+                && !parsed.path.trim_matches('/').is_empty()
+        }
+        "REDIS_URL" | "CELERY_BROKER_URL" | "CELERY_RESULT_BACKEND" => {
+            parsed.scheme == "redis" && parsed.hostname.is_some()
+        }
+        _ => matches!(parsed.scheme.as_str(), "http" | "https") && parsed.hostname.is_some(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_settings_url_agreement(
+    values: &HashMap<String, String>,
+    url_key: &str,
+    host_key: &str,
+    port_key: &str,
+    user_key: Option<&str>,
+    password_key: Option<&str>,
+    database_key: Option<&str>,
+    errors: &mut Vec<SettingsValidationIssue>,
+) {
+    let raw_url = values.get(url_key).map_or("", String::as_str);
+    if raw_url.is_empty() {
+        return;
+    }
+    let parsed = parse_settings_url(raw_url);
+    if let Some(hostname) = parsed.hostname {
+        if hostname != values.get(host_key).map_or("", String::as_str) {
+            errors.push(settings_issue(
+                Some(url_key),
+                &format!("{url_key} host must match {host_key}."),
+            ));
+        }
+    }
+    if let Some(port) = parsed.port {
+        if port.to_string() != values.get(port_key).map_or("", String::as_str) {
+            errors.push(settings_issue(
+                Some(url_key),
+                &format!("{url_key} port must match {port_key}."),
+            ));
+        }
+    }
+    if let Some(user_key) = user_key {
+        if let Some(username) = parsed.username {
+            if username != values.get(user_key).map_or("", String::as_str) {
+                errors.push(settings_issue(
+                    Some(url_key),
+                    &format!("{url_key} username must match {user_key}."),
+                ));
+            }
+        }
+    }
+    if let Some(password_key) = password_key {
+        if let Some(password) = parsed.password {
+            if password != values.get(password_key).map_or("", String::as_str) {
+                errors.push(settings_issue(
+                    Some(url_key),
+                    &format!("{url_key} password must match {password_key}."),
+                ));
+            }
+        }
+    }
+    if let Some(database_key) = database_key {
+        if parsed.path.trim_matches('/') != values.get(database_key).map_or("", String::as_str) {
+            errors.push(settings_issue(
+                Some(url_key),
+                &format!("{url_key} database name must match {database_key}."),
+            ));
+        }
+    }
+}
+
+fn add_restart_warnings(restart_changed: &[String], warnings: &mut Vec<SettingsValidationIssue>) {
+    for key in restart_changed {
+        let message = if matches!(
+            key.as_str(),
+            "DATABASE_URL"
+                | "POSTGRES_HOST"
+                | "POSTGRES_PORT"
+                | "POSTGRES_DB"
+                | "POSTGRES_USER"
+                | "POSTGRES_PASSWORD"
+        ) {
+            "Database changes may require stack recreate and migration checks."
+        } else if key.starts_with("REDIS") || key.starts_with("CELERY") {
+            "Redis/Celery changes may require API, worker, and beat restart."
+        } else if key.starts_with("QDRANT") {
+            "Qdrant changes may require vector collection review."
+        } else if key.starts_with("NEO4J") {
+            "Neo4j changes may require graph connectivity review."
+        } else if key.starts_with("MLFLOW") || key.starts_with("PHOENIX") {
+            "Reserved service changes may require stack restart."
+        } else if SETTINGS_STORAGE_KEYS
+            .iter()
+            .any(|storage_key| storage_key == &key.as_str())
+        {
+            "Storage path changes may require mounted volume review."
+        } else if key == "IGY6_DATA_ROOT" {
+            "Host data-root changes may require moving data manually while the stack is stopped."
+        } else {
+            continue;
+        };
+        warnings.push(settings_issue(Some(key), message));
+    }
+}
+
+fn settings_verify_response_json(
+    candidate: &HashMap<String, String>,
+    validation: &SettingsValidation,
+) -> String {
+    let token = if validation.errors.is_empty() {
+        Some(validation.candidate_hash.as_str())
+    } else {
+        None
+    };
+    format!(
+        "{{\"passed\":{},\"errors\":{},\"warnings\":{},\"normalized_candidate\":{},\"changed_keys\":{},\"restart_required\":{},\"restart_notes\":{},\"verification_token\":{},\"candidate_hash\":{},\"expires_at\":null,\"compose_validation\":{}}}",
+        validation.errors.is_empty(),
+        validation_issues_json(&validation.errors),
+        validation_issues_json(&validation.warnings),
+        sanitize_settings_json(candidate, "candidate"),
+        json_owned_string_array(&validation.changed_keys),
+        validation.restart_required,
+        json_owned_string_array(&validation.restart_notes),
+        option_string_json(token),
+        option_string_json(token),
+        validation.compose_validation
+    )
+}
+
+fn settings_env_response_from_values(
+    values: &HashMap<String, String>,
+    unmanaged: &HashMap<String, String>,
+    config: &SettingsEnvConfig,
+    parsed: &ParsedSettingsEnv,
+) -> String {
+    let groups = SETTING_GROUPS
+        .iter()
+        .map(|(key, label)| {
+            format!(
+                "{{\"key\":\"{}\",\"label\":\"{}\"}}",
+                escape_json(key),
+                escape_json(label)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let unmanaged_json = parsed
+        .unmanaged_order
+        .iter()
+        .filter_map(|key| unmanaged.get(key).map(|value| (key, value)))
+        .map(|(key, value)| {
+            let secret = settings_secret_key(key);
+            let masked = if secret && !value.is_empty() {
+                MASKED_VALUE
+            } else {
+                value
+            };
+            format!(
+                "{{\"key\":\"{}\",\"masked_value\":\"{}\",\"has_value\":{},\"secret\":{},\"read_only\":true}}",
+                escape_json(key),
+                escape_json(masked),
+                !value.is_empty(),
+                secret
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let warnings = if parsed.unmanaged_order.is_empty() {
+        "[]".to_string()
+    } else {
+        "[\"Unknown .env keys are preserved as read-only unmanaged settings.\"]".to_string()
+    };
+    format!(
+        "{{\"file_status\":{{\"path\":\"{}\",\"backup_dir\":\"{}\",\"exists\":{},\"writable\":{},\"unknown_key_count\":{},\"output_format\":\"normalized_env\"}},\"groups\":[{}],\"settings\":{},\"unmanaged\":[{}],\"warnings\":{}}}",
+        escape_json(&config.env_file_path.to_string_lossy()),
+        escape_json(&config.backup_dir.to_string_lossy()),
+        config.env_file_path.exists(),
+        settings_path_writable(&config.env_file_path),
+        parsed.unmanaged_order.len(),
+        groups,
+        sanitize_settings_json(values, "env"),
+        unmanaged_json,
+        warnings
+    )
+}
+
+fn sanitize_settings_json(values: &HashMap<String, String>, source: &str) -> String {
+    let items = SETTING_DEFINITIONS
+        .iter()
+        .map(|definition| {
+            let value = values.get(definition.key).map(String::as_str);
+            let secret = settings_secret_key(definition.key);
+            let has_value = value.is_some_and(|value| !value.is_empty());
+            let value_json = if secret {
+                "null".to_string()
+            } else {
+                option_string_json(value)
+            };
+            let masked_value = if secret && has_value {
+                MASKED_VALUE
+            } else {
+                ""
+            };
+            format!(
+                "{{\"key\":\"{}\",\"group\":\"{}\",\"group_label\":\"{}\",\"description\":\"{}\",\"value\":{},\"masked_value\":\"{}\",\"has_value\":{},\"secret\":{},\"read_only\":{},\"restart_required\":{},\"source\":\"{}\"}}",
+                escape_json(definition.key),
+                escape_json(definition.group),
+                escape_json(settings_group_label(definition.group)),
+                escape_json(definition.description),
+                value_json,
+                escape_json(masked_value),
+                has_value,
+                secret,
+                setting_read_only(definition.key),
+                SETTINGS_RESTART_KEYS.iter().any(|key| key == &definition.key),
+                escape_json(source)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
+}
+
+fn validation_issues_json(issues: &[SettingsValidationIssue]) -> String {
+    let items = issues
+        .iter()
+        .map(|issue| {
+            format!(
+                "{{\"key\":{},\"message\":\"{}\"}}",
+                option_string_json(issue.key.as_deref()),
+                escape_json(&issue.message)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
+}
+
+fn render_settings_env_content(
+    values: &HashMap<String, String>,
+    unmanaged: &HashMap<String, String>,
+) -> String {
+    let mut lines = vec![
+        "# IGY6 local environment".to_string(),
+        "# Generated by the local Settings dry-run/apply workflow.".to_string(),
+        "# Comments from previous .env content are normalized by this writer.".to_string(),
+        String::new(),
+    ];
+    let mut current_group = "";
+    for definition in SETTING_DEFINITIONS {
+        if current_group != definition.group {
+            if !current_group.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(format!("# {}", settings_group_label(definition.group)));
+            current_group = definition.group;
+        }
+        lines.push(format!(
+            "{}={}",
+            definition.key,
+            values.get(definition.key).map_or("", String::as_str)
+        ));
+    }
+    if !unmanaged.is_empty() {
+        lines.push(String::new());
+        lines.push("# Unmanaged keys preserved read-only".to_string());
+        let mut keys = unmanaged.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        for key in keys {
+            lines.push(format!(
+                "{}={}",
+                key,
+                unmanaged.get(&key).map_or("", String::as_str)
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn settings_candidate_hash(
+    values: &HashMap<String, String>,
+    unmanaged: &HashMap<String, String>,
+) -> String {
+    sha256_hex(render_settings_env_content(values, unmanaged).as_bytes())
+}
+
+fn sha256_hex(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn create_settings_env_backup(env_path: &Path, backup_dir: &Path) -> Result<PathBuf, GatewayError> {
+    if !env_path.exists() {
+        return Err(GatewayError::Conflict(
+            "{\"detail\":\"Cannot back up missing .env file\"}".to_string(),
+        ));
+    }
+    fs::create_dir_all(backup_dir).map_err(|error| GatewayError::Database(error.to_string()))?;
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+        .as_secs();
+    let mut backup_path = backup_dir.join(format!(".env.{seconds}.bak"));
+    let mut counter = 1;
+    while backup_path.exists() {
+        backup_path = backup_dir.join(format!(".env.{seconds}.{counter}.bak"));
+        counter += 1;
+    }
+    fs::copy(env_path, &backup_path).map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(backup_path)
+}
+
+fn atomic_write_settings_env(env_path: &Path, content: &str) -> Result<(), GatewayError> {
+    if let Some(parent) = env_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+    let temp_path = env_path.with_extension("tmp");
+    fs::write(&temp_path, content).map_err(|error| GatewayError::Database(error.to_string()))?;
+    fs::rename(&temp_path, env_path).map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(())
+}
+
+fn settings_path_writable(path: &Path) -> bool {
+    if path.exists() {
+        fs::OpenOptions::new().append(true).open(path).is_ok()
+    } else {
+        path.parent().is_some_and(Path::exists)
+    }
+}
+
+fn settings_group_label(group: &str) -> &str {
+    SETTING_GROUPS
+        .iter()
+        .find_map(|(key, label)| if *key == group { Some(*label) } else { None })
+        .unwrap_or(group)
 }
 
 fn load_source_for_collection(
@@ -2748,6 +3945,14 @@ fn option_json(value: Option<&str>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
+fn validation_body_json(message: &str) -> String {
+    if message.trim_start().starts_with('{') {
+        message.to_string()
+    } else {
+        format!("{{\"detail\":\"{}\"}}", escape_json(message))
+    }
+}
+
 fn option_string_json(value: Option<&str>) -> String {
     option_json(value)
 }
@@ -3022,6 +4227,123 @@ mod tests {
         assert!(response.body.contains("\"value\":null"));
         assert!(response.body.contains("does not read .env contents"));
         assert!(!response.body.contains("change-me-local-only"));
+    }
+
+    #[test]
+    fn settings_env_verify_and_apply_are_rust_native_without_fallback() {
+        let verify_response = handle_gateway_request_with_db(
+            &request("POST", "/settings/env/verify", r#"{"values":{}}"#),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(verify_response.status_code, 200);
+        assert!(!verify_response.proxied_to_fallback);
+        assert!(verify_response.body.contains("\"passed\":false"));
+
+        let apply_response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/settings/env/apply",
+                r#"{"values":{},"verification_token":"bad"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(apply_response.status_code, 409);
+        assert!(!apply_response.proxied_to_fallback);
+    }
+
+    #[test]
+    fn settings_env_verify_rejects_unknown_and_read_only_keys_without_fallback() {
+        for body in [
+            r#"{"values":{"UNMANAGED_SECRET":"x"}}"#,
+            r#"{"values":{"ENV_FILE_PATH":"/tmp/.env"}}"#,
+            r#"{"values":[]}"#,
+            r#"{"values":{"APP_PORT":8080}}"#,
+            r#"{"values":{},"actor_id":""}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/settings/env/verify", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn settings_env_verify_redacts_secrets_and_preserves_token_shape() {
+        let config = test_settings_config();
+        let parsed = ParsedSettingsEnv {
+            values: HashMap::new(),
+            unmanaged_order: Vec::new(),
+        };
+        let requested = valid_settings_values();
+        let (candidate, unmanaged, changed_keys) =
+            build_settings_candidate(&config, &parsed, &requested).expect("candidate");
+        let validation = validate_settings_candidate(&candidate, &unmanaged, &changed_keys);
+        assert!(
+            validation.errors.is_empty(),
+            "{:?}",
+            validation.errors.len()
+        );
+        let response = settings_verify_response_json(&candidate, &validation);
+
+        assert!(response.contains("\"passed\":true"));
+        assert!(response.contains("\"verification_token\":\""));
+        assert!(response.contains("\"key\":\"DATABASE_URL\""));
+        assert!(response.contains("\"value\":null"));
+        assert!(response.contains("\"masked_value\":\"********\""));
+        assert!(!response.contains("change-me-local-only"));
+    }
+
+    #[test]
+    fn settings_env_apply_requires_matching_token_and_database_before_write() {
+        let config = test_settings_config();
+        let parsed = ParsedSettingsEnv {
+            values: HashMap::new(),
+            unmanaged_order: Vec::new(),
+        };
+        let requested = valid_settings_values();
+        let (candidate, unmanaged, changed_keys) =
+            build_settings_candidate(&config, &parsed, &requested).expect("candidate");
+        let validation = validate_settings_candidate(&candidate, &unmanaged, &changed_keys);
+        let body = serde_json::json!({
+            "values": requested,
+            "verification_token": validation.candidate_hash
+        })
+        .to_string();
+        let response = handle_gateway_request_with_db(
+            &request("POST", "/settings/env/apply", &body),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn settings_env_apply_rejects_mismatched_token_without_database_or_write() {
+        let body = serde_json::json!({
+            "values": valid_settings_values(),
+            "verification_token": "not-the-candidate-hash"
+        })
+        .to_string();
+        let response = handle_gateway_request_with_db(
+            &request("POST", "/settings/env/apply", &body),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 409);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("verification token"));
     }
 
     #[test]
@@ -3480,6 +4802,8 @@ mod tests {
             ("GET", "/outcomes/{outcome_id}"),
             ("POST", "/outcomes"),
             ("GET", "/settings/env"),
+            ("POST", "/settings/env/apply"),
+            ("POST", "/settings/env/verify"),
             ("GET", "/evidence/documents"),
             ("GET", "/evidence/documents/{document_id}"),
             ("GET", "/evidence/items"),
@@ -3552,5 +4876,91 @@ mod tests {
             },
             body: body.to_string(),
         }
+    }
+
+    fn test_settings_config() -> SettingsEnvConfig {
+        SettingsEnvConfig {
+            env_file_path: PathBuf::from("/workspace/project/.env"),
+            backup_dir: PathBuf::from("/workspace/storage/env_backups"),
+            igy6_data_root: "../IGY6_Data".to_string(),
+        }
+    }
+
+    fn valid_settings_values() -> HashMap<String, String> {
+        HashMap::from([
+            ("APP_ENV".to_string(), "local".to_string()),
+            ("APP_HOST".to_string(), "127.0.0.1".to_string()),
+            ("APP_PORT".to_string(), "8000".to_string()),
+            ("API_BASE_URL".to_string(), "http://127.0.0.1:8000".to_string()),
+            ("WEB_BASE_URL".to_string(), "http://127.0.0.1:3000".to_string()),
+            ("POSTGRES_HOST".to_string(), "postgres".to_string()),
+            ("POSTGRES_PORT".to_string(), "5432".to_string()),
+            ("POSTGRES_DB".to_string(), "adaptive_intelligence".to_string()),
+            ("POSTGRES_USER".to_string(), "adaptive".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "change-me-local-only".to_string()),
+            (
+                "DATABASE_URL".to_string(),
+                "postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
+                    .to_string(),
+            ),
+            ("REDIS_HOST".to_string(), "redis".to_string()),
+            ("REDIS_PORT".to_string(), "6379".to_string()),
+            ("REDIS_URL".to_string(), "redis://redis:6379/0".to_string()),
+            (
+                "CELERY_BROKER_URL".to_string(),
+                "redis://redis:6379/0".to_string(),
+            ),
+            (
+                "CELERY_RESULT_BACKEND".to_string(),
+                "redis://redis:6379/1".to_string(),
+            ),
+            ("QDRANT_HOST".to_string(), "qdrant".to_string()),
+            ("QDRANT_PORT".to_string(), "6333".to_string()),
+            ("QDRANT_URL".to_string(), "http://qdrant:6333".to_string()),
+            (
+                "QDRANT_CHUNK_COLLECTION".to_string(),
+                "igy6_chunks".to_string(),
+            ),
+            ("QDRANT_CHUNK_VECTOR_SIZE".to_string(), "384".to_string()),
+            ("NEO4J_HOST".to_string(), "neo4j".to_string()),
+            ("NEO4J_HTTP_PORT".to_string(), "7474".to_string()),
+            ("NEO4J_BOLT_PORT".to_string(), "7687".to_string()),
+            ("NEO4J_USER".to_string(), "neo4j".to_string()),
+            ("NEO4J_PASSWORD".to_string(), "change-me-local-only".to_string()),
+            ("NEO4J_URI".to_string(), "bolt://neo4j:7687".to_string()),
+            (
+                "MLFLOW_TRACKING_URI".to_string(),
+                "http://mlflow:5000".to_string(),
+            ),
+            (
+                "MLFLOW_ARTIFACT_ROOT".to_string(),
+                "/mlflow/artifacts".to_string(),
+            ),
+            ("PHOENIX_HOST".to_string(), "phoenix".to_string()),
+            ("PHOENIX_PORT".to_string(), "6006".to_string()),
+            (
+                "PHOENIX_COLLECTOR_ENDPOINT".to_string(),
+                "http://phoenix:6006".to_string(),
+            ),
+            (
+                "ARTIFACT_STORE_PATH".to_string(),
+                "/workspace/storage/artifacts".to_string(),
+            ),
+            (
+                "EXPORT_STORE_PATH".to_string(),
+                "/workspace/storage/exports".to_string(),
+            ),
+            ("IGY6_DATA_ROOT".to_string(), "../IGY6_Data".to_string()),
+            (
+                "EXTERNAL_MODEL_POLICY_DEFAULT".to_string(),
+                "blocked".to_string(),
+            ),
+            ("SINGLE_USER_MODE".to_string(), "true".to_string()),
+            ("AUDIT_LOG_LEVEL".to_string(), "info".to_string()),
+            (
+                "APPROVAL_REQUIRED_DEFAULT".to_string(),
+                "true".to_string(),
+            ),
+        ])
     }
 }
