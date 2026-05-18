@@ -2,13 +2,18 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY};
+use igy6_agent_api::{
+    action_definition, classify_agent_intent, AgentActionDefinition, AgentIntentRequest,
+    ACTION_REGISTRY,
+};
 use igy6_artifacts::ArtifactStore;
 use igy6_evidence_answer::build_evidence_answer_packet;
+use igy6_host_bridge::{allowed_action as host_bridge_allowed_action, redact_output};
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
 use postgres::{Client, NoTls};
@@ -22,6 +27,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
     ("GET", "/agent/capabilities"),
+    ("POST", "/agent/actions/"),
+    ("POST", "/agent/actions/{action_name}/execute"),
     ("GET", "/analysis/hypotheses"),
     ("GET", "/analysis/hypotheses/{hypothesis_id}"),
     ("GET", "/analysis/patterns"),
@@ -233,6 +240,7 @@ pub fn handle_gateway_request_with_db(
             )
         }
         ("GET", "/agent/capabilities") => json_response(200, "OK", agent_capabilities_json(), false),
+        ("POST", "/agent/actions/") => agent_action_request_response(&request.body, database_url),
         ("POST", "/agent/intent") => json_response(200, "OK", agent_intent_json(&request.body), false),
         ("POST", "/chat/retrieval-preview") => {
             json_response(200, "OK", retrieval_preview_json(&request.body), false)
@@ -263,6 +271,13 @@ pub fn handle_gateway_request_with_db(
         }
         ("POST", "/settings/env/verify") => settings_env_verify_response(&request.body),
         ("POST", "/settings/env/apply") => settings_env_apply_response(&request.body, database_url),
+        ("POST", _) => {
+            if let Some(action_name) = agent_action_execute_path(&request.path) {
+                agent_action_execute_response(&action_name, &request.body, database_url)
+            } else {
+                fallback_or_error(request, fallback_origin)
+            }
+        }
         ("GET", "/memory/vector/chunks") => {
             json_response(200, "OK", vector_collection_status_json(), false)
         }
@@ -633,6 +648,60 @@ fn collection_dry_run_response(body: &str, database_url: Option<&str>) -> Gatewa
 
 fn manual_upload_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_manual_upload_collection(body, database_url))
+}
+
+fn agent_action_request_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    action_route_response(record_agent_action_request(body, database_url))
+}
+
+fn agent_action_execute_response(
+    action_name: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> GatewayResponse {
+    action_route_response(execute_agent_action_route(action_name, body, database_url))
+}
+
+fn action_route_response(result: Result<String, GatewayError>) -> GatewayResponse {
+    match result {
+        Ok(response_body) => json_response(200, "OK", response_body, false),
+        Err(GatewayError::Validation(message)) => json_response(
+            422,
+            "Unprocessable Entity",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::NotFound(message)) => json_response(
+            404,
+            "Not Found",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::Forbidden(message)) => json_response(
+            403,
+            "Forbidden",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::Conflict(message)) => json_response(
+            409,
+            "Conflict",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
+        Err(GatewayError::MissingDatabaseUrl) => json_response(
+            503,
+            "Service Unavailable",
+            "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(error) => json_response(
+            502,
+            "Bad Gateway",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&error.to_string())),
+            false,
+        ),
+    }
 }
 
 fn settings_env_verify_response(body: &str) -> GatewayResponse {
@@ -1079,6 +1148,158 @@ fn create_manual_upload_collection(
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn record_agent_action_request(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_agent_action_request(body)?;
+    let definition = if let Some(action_name) = payload.action_name.as_deref() {
+        validate_action_name(action_name)?;
+        action_definition(action_name)
+    } else {
+        None
+    };
+    let intent_body = if let Some(definition) = definition {
+        agent_action_definition_json(definition, &payload.parameters)
+    } else {
+        let message = payload.message.clone().unwrap_or_default();
+        agent_intent_json_from_parts(&message, &payload.parameters)
+    };
+    let action_name = definition
+        .map(|definition| definition.name.to_string())
+        .or_else(|| {
+            payload
+                .message
+                .as_deref()
+                .and_then(|message| classify_agent_message(message, &payload.parameters))
+                .map(str::to_string)
+        });
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "action_name": action_name,
+        "parameters": safe_parameter_summary(&payload.parameters),
+        "source": "rust_gateway"
+    });
+    client
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent.action.requested', 'recorded', 'agent_action', $2, NULL, $3::jsonb)",
+            &[
+                &payload.actor_id,
+                &action_name.clone().unwrap_or_else(|| "unknown".to_string()),
+                &details_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(intent_body)
+}
+
+fn execute_agent_action_route(
+    raw_action_name: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let action_name = validate_action_name(raw_action_name)?;
+    let payload = parse_agent_action_execute(body)?;
+    let definition = action_definition(&action_name)
+        .ok_or_else(|| GatewayError::NotFound("Unknown agent action".to_string()))?;
+    validate_required_action_parameters(definition, &payload.parameters)?;
+    if definition.approval_required && payload.approval_id.is_none() {
+        return Err(GatewayError::Forbidden(
+            "Agent action requires approval".to_string(),
+        ));
+    }
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    if definition.approval_required {
+        match require_agent_action_approval(&mut client, definition, &payload) {
+            Ok(()) => {}
+            Err(error) => {
+                let _ = insert_agent_action_audit(
+                    &mut client,
+                    &payload.actor_id,
+                    "agent.action.rejected",
+                    "blocked",
+                    definition.name,
+                    None,
+                    serde_json::json!({
+                        "reason": error.to_string(),
+                        "parameters": safe_parameter_summary(&payload.parameters),
+                        "approval_id": payload.approval_id
+                    }),
+                );
+                return Err(error);
+            }
+        }
+    }
+
+    let started_at = now_epoch_string();
+    let started_audit_event_id = insert_agent_action_audit(
+        &mut client,
+        &payload.actor_id,
+        "agent.action.started",
+        "started",
+        definition.name,
+        None,
+        serde_json::json!({
+            "parameters": safe_parameter_summary(&payload.parameters),
+            "approval_id": payload.approval_id
+        }),
+    )?;
+    let execution = execute_known_agent_action(definition, &payload.parameters, &mut client);
+    let finished_at = now_epoch_string();
+    let (status_value, result, stdout_summary, stderr_summary, exit_code) = match execution {
+        Ok(result) => (
+            result.status,
+            result.result,
+            result.stdout_summary,
+            result.stderr_summary,
+            result.exit_code,
+        ),
+        Err(error) => (
+            "failed".to_string(),
+            serde_json::json!({"error": error.to_string()}),
+            None,
+            None,
+            None,
+        ),
+    };
+    let finished_audit_event_id = insert_agent_action_audit(
+        &mut client,
+        &payload.actor_id,
+        "agent.action.finished",
+        &status_value,
+        definition.name,
+        Some(started_audit_event_id.to_string()),
+        serde_json::json!({
+            "status": status_value,
+            "started_audit_event_id": started_audit_event_id,
+            "exit_code": exit_code
+        }),
+    )?;
+    Ok(serde_json::json!({
+        "action_name": definition.name,
+        "status": status_value,
+        "result": result,
+        "stdout_summary": stdout_summary,
+        "stderr_summary": stderr_summary,
+        "exit_code": exit_code,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "audit_event_id": finished_audit_event_id
+    })
+    .to_string())
 }
 
 fn verify_settings_env(body: &str) -> Result<String, GatewayError> {
@@ -1898,6 +2119,27 @@ struct ManualUploadCollectionPayload {
     requested_by_actor_id: String,
 }
 
+struct AgentActionRequestPayload {
+    message: Option<String>,
+    action_name: Option<String>,
+    parameters: Value,
+    actor_id: String,
+}
+
+struct AgentActionExecutePayload {
+    parameters: Value,
+    approval_id: Option<String>,
+    actor_id: String,
+}
+
+struct AgentActionExecutionResult {
+    status: String,
+    result: Value,
+    stdout_summary: Option<String>,
+    stderr_summary: Option<String>,
+    exit_code: Option<i32>,
+}
+
 struct CollectionApproval {
     id: String,
     status: String,
@@ -2313,6 +2555,45 @@ fn parse_manual_upload_collection(
         mime_type,
         metadata_json,
         requested_by_actor_id,
+    })
+}
+
+fn parse_agent_action_request(body: &str) -> Result<AgentActionRequestPayload, GatewayError> {
+    let object = parse_json_object(body, "Agent action request body")?;
+    let message = optional_nullable_string_field_with_max(&object, "message", 4096)?;
+    let action_name = optional_nullable_string_field_with_max(&object, "action_name", 128)?;
+    if message
+        .as_ref()
+        .is_none_or(|message| message.trim().is_empty())
+        && action_name
+            .as_ref()
+            .is_none_or(|action_name| action_name.trim().is_empty())
+    {
+        return Err(GatewayError::Validation(
+            "message or action_name is required.".to_string(),
+        ));
+    }
+    let parameters = optional_object_field(&object, "parameters")?;
+    reject_user_provided_argv(&parameters)?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    Ok(AgentActionRequestPayload {
+        message: message.map(|value| value.trim().to_string()),
+        action_name: action_name.map(|value| value.trim().to_string()),
+        parameters,
+        actor_id,
+    })
+}
+
+fn parse_agent_action_execute(body: &str) -> Result<AgentActionExecutePayload, GatewayError> {
+    let object = parse_json_object(body, "Agent action execute body")?;
+    let parameters = optional_object_field(&object, "parameters")?;
+    reject_user_provided_argv(&parameters)?;
+    let approval_id = optional_nullable_string_field_with_max(&object, "approval_id", 36)?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    Ok(AgentActionExecutePayload {
+        parameters,
+        approval_id: approval_id.map(|value| value.trim().to_string()),
+        actor_id,
     })
 }
 
@@ -3784,6 +4065,559 @@ fn manual_upload_normalization_work_payload(
     })
 }
 
+fn agent_action_execute_path(path: &str) -> Option<String> {
+    let stripped = path.strip_prefix("/agent/actions/")?;
+    let action_name = stripped.strip_suffix("/execute")?;
+    if action_name.is_empty() || action_name.contains('/') {
+        return None;
+    }
+    Some(percent_decode_path_segment(action_name))
+}
+
+fn percent_decode_path_segment(value: &str) -> String {
+    let mut output = Vec::new();
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                output.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn validate_action_name(value: &str) -> Result<String, GatewayError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(GatewayError::Validation(
+            "action_name is required.".to_string(),
+        ));
+    }
+    if trimmed.len() > 128
+        || !trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(GatewayError::Validation(
+            "action_name must be a fixed registry identifier.".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn reject_user_provided_argv(parameters: &Value) -> Result<(), GatewayError> {
+    let Some(object) = parameters.as_object() else {
+        return Err(GatewayError::Validation(
+            "parameters must be a JSON object.".to_string(),
+        ));
+    };
+    for key in object.keys() {
+        let lowered = key.to_ascii_lowercase();
+        if matches!(
+            lowered.as_str(),
+            "argv" | "args" | "command" | "cmd" | "shell" | "script"
+        ) {
+            return Err(GatewayError::Validation(
+                "Agent actions do not accept user-provided argv or command fields.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_required_action_parameters(
+    definition: &AgentActionDefinition,
+    parameters: &Value,
+) -> Result<(), GatewayError> {
+    let object = parameters
+        .as_object()
+        .ok_or_else(|| GatewayError::Validation("parameters must be a JSON object.".to_string()))?;
+    let missing = definition
+        .required_parameters
+        .iter()
+        .filter(|parameter| {
+            object
+                .get(**parameter)
+                .is_none_or(|value| value.as_str().is_none_or(|text| text.trim().is_empty()))
+        })
+        .copied()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(GatewayError::Validation(format!(
+            "Missing required action parameters: {}",
+            missing.join(", ")
+        )))
+    }
+}
+
+fn classify_agent_message(message: &str, parameters: &Value) -> Option<&'static str> {
+    let response = classify_agent_intent(&AgentIntentRequest {
+        message: message.to_string(),
+        parameters: value_object_to_string_pairs(parameters),
+    });
+    response.proposed_action
+}
+
+fn agent_intent_json_from_parts(message: &str, parameters: &Value) -> String {
+    let response = classify_agent_intent(&AgentIntentRequest {
+        message: message.to_string(),
+        parameters: value_object_to_string_pairs(parameters),
+    });
+    agent_intent_response_json(&response)
+}
+
+fn agent_action_definition_json(definition: &AgentActionDefinition, parameters: &Value) -> String {
+    let missing_parameters = definition
+        .required_parameters
+        .iter()
+        .copied()
+        .filter(|parameter| {
+            parameters
+                .get(*parameter)
+                .is_none_or(|value| value.as_str().is_none_or(|text| text.trim().is_empty()))
+        })
+        .collect::<Vec<_>>();
+    let response = igy6_agent_api::AgentIntentResponse {
+        original_message: definition.name.to_string(),
+        interpreted_intent: definition.interpreted_intent.to_string(),
+        proposed_action: Some(definition.name),
+        action_type: definition.action_type.clone(),
+        approval_required: definition.approval_required,
+        risk_level: definition.risk_level.clone(),
+        required_parameters: definition.required_parameters.to_vec(),
+        missing_parameters: missing_parameters.clone(),
+        safety_notes: definition.safety_notes.to_vec(),
+        executable_now: missing_parameters.is_empty() && !definition.approval_required,
+        reason: if definition.approval_required {
+            Some("Approval required before execution.".to_string())
+        } else {
+            None
+        },
+    };
+    agent_intent_response_json(&response)
+}
+
+fn value_object_to_string_pairs(value: &Value) -> Vec<(String, String)> {
+    value
+        .as_object()
+        .into_iter()
+        .flat_map(|object| object.iter())
+        .filter_map(|(key, value)| {
+            let text = value.as_str().map(str::to_string).or_else(|| {
+                if value.is_null() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            })?;
+            Some((key.clone(), text))
+        })
+        .collect()
+}
+
+fn execute_known_agent_action(
+    definition: &AgentActionDefinition,
+    parameters: &Value,
+    client: &mut Client,
+) -> Result<AgentActionExecutionResult, GatewayError> {
+    match definition.name {
+        "show_project_health" => Ok(AgentActionExecutionResult {
+            status: "completed".to_string(),
+            result: serde_json::json!({
+                "health": {
+                    "status": "ok",
+                    "primary_gateway": "rust",
+                    "service": "igy6-gateway"
+                }
+            }),
+            stdout_summary: None,
+            stderr_summary: None,
+            exit_code: None,
+        }),
+        "show_git_status" => Ok(AgentActionExecutionResult {
+            status: "completed".to_string(),
+            result: serde_json::json!({"git": git_status_from_files(repo_root_path())}),
+            stdout_summary: None,
+            stderr_summary: None,
+            exit_code: None,
+        }),
+        "show_latest_diff" => Ok(AgentActionExecutionResult {
+            status: "completed".to_string(),
+            result: serde_json::json!({"latest_diff": latest_diff_metadata(repo_root_path())}),
+            stdout_summary: None,
+            stderr_summary: None,
+            exit_code: None,
+        }),
+        "show_work_items" => Ok(AgentActionExecutionResult {
+            status: "completed".to_string(),
+            result: serde_json::json!({"work_items": recent_work_items(client)?}),
+            stdout_summary: None,
+            stderr_summary: None,
+            exit_code: None,
+        }),
+        "run_retrieval_preview" => {
+            let message = parameters
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Ok(AgentActionExecutionResult {
+                status: "completed".to_string(),
+                result: serde_json::json!({
+                    "retrieval_preview": serde_json::from_str::<Value>(&retrieval_preview_json(
+                        &serde_json::json!({"message": message}).to_string(),
+                    ))
+                    .unwrap_or_else(|_| serde_json::json!({}))
+                }),
+                stdout_summary: None,
+                stderr_summary: None,
+                exit_code: None,
+            })
+        }
+        "start_stack" | "stop_stack" | "run_last_healthy_stack" => {
+            execute_host_bridge_action(definition.name)
+        }
+        _ => Err(GatewayError::NotFound("Unknown agent action".to_string())),
+    }
+}
+
+fn require_agent_action_approval(
+    client: &mut Client,
+    definition: &AgentActionDefinition,
+    payload: &AgentActionExecutePayload,
+) -> Result<(), GatewayError> {
+    let approval_id = payload
+        .approval_id
+        .as_deref()
+        .ok_or_else(|| GatewayError::Forbidden("Agent action requires approval".to_string()))?;
+    let Some(row) = client
+        .query_opt(
+            "SELECT id, status, request_type, request_payload_json FROM approvals WHERE id = $1",
+            &[&approval_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Approval not found".to_string()));
+    };
+    let status: String = row.get(1);
+    let request_type: String = row.get(2);
+    let request_payload: Value = row.get(3);
+    if status != "approved" {
+        return Err(GatewayError::Forbidden(
+            "Approval is not approved".to_string(),
+        ));
+    }
+    if request_type != "agent_action" {
+        return Err(GatewayError::Conflict(
+            "Approval is not for an agent action".to_string(),
+        ));
+    }
+    approval_payload_matches(&request_payload, "action_name", definition.name)?;
+    if let Some(approved_parameters) = request_payload.get("parameters") {
+        if approved_parameters != &payload.parameters {
+            return Err(GatewayError::Conflict(
+                "Approval parameters do not match".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn insert_agent_action_audit(
+    client: &mut Client,
+    actor_id: &str,
+    event_type: &str,
+    decision: &str,
+    action_name: &str,
+    correlation_id: Option<String>,
+    details_json: Value,
+) -> Result<i32, GatewayError> {
+    client
+        .query_one(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, $3, 'agent_action', $4, $5, $6::jsonb) RETURNING id",
+            &[
+                &actor_id,
+                &event_type,
+                &decision,
+                &action_name,
+                &correlation_id,
+                &details_json,
+            ],
+        )
+        .map(|row| row.get::<_, i32>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn safe_parameter_summary(parameters: &Value) -> Value {
+    let Some(object) = parameters.as_object() else {
+        return serde_json::json!({});
+    };
+    let mut safe = serde_json::Map::new();
+    for (key, value) in object {
+        let lowered = key.to_ascii_lowercase();
+        if ["password", "token", "secret", "key"]
+            .iter()
+            .any(|needle| lowered.contains(needle))
+        {
+            safe.insert(key.clone(), Value::String("[redacted]".to_string()));
+        } else {
+            safe.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(safe)
+}
+
+fn repo_root_path() -> PathBuf {
+    env::var("ENV_FILE_PATH")
+        .ok()
+        .and_then(|value| PathBuf::from(value).parent().map(Path::to_path_buf))
+        .filter(|candidate| candidate.join("AGENTS.md").is_file())
+        .or_else(|| {
+            let candidate = PathBuf::from("/workspace/project");
+            candidate.join("AGENTS.md").is_file().then_some(candidate)
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn git_status_from_files(root: PathBuf) -> Value {
+    let git_dir = root.join(".git");
+    let head_path = git_dir.join("HEAD");
+    if !head_path.is_file() {
+        return serde_json::json!({
+            "branch": "unknown",
+            "commit": "unknown",
+            "dirty": null,
+            "changed_path_count": null,
+            "status_source": "unavailable",
+            "note": "Git metadata is unavailable in this runtime."
+        });
+    }
+    let head_value = fs::read_to_string(&head_path)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let (branch, commit) = if let Some(ref_name) = head_value.strip_prefix("ref: ") {
+        let ref_name = ref_name.trim();
+        let branch = ref_name.trim_start_matches("refs/heads/").to_string();
+        let commit = fs::read_to_string(git_dir.join(ref_name))
+            .ok()
+            .map(|value| value.trim().to_string())
+            .or_else(|| read_packed_ref(&git_dir.join("packed-refs"), ref_name))
+            .unwrap_or_else(|| "unknown".to_string());
+        (branch, commit)
+    } else {
+        ("detached".to_string(), head_value)
+    };
+    serde_json::json!({
+        "branch": branch,
+        "commit": commit,
+        "dirty": null,
+        "changed_path_count": null,
+        "status_source": "git_files",
+        "note": "Rust gateway does not execute git; dirty state is unavailable from raw metadata."
+    })
+}
+
+fn read_packed_ref(path: &Path, ref_name: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let (commit, packed_ref_name) = line.split_once(' ')?;
+        if packed_ref_name == ref_name {
+            return Some(commit.to_string());
+        }
+    }
+    None
+}
+
+fn latest_diff_metadata(root: PathBuf) -> Value {
+    let diff_dir = root.join("docs").join("diffs");
+    let Ok(entries) = fs::read_dir(&diff_dir) else {
+        return serde_json::json!({"path": null, "status": null});
+    };
+    let latest = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("DIFF-") && name.ends_with(".md"))
+        })
+        .max_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+    let Some(latest) = latest else {
+        return serde_json::json!({"path": null, "status": null});
+    };
+    let status = fs::read_to_string(&latest).ok().and_then(|content| {
+        content.lines().find_map(|line| {
+            line.to_ascii_lowercase()
+                .starts_with("status:")
+                .then(|| {
+                    line.split_once(':')
+                        .map(|(_, value)| value.trim().to_string())
+                })
+                .flatten()
+        })
+    });
+    let relative = latest
+        .strip_prefix(&root)
+        .ok()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| latest.clone());
+    serde_json::json!({"path": relative.to_string_lossy(), "status": status})
+}
+
+fn recent_work_items(client: &mut Client) -> Result<Value, GatewayError> {
+    client
+        .query_one(
+            "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, work_type, status, requested_by_actor_id, error_message FROM work_items ORDER BY created_at DESC LIMIT 20) t), '[]')",
+            &[],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))
+        .and_then(|row| {
+            let text = row.get::<_, String>(0);
+            serde_json::from_str(&text)
+                .map_err(|error| GatewayError::Database(error.to_string()))
+        })
+}
+
+fn execute_host_bridge_action(
+    action_name: &str,
+) -> Result<AgentActionExecutionResult, GatewayError> {
+    if host_bridge_allowed_action(action_name).is_none() {
+        return Err(GatewayError::NotFound("Unknown agent action".to_string()));
+    }
+    let token = host_bridge_token()?;
+    let host = env::var("IGY6_HOST_BRIDGE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    if host != "127.0.0.1" {
+        return Err(GatewayError::Conflict(
+            "Host bridge must be configured for 127.0.0.1 only".to_string(),
+        ));
+    }
+    let port = env::var("IGY6_HOST_BRIDGE_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(8765);
+    let mut stream = TcpStream::connect((host.as_str(), port))
+        .map_err(|error| GatewayError::Conflict(format!("Host bridge is unavailable: {error}")))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(310)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let request = format!(
+        "POST /actions/{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        action_name,
+        port,
+        token
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let (head, body) = response.split_once("\r\n\r\n").unwrap_or(("", ""));
+    let status_code = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(502);
+    let body_json: Value = serde_json::from_str(body).unwrap_or_else(|_| {
+        serde_json::json!({"error": "invalid_host_bridge_response", "detail": "Host bridge returned non-JSON output"})
+    });
+    if status_code != 200 {
+        return Err(GatewayError::Conflict(format!(
+            "Host bridge rejected action: {}",
+            body_json
+                .get("detail")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown host bridge error")
+        )));
+    }
+    let stdout_summary = body_json
+        .get("stdout_summary")
+        .and_then(Value::as_str)
+        .map(redact_output);
+    let stderr_summary = body_json
+        .get("stderr_summary")
+        .and_then(Value::as_str)
+        .map(redact_output);
+    let exit_code = body_json
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .map(|value| value as i32);
+    let status = match body_json.get("status").and_then(Value::as_str) {
+        Some("completed") => "completed",
+        Some("timed_out") => "failed",
+        Some("failed") => "failed",
+        _ => "failed",
+    }
+    .to_string();
+    Ok(AgentActionExecutionResult {
+        status,
+        result: serde_json::json!({
+            "host_bridge": {
+                "status": body_json.get("status").cloned().unwrap_or(Value::Null),
+                "bridge_version": body_json.get("bridge_version").cloned().unwrap_or(Value::Null)
+            }
+        }),
+        stdout_summary,
+        stderr_summary,
+        exit_code,
+    })
+}
+
+fn host_bridge_token() -> Result<String, GatewayError> {
+    if let Ok(token) = env::var("IGY6_HOST_BRIDGE_TOKEN") {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Ok(path) = env::var("IGY6_HOST_BRIDGE_TOKEN_FILE") {
+        let token = fs::read_to_string(&path)
+            .map_err(|_| GatewayError::Conflict("Host bridge token is unavailable".to_string()))?;
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    Err(GatewayError::Conflict(
+        "Host bridge token is unavailable".to_string(),
+    ))
+}
+
+fn now_epoch_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_secs()
+        .to_string()
+}
+
 fn parse_json_object(
     body: &str,
     description: &str,
@@ -4492,10 +5326,15 @@ fn agent_capabilities_json() -> String {
 
 fn agent_intent_json(body: &str) -> String {
     let message = extract_json_string(body, "message").unwrap_or_default();
-    let response = classify_agent_intent(&AgentIntentRequest {
-        message,
-        parameters: Vec::new(),
-    });
+    let parameters = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("parameters").cloned())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    agent_intent_json_from_parts(&message, &parameters)
+}
+
+fn agent_intent_response_json(response: &igy6_agent_api::AgentIntentResponse) -> String {
     format!(
         "{{\"original_message\":\"{}\",\"interpreted_intent\":\"{}\",\"proposed_action\":{},\"action_type\":\"{}\",\"approval_required\":{},\"risk_level\":\"{}\",\"required_parameters\":{},\"missing_parameters\":{},\"safety_notes\":{},\"executable_now\":{},\"reason\":{}}}",
         escape_json(&response.original_message),
@@ -4768,18 +5607,134 @@ mod tests {
 
     #[test]
     fn unsupported_routes_plan_fastapi_fallback() {
-        let request = request("POST", "/agent/actions/show_project_health/execute", "{}");
+        let request = request("POST", "/collection-runs/manual-upload/ingest", "{}");
         let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
         assert_eq!(plan.host, "legacy-api");
         assert_eq!(plan.port, 8000);
-        assert_eq!(
-            plan.request_target,
-            "/agent/actions/show_project_health/execute"
-        );
+        assert_eq!(plan.request_target, "/collection-runs/manual-upload/ingest");
 
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
         assert!(response.proxied_to_fallback);
+    }
+
+    #[test]
+    fn agent_action_request_is_rust_native_and_requires_database_url_after_validation() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/actions/",
+                r#"{"message":"show project health","parameters":{},"actor_id":"local-owner"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+
+        let parsed = parse_agent_action_request(
+            r#"{"action_name":"show_project_health","parameters":{},"actor_id":"local-owner"}"#,
+        )
+        .expect("agent action request");
+        assert_eq!(parsed.action_name.as_deref(), Some("show_project_health"));
+    }
+
+    #[test]
+    fn agent_action_execute_validates_allowlist_parameters_and_approval_without_fallback() {
+        let unknown = handle_gateway_request_with_db(
+            &request("POST", "/agent/actions/not_allowed/execute", "{}"),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(unknown.status_code, 404);
+        assert!(!unknown.proxied_to_fallback);
+
+        let malformed = handle_gateway_request_with_db(
+            &request("POST", "/agent/actions/rm%20-rf/execute", "{}"),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(malformed.status_code, 422);
+        assert!(!malformed.proxied_to_fallback);
+
+        let missing_parameter = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/actions/run_retrieval_preview/execute",
+                r#"{"parameters":{},"actor_id":"local-owner"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(missing_parameter.status_code, 422);
+        assert!(!missing_parameter.proxied_to_fallback);
+
+        let user_argv = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/actions/show_project_health/execute",
+                r#"{"parameters":{"argv":["/bin/sh"]},"actor_id":"local-owner"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(user_argv.status_code, 422);
+        assert!(!user_argv.proxied_to_fallback);
+
+        let missing_approval = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/actions/start_stack/execute",
+                r#"{"parameters":{},"actor_id":"local-owner"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(missing_approval.status_code, 403);
+        assert!(!missing_approval.proxied_to_fallback);
+    }
+
+    #[test]
+    fn agent_action_execute_is_rust_native_and_requires_database_for_audit() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/actions/show_project_health/execute",
+                r#"{"parameters":{},"actor_id":"local-owner"}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn agent_action_helpers_redact_and_reject_command_surfaces() {
+        let rejected = reject_user_provided_argv(&serde_json::json!({
+            "command": "scripts/run.sh"
+        }))
+        .expect_err("command field rejected");
+        assert!(rejected.to_string().contains("argv"));
+
+        let safe = safe_parameter_summary(&serde_json::json!({
+            "message": "hello",
+            "api_token": "secret-value"
+        }));
+        assert_eq!(safe["message"], "hello");
+        assert_eq!(safe["api_token"], "[redacted]");
+
+        assert!(host_bridge_allowed_action("start_stack").is_some());
+        assert!(host_bridge_allowed_action("bash -c docker compose down").is_none());
     }
 
     #[test]

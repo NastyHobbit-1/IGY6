@@ -20,15 +20,17 @@ Rust gateway service: api
     |   writes, DIFF-111 source creation, DIFF-112 report creation, and
     |   DIFF-113 analysis pattern writes, DIFF-114 collection dry-run
     |   previews, DIFF-115 settings verify/apply, DIFF-116 work-item
-    |   creation, and DIFF-117 manual upload collection creation
+    |   creation, DIFF-117 manual upload collection creation, and DIFF-118
+    |   agent action request/execution routes
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
-FastAPI is still required. It must not be archived, removed, or disabled until
-route parity proves every active route is served by Rust or deliberately
-retired.
+FastAPI is still required for unsupported non-web routes. No web-used route
+requires FastAPI fallback after DIFF-118, but `legacy-api` must not be archived,
+removed, or disabled until route parity proves every active route is served by
+Rust or deliberately retired.
 
 ## Runtime Topology
 
@@ -59,6 +61,8 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/memory/vector/chunks` | Rust-native read-only status |
 | GET | `/memory/graph/schema` | Rust-native read-only status |
 | GET | `/agent/capabilities` | Rust-native |
+| POST | `/agent/actions/` | Rust-native fixed action request/audit route |
+| POST | `/agent/actions/{action_name}/execute` | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
 | POST | `/agent/intent` | Rust-native |
 | POST | `/chat/retrieval-preview` | Rust-native contract response |
 | POST | `/chat/evidence-answer` | Rust-native contract response |
@@ -114,13 +118,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 |
 
 ## Web-Used Route Matrix
 
@@ -128,7 +132,8 @@ Route parity counts:
 | --- | --- | --- | --- |
 | GET | `/agent/capabilities` | Next.js proxy and page data load | Rust-native |
 | POST | `/agent/intent` | Next.js proxy and page intent preview | Rust-native |
-| POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Proxied to FastAPI |
+| POST | `/agent/actions/` | Page dynamic action execution prefix detected by route guard | Rust-native fixed action request/audit route |
+| POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
 | GET | `/analysis/patterns` | Page data load | Rust-native DB read |
 | POST | `/analysis/patterns` | Page pattern create | Rust-native DB write with evidence validation and audit event |
 | POST | `/analysis/patterns/detect-baseline` | Page baseline pattern detection | Rust-native DB write with deterministic local detection and audit events |
@@ -177,7 +182,7 @@ human-readable inventory of the active route families and gateway behavior.
 | --- | --- | --- |
 | GET | `/agent/capabilities` | Rust-native |
 | POST | `/agent/intent` | Rust-native |
-| POST | `/agent/actions/{action_name}/execute` | Proxied to FastAPI |
+| POST | `/agent/actions/{action_name}/execute` | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
 | GET | `/analysis/patterns` | Rust-native DB read |
 | POST | `/analysis/patterns` | Rust-native DB write with evidence validation and audit event |
 | POST | `/analysis/patterns/{pattern_id}/review` | Proxied to FastAPI |
@@ -314,6 +319,15 @@ synchronously. If the artifact write succeeds but the database transaction later
 fails, the content-addressed artifact may remain under the configured safe
 artifact root without DB metadata; retrying the same upload reuses the same
 hash path.
+DIFF-118 adds Rust-native web-used agent action request/execution routes. The
+Rust gateway accepts only the existing fixed action allowlist, rejects malformed
+action names, rejects user-provided `argv`/command surfaces, requires approved
+matching `agent_action` approvals for stack-changing actions, writes
+`agent.action.requested`, `agent.action.started`, `agent.action.finished`, and
+`agent.action.rejected` audit events where persistence is available, and calls
+script-backed actions only through the local-only host bridge with a token and
+fixed action name. No arbitrary shell command or raw user text execution is
+added.
 
 ## Manifest Finding
 
@@ -324,7 +338,8 @@ future cutover checks cannot be read as proof that FastAPI is removable.
 
 ## Follow-Up DIFF Plan
 
-FastAPI remains required until these parity batches are implemented or
+Web-used FastAPI fallback is eliminated as of DIFF-118. FastAPI remains
+required for unsupported non-web routes until those routes are implemented or
 deliberately retired:
 
 1. DIFF-105: add an automated route parity guard so fallback dependency cannot
@@ -357,11 +372,13 @@ deliberately retired:
 13. DIFF-117: migrate manual upload collection creation with source permission,
    approval, artifact storage, queued normalization metadata, and audit parity
    without synchronous ingestion or dispatch.
-14. DIFF-118: handle the remaining web-used agent action creation/execution
-   routes only where approval, audit, fixed allowlists, timeout bounds, and
-   no-arbitrary-command guarantees can be explicit and testable.
-15. Later DIFFs: migrate agent action execution, report render/work-item
+14. DIFF-118: migrate the final web-used agent action request/execution routes
+   with fixed allowlists, approval gates, audit events, local-only host bridge
+   execution, timeout bounds, redaction, and no user-provided argv.
+15. DIFF-119: audit the remaining non-web FastAPI route inventory and decide
+   which routes are active, retireable, or still require Rust parity.
+16. Later DIFFs: migrate report render/work-item
    writes, collection writes, retrieval hydration, vector/graph memory,
    analysis, feedback, outcomes, improvements, and experiments.
-16. Final retirement DIFF: remove or disable `legacy-api` only after route
+17. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
