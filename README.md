@@ -1,832 +1,252 @@
 # IGY6
 
-IGY6 is a local-first adaptive intelligence foundation for collecting authorized
-information, preserving evidence, and reviewing what the system knows through
-auditable local workflows.
+IGY6 is a local-first evidence workspace. It helps you register data sources,
+upload or collect allowed material, turn that material into evidence, search it,
+run safe local assistant actions, review approvals, and audit what happened.
 
-It is not a finished autonomous agent, not ComfyUI, not a generic chatbot, and
-not a local AI-stack model manager. The current implementation does not generate
-LLM answers and does not call external models. It supports deterministic local
-evidence, retrieval, metadata, reporting, and review workflows. System-changing
-actions are not autonomous and require explicit approval when exposed through a
-typed local command plane. The system is read-only or scaffolded by default
-unless a current endpoint explicitly records local metadata or executes an
-approved local stack operator action.
+It is not a finished autonomous agent, not a generic chatbot, not ComfyUI, and
+not an external-model workflow by default. Current answers are evidence previews
+or deterministic evidence packets from local records.
 
-## Current Capabilities
+## Current Backend Posture
 
-Implemented or scaffolded behavior in the current repository:
+IGY6 is Rust-primary through the gateway and route parity work completed through
+DIFF-120. It is not Rust-only. The route manifest still marks FastAPI fallback as
+required for remaining legacy/non-web routes, so do not remove FastAPI or claim
+Rust-only operation until the manifest and route parity scripts prove it.
 
-| Area | Current behavior |
-| --- | --- |
-| Local stack | Docker Compose starts the web UI, API, PostgreSQL, Redis, Celery worker, Celery beat, Qdrant, Neo4j, MLflow, and Phoenix on localhost-bound ports. |
-| Web UI | Next.js dark AI-console shell with source, evidence, memory, work, approval, report, audit, retrieval preview, Agent Command, and MVP Action Console panels. |
-| API | Rust gateway is the published `api` service. It serves a small Rust-native route set and proxies unsupported routes to the FastAPI `legacy-api` service. FastAPI remains required until route parity is complete. |
-| State and audit | PostgreSQL stores sources, permissions, collection runs, artifacts, normalized documents, chunks, evidence, claims, patterns, hypotheses, predictions, recommendations, work items, approvals, feedback, outcomes, reports, experiments, improvements, and audit events. |
-| Source registry | Sources can be registered with type, location, sensitivity, trust, enabled state, metadata, and optional permission. |
-| Source permissions | Permissions store scope JSON, allowed operations, external model policy, and approval requirement. |
-| Approvals | Approval requests can be created and approved or denied. Collection approval matching requires exact source, permission, and operation payload values. |
-| Collection | Manual upload collection supports base64 UTF-8 text. Local project collection supports scoped paths under a container-visible source directory. |
-| Artifacts | Raw artifacts are stored in local content-addressed storage with PostgreSQL metadata. |
-| Normalization | Worker normalization reads raw artifacts as UTF-8 text and creates normalized text documents. |
-| Chunking and evidence | Worker chunking creates chunks and evidence items from normalized documents. |
-| Vector memory | Deterministic local hash embeddings are upserted to Qdrant. Qdrant search and hydrated retrieval trails are available. |
-| Retrieval policy | Retrieval hydration excludes hits from disabled sources and preserves hits with no source. |
-| Chat | `/chat/retrieval-preview` returns retrieval context with `answer_status: not_generated`. `/chat/evidence-answer` returns a deterministic local evidence-summary packet. |
-| Work queue | Work items enforce intent verification metadata before queued dispatch. Supported dispatch types are listed below. |
-| Graph memory | Neo4j schema constraints, lineage sync, and relationship lookup are available as foundation endpoints. |
-| Analysis metadata | Patterns, hypotheses, predictions, and recommendations can be recorded against existing evidence. Baseline pattern detection exists. |
-| Feedback and outcomes | Feedback and outcome metadata can be recorded. Weak feedback can create proposed improvement items. Source trust feedback can update source trust/enabled state. |
-| Reports | Report metadata can be created and rendered to deterministic local markdown artifacts from local metadata counts and recent records. |
-| Improvement and experiments | Improvement items and experiment run metadata can be recorded. Production self-improvement execution is not implemented. |
-| Reserved services | MLflow and Phoenix run as reserved local services, but production experiment execution and tracing integration are not complete. |
-| Settings | The UI can edit the local `.env` through a backend verify-dry-run-before-save workflow with secret masking, backups, atomic writes, and audit events. |
-| Agent command plane | `/agent/capabilities`, `/agent/intent`, and `/agent/actions/{action_name}/execute` provide a deterministic local typed action registry. The web UI can preview intent, execute read-only actions, request approvals, and show runtime blockers honestly. Stack start/stop/recover actions require approval and only execute if the API runtime can actually access Docker CLI, Compose, and Docker control. |
-
-## Rust Cutover Status
-
-The current deployment is Rust-primary, not Rust-only. Docker Compose publishes
-the Rust gateway as `api` on `127.0.0.1:8000` and keeps FastAPI running as the
-internal `legacy-api` fallback. Unsupported gateway routes are proxied to
-FastAPI. Do not remove, disable, or archive `services/api` until route parity is
-proved by a later DIFF.
-
-## Not Implemented Yet
-
-Current boundaries:
-
-- No LLM-generated answers.
-- No autonomous source collection.
-- No browser automation.
-- No ComfyUI or local AI-stack functionality.
-- No image generation, model manager, model selector, or model download flow.
-- No external model calls.
-- No autonomous system-changing actions. The only current system-changing
-  command-plane actions are approved local stack start/stop/recover calls
-  through fixed scripts.
-- No automatic predictions or advice generation.
-- No production self-improvement execution.
-- No production method changes.
-- No binary, PDF, image, audio, or rich document normalization.
-- No full authentication system.
-- No advanced graph reasoning.
-- No advanced ML forecasting.
-- No full connector suite for router, web account, PC diagnostics, conversation history, or approved website collection.
-
-## Services
-
-Default local endpoints:
-
-| Service | URL |
-| --- | --- |
-| Web UI | `http://127.0.0.1:3000` |
-| API | `http://127.0.0.1:8000` |
-| API docs | `http://127.0.0.1:8000/docs` |
-| Qdrant | `http://127.0.0.1:6333` |
-| Neo4j Browser | `http://127.0.0.1:7474` |
-| MLflow | `http://127.0.0.1:5000` |
-| Phoenix | `http://127.0.0.1:6006` |
-
-The Compose file binds published service ports to `127.0.0.1`.
-
-## Storage Model
-
-The repository is intended to hold code, configuration, and documentation.
-Runtime/private/persistent data lives in a separate data folder controlled by
-`IGY6_DATA_ROOT`.
-
-Default:
-
-```text
-IGY6_DATA_ROOT=../IGY6_Data
-```
-
-Docker Compose bind-mounts `IGY6_DATA_ROOT` into the API, worker, and beat
-containers as `/workspace/storage`, so the app can keep using stable container
-paths:
-
-```text
-ARTIFACT_STORE_PATH=/workspace/storage/artifacts
-EXPORT_STORE_PATH=/workspace/storage/exports
-ENV_BACKUP_DIR=/workspace/storage/env_backups
-ENV_FILE_PATH=/workspace/project/.env
-```
-
-Persistent service data is also stored under `IGY6_DATA_ROOT`. IGY6 no longer
-uses Docker named volumes for app persistent data.
-
-Expected data folder contents:
-
-```text
-IGY6_Data/
-  artifacts/
-  exports/
-  env_backups/
-  postgres/
-  qdrant/
-  neo4j/
-    data/
-    logs/
-  mlflow/
-  phoenix/
-```
-
-Recommended Windows layout:
-
-```text
-D:/Projects/IGY6
-D:/Projects/IGY6_Data
-```
-
-`.env` example:
-
-```text
-IGY6_DATA_ROOT=D:/Projects/IGY6_Data
-```
-
-Use forward slashes in `.env` paths on Windows. Do not use backslash paths.
-
-Backup and move rules:
-
-- Stop the Docker stack before copying, moving, zipping, syncing, or backing up
-  runtime data.
-- Copy both the repo folder and the `IGY6_DATA_ROOT` folder when moving IGY6 to
-  another machine or drive.
-- Do not put the live data folder inside OneDrive, iCloud, Dropbox, Google
-  Drive, or another sync tool.
-- Do not commit runtime data.
-
-Existing users:
-
-- Before DIFF-079, data may have lived in Docker named volumes.
-- This change does not migrate old named-volume data automatically.
-- Starting with a fresh `IGY6_DATA_ROOT` can look like a fresh system.
-- If old named-volume data needs migration, do it in a separate manual
-  procedure or future DIFF.
-- Do not delete old Docker named volumes until you confirm the data is no
-  longer needed.
-
-## Run Locally
-
-Prerequisites:
-
-- Docker and Docker Compose.
-- Git.
-- A shell. Examples below use bash-style commands.
-
-1. Clone and open the repository.
+Current web-used route parity is tracked by:
 
 ```bash
-git clone https://github.com/NastyHobbit-1/IGY6.git
-cd IGY6
+python3 scripts/rust-route-parity.py --check
 ```
 
-2. Create a local environment file.
+The web UI should show the same truth: local-first, evidence-only, no external
+model by default, and approval-gated for system-changing actions.
 
-```bash
-cp .env.example .env
-```
+## Start And Stop Locally
 
-3. Review `.env` and choose the data root.
+Create `.env` from `.env.example` before normal local runs.
 
-The checked-in example uses local-only placeholder values such as
-`change-me-local-only`. Keep secrets local and do not commit `.env`.
-
-For the default sibling data folder:
-
-```bash
-mkdir -p ../IGY6_Data
-```
-
-PowerShell equivalent:
-
-```powershell
-New-Item -ItemType Directory -Force -Path ..\IGY6_Data
-```
-
-On Windows, an absolute `.env` value should use forward slashes:
-
-```text
-IGY6_DATA_ROOT=D:/Projects/IGY6_Data
-```
-
-The settings editor expects the API container to see the project `.env` at
-`ENV_FILE_PATH=/workspace/project/.env` and to place backups under
-`ENV_BACKUP_DIR=/workspace/storage/env_backups`. These are local container paths
-defined in `.env.example` and mounted by Docker Compose.
-
-4. Start the stack.
+Start the stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 ```
 
-Relative `IGY6_DATA_ROOT` values are resolved by Docker Compose from the
-Compose file location. Use an absolute forward-slash path when you want a
-specific folder outside the repository, especially on Windows.
-
-5. Open the web UI.
-
-```text
-http://127.0.0.1:3000
-```
-
-6. Open the API or API docs.
-
-```text
-http://127.0.0.1:8000
-http://127.0.0.1:8000/docs
-```
-
-7. Stop the stack.
+Stop the stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env down
 ```
 
-### Operator Scripts
-
-The manual Docker Compose commands above remain valid. For convenience, IGY6
-also includes local operator scripts that resolve the repository root from the
-script location, verify `infra/docker-compose.yml` and `.env`, print the Compose
-command before running it, and avoid destructive Docker cleanup.
-
-Start in the foreground:
+Show running services:
 
 ```bash
-scripts/run.sh
+docker compose -f infra/docker-compose.yml --env-file .env ps
 ```
 
-Start detached, run health checks, and write a safe last-healthy snapshot only
-if required health checks pass:
+Follow logs:
 
 ```bash
-scripts/run.sh --detached
+docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200
 ```
 
-Stop without deleting volumes, images, or runtime data:
+Do not use `down -v` as a normal stop command. `down -v` can delete stored
+Docker volume data.
+
+## Simple WSL Aliases
+
+Add aliases like these to your shell profile, adjusting the path:
 
 ```bash
-scripts/stop.sh
+alias igy6-start='cd /home/nasty/projects/IGY6 && docker compose -f infra/docker-compose.yml --env-file .env up --build'
+alias igy6-stop='cd /home/nasty/projects/IGY6 && docker compose -f infra/docker-compose.yml --env-file .env down'
+alias igy6-ps='cd /home/nasty/projects/IGY6 && docker compose -f infra/docker-compose.yml --env-file .env ps'
+alias igy6-logs='cd /home/nasty/projects/IGY6 && docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200'
 ```
 
-Start from the last healthy local metadata snapshot:
+Then use:
 
 ```bash
-scripts/run-last-healthy-config.sh
+igy6-start
+igy6-ps
+igy6-logs
+igy6-stop
 ```
 
-The snapshot is stored under:
+## Local URLs
+
+| Service | URL |
+| --- | --- |
+| Web UI | `http://127.0.0.1:3000` |
+| API gateway | `http://127.0.0.1:8000` |
+| API readiness | `http://127.0.0.1:8000/health/ready` |
+
+## UI Navigation
+
+The web UI is organized by workflow:
+
+- Home: system status, service readiness, recent data, recent work, recent audit,
+  and next recommended action.
+- Assistant: one place to ask evidence questions, preview safe actions, request
+  approval, run read-only actions, and view action results.
+- Data & Knowledge: sources, uploads, collection runs, raw artifacts, documents,
+  chunks, evidence, memory, analysis, and search.
+- Work & Processing: queue status, work item detail, dispatch status, worker
+  readiness, and the processing pipeline.
+- Reports: report list, report detail, render controls, and output/status.
+- Safety & Audit: approvals, audit log, safety rules, local-first state, and
+  external-model policy.
+- Settings: environment status, redacted config, verify/apply settings, runtime
+  status, storage paths, and developer diagnostics.
+
+Old navigation was split across Chat, Agent Command, Sources, Evidence, Memory,
+Work Queue, Approvals, Audit, Reports, and Settings. Advanced IDs, raw JSON,
+approval IDs, and route/debug details are still available, but they are under
+Advanced sections instead of the primary workflow.
+
+## Quickstart For Normal PC Users
+
+1. Open `http://127.0.0.1:3000`.
+2. Go to Data & Knowledge.
+3. Create or use a `manual_upload` source such as `Router Troubleshooting Notes`.
+4. Request approval if the source permission requires it.
+5. Upload text from a warranty note, router troubleshooting note, bill note, or
+   folder inventory/export.
+6. Check Work & Processing for queued or completed processing.
+7. Ask Assistant questions like:
 
 ```text
-${IGY6_DATA_ROOT}/ops/last-healthy.json
+When does this warranty expire?
+What changed in these router troubleshooting notes?
+What files look duplicated?
+What did I upload today?
+What does this document say about my bill?
 ```
 
-It stores safe operational metadata such as commit hash, relative Compose/env
-paths, file hashes, service status summaries, and health check results. It does
-not store raw `.env` contents or secret values. If no snapshot exists,
-`run-last-healthy-config.sh` refuses cleanly. If the current commit differs or
-the working tree has local changes, it warns but does not reset, checkout,
-stash, overwrite, or discard anything.
+IGY6 does not send this evidence to an external model by default.
 
-## Agent Command Plane
+## Quickstart For Seasoned Coders
 
-The MVP command plane is deterministic and local-only. It is not an LLM agent,
-does not call external models, and does not execute arbitrary shell commands.
-The web UI exposes it in the Agent Command panel near the chat/retrieval area.
-
-Runtime capability check:
-
-```bash
-curl http://127.0.0.1:8000/agent/capabilities
-```
-
-This reports the fixed action registry, which actions are read-only or
-system-changing, whether approval is required, whether required scripts exist,
-and whether the API runtime can actually run Docker stack-control actions. The
-default API container may report stack control as blocked because the Compose
-file does not mount the Docker socket and does not install Docker CLI in the API
-image. That is intentional reporting, not a failed safety check.
-
-Intent preview:
-
-```bash
-curl -X POST http://127.0.0.1:8000/agent/intent \
-  -H "content-type: application/json" \
-  -d '{"message":"show project health"}'
-```
-
-Execute a read-only action:
-
-```bash
-curl -X POST http://127.0.0.1:8000/agent/actions/show_git_status/execute \
-  -H "content-type: application/json" \
-  -d '{}'
-```
-
-Allowed read-only actions:
-
-- `show_project_health`
-- `show_git_status`
-- `show_latest_diff`
-- `show_work_items`
-- `run_retrieval_preview`
-
-Approval-required local stack actions:
-
-- `start_stack`, which calls `scripts/run.sh --detached`
-- `stop_stack`, which calls `scripts/stop.sh`
-- `run_last_healthy_stack`, which calls `scripts/run-last-healthy-config.sh`
-
-The Agent Command UI previews these actions but does not execute them silently.
-It can create an `agent_action` approval request. The user must explicitly
-approve that record before passing its approval ID to execution. If
-`/agent/capabilities` says Docker stack control is unavailable from the API
-runtime, the UI keeps execution blocked even with an approval ID. Host-side
-operators can still run `scripts/run.sh`, `scripts/stop.sh`, and
-`scripts/run-last-healthy-config.sh` directly from the repository root.
-
-### Rust Host Control Bridge
-
-DIFF-086 adds a Rust host-side bridge scaffold at
-`crates/igy6-host-bridge/`. It is local-only and binds to `127.0.0.1`. It
-requires bearer-token authentication and exposes only fixed operator actions:
-
-- `start_stack` -> `scripts/run.sh --detached`
-- `stop_stack` -> `scripts/stop.sh`
-- `run_last_healthy_stack` -> `scripts/run-last-healthy-config.sh`
-
-It does not accept arbitrary shell commands or user-provided argv. It must only
-be called by approved local workflows; the bridge itself is not an approval
-system.
-
-Start it from the host/WSL environment:
-
-```bash
-scripts/start-host-bridge.sh
-```
-
-The start script creates or reuses a token file under
-`${IGY6_DATA_ROOT}/ops/host-bridge.token` and does not print the token. Stop it
-with:
-
-```bash
-scripts/stop-host-bridge.sh
-```
-
-Direct bridge calls require:
+1. Start the stack and verify readiness.
+2. Upload a build log, repo status report, route parity summary, or migration
+   verification note through Data & Knowledge.
+3. Ask Assistant:
 
 ```text
-Authorization: Bearer <token>
+What failed in this build log? Cite the evidence.
+Show git status.
+Show latest DIFF.
+Show work items.
 ```
 
-To approve a stack action, create and approve an approval with request type
-`agent_action` and a payload that exactly names the action:
-
-```bash
-curl -X POST http://127.0.0.1:8000/approvals \
-  -H "content-type: application/json" \
-  -d '{"request_type":"agent_action","request_payload_json":{"action_name":"start_stack"}}'
-```
-
-Then approve it and pass the returned `APPROVAL_ID` to execution:
-
-```bash
-curl -X POST http://127.0.0.1:8000/agent/actions/start_stack/execute \
-  -H "content-type: application/json" \
-  -d '{"approval_id":"APPROVAL_ID"}'
-```
-
-Unknown actions, arbitrary shell requests such as `run rm -rf /`, and
-approval-required actions without a matching approved approval are rejected and
-audited where execution is attempted.
-
-## First Use Workflow
-
-Some steps are easiest through API calls today. The web UI shows current records
-and provides an MVP Action Console for several existing FastAPI endpoints.
-
-1. Start the stack.
-2. Check API readiness with `/health/ready`.
-3. Create a source.
-4. Create a source permission if one was not created with the source.
-5. If the permission has `approval_required: true`, create an approval whose
-   payload exactly matches `source_id`, `source_permission_id`, and collection
-   `operation`.
-6. Approve the approval.
-7. Run a dry-run collection preview.
-8. Run manual upload collection or local project collection.
-9. List work items and dispatch the queued `collection_normalization` item.
-10. List work items again and dispatch the chained `document_chunking` item.
-11. List work items again and dispatch the chained `chunk_vector_upsert` item.
-12. Use chat retrieval preview or evidence answer.
-13. Review retrieved chunks, source trails, evidence, audit events, and reports.
-14. Record feedback, outcomes, or reports if desired.
-
-Only ingested, normalized, chunked, and vector-upserted evidence can be returned
-by retrieval.
-
-## API Examples
-
-Set a local API variable:
-
-```bash
-API=http://127.0.0.1:8000
-```
-
-Replace placeholder IDs such as `SOURCE_ID`, `SOURCE_PERMISSION_ID`,
-`APPROVAL_ID`, `WORK_ITEM_ID`, and `REPORT_ID` with IDs returned by earlier
-calls.
-
-### Health
-
-```bash
-curl "$API/health/live"
-curl "$API/health/ready"
-```
-
-### Create a manual upload source with a permission
-
-```bash
-curl -X POST "$API/sources" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Manual UTF-8 notes",
-    "source_type": "manual_upload",
-    "location": null,
-    "sensitivity": "internal",
-    "permission": {
-      "scope_json": {
-        "description": "Authorized manual UTF-8 text notes only"
-      },
-      "allowed_operations": ["dry_run", "read", "collect"],
-      "external_model_policy": "blocked",
-      "approval_required": true
-    }
-  }'
-```
-
-Use the response `id` as `SOURCE_ID` and the first permission `id` as
-`SOURCE_PERMISSION_ID`.
-
-### Create an approval for manual upload collection
-
-```bash
-curl -X POST "$API/approvals" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "request_type": "manual_upload_collection",
-    "requested_by_actor_id": "local-owner",
-    "request_payload_json": {
-      "source_id": "SOURCE_ID",
-      "source_permission_id": "SOURCE_PERMISSION_ID",
-      "operation": "manual_upload_collection"
-    }
-  }'
-```
-
-### Approve the approval
-
-```bash
-curl -X POST "$API/approvals/APPROVAL_ID/decision" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "approved",
-    "decided_by_actor_id": "local-owner",
-    "decision_reason": "Approved local manual UTF-8 test collection"
-  }'
-```
-
-### Run a dry-run
-
-```bash
-curl -X POST "$API/collection-runs/dry-run" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_id": "SOURCE_ID",
-    "source_permission_id": "SOURCE_PERMISSION_ID",
-    "requested_by_actor_id": "local-owner"
-  }'
-```
-
-### Run manual upload collection with base64 UTF-8 text
-
-```bash
-TEXT_B64=$(printf 'IGY6 local UTF-8 evidence note.' | base64 | tr -d '\n')
-
-curl -X POST "$API/collection-runs/manual-upload" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"source_id\": \"SOURCE_ID\",
-    \"source_permission_id\": \"SOURCE_PERMISSION_ID\",
-    \"approval_id\": \"APPROVAL_ID\",
-    \"filename\": \"manual-note.txt\",
-    \"mime_type\": \"text/plain\",
-    \"content_base64\": \"$TEXT_B64\",
-    \"requested_by_actor_id\": \"local-owner\"
-  }"
-```
-
-The collection response summary includes raw artifact IDs and the queued
-normalization work item ID.
-
-### List work items
-
-```bash
-curl "$API/work-items"
-```
-
-### Dispatch a queued work item
-
-```bash
-curl -X POST "$API/work-items/WORK_ITEM_ID/dispatch" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "actor_id": "local-owner"
-  }'
-```
-
-Repeat list and dispatch for the chained `document_chunking` and
-`chunk_vector_upsert` work items.
-
-### Run chat retrieval preview
-
-```bash
-curl -X POST "$API/chat/retrieval-preview" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "What does the system know?",
-    "limit": 5
-  }'
-```
-
-### Run deterministic evidence answer
-
-```bash
-curl -X POST "$API/chat/evidence-answer" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "What does the system know?",
-    "limit": 5
-  }'
-```
-
-### Create a report
-
-```bash
-curl -X POST "$API/reports" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Local evidence summary",
-    "report_type": "summary",
-    "status": "requested",
-    "requested_by_actor_id": "local-owner"
-  }'
-```
-
-### Render a report
-
-```bash
-curl -X POST "$API/reports/REPORT_ID/render" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "actor_id": "local-owner",
-    "notes": "Rendered from local metadata only."
-  }'
-```
-
-Rendering creates a local markdown artifact and marks the report `ready`.
-
-## Local Project Collection
-
-Local project collection is implemented for scoped files that the API container
-can see.
-
-- The source `source_type` must be `local_project`.
-- The source `location` must be an existing directory inside the
-  container-visible environment. With the default Compose file, the repository
-  `storage` directory is mounted into the API container at `/workspace/storage`.
-- The permission `scope_json` must include a non-empty `paths` list.
-- Relative paths are resolved under the source location.
-- Absolute or relative paths must not escape the source location.
-- `max_files` defaults to `100` when omitted and must be at least `1`.
-- `max_file_bytes` defaults to `1000000` when omitted and must be at least `1`.
-- Symlinks are skipped.
-- Files over `max_file_bytes` are skipped.
-- Artifacts are stored as raw bytes, but current worker normalization supports
-  UTF-8 text only. Binary files may collect and then fail normalization with an
-  explicit UTF-8-only error.
-
-Create an approval for local project collection with
-`operation: "local_project_collection"` and use
-`/collection-runs/local-project` to collect.
-
-Example source payload shape:
-
-```json
-{
-  "name": "Container-visible project notes",
-  "source_type": "local_project",
-  "location": "/workspace/storage/project-notes",
-  "sensitivity": "internal",
-  "permission": {
-    "scope_json": {
-      "paths": ["."],
-      "max_files": 25,
-      "max_file_bytes": 1000000
-    },
-    "allowed_operations": ["dry_run", "read", "collect"],
-    "external_model_policy": "blocked",
-    "approval_required": true
-  }
-}
-```
-
-## Work-Item Dispatch Notes
-
-Work items require recorded intent verification metadata before they can be
-queued or dispatched. Only `queued` work items can dispatch.
-
-Supported dispatch types:
-
-- `collection_normalization`
-- `document_chunking`
-- `chunk_vector_upsert`
-
-Unsupported work-item dispatch types return an error. Worker tasks may create
-chained queued work items after successful normalization or chunking.
-
-Terminal work items such as `completed`, `failed`, or `canceled` do not move
-casually back to `queued` or `running`.
-
-## Retrieval And Chat Notes
-
-- `POST /chat/retrieval-preview` returns retrieval context only with
-  `answer_status: not_generated`.
-- `POST /chat/evidence-answer` returns a deterministic local evidence packet
-  with facts, assumptions, inferences, uncertainty, missing information, source
-  trails, and retrieval context.
-- No LLM answer is generated.
-- No external model call happens.
-- No hidden reasoning or autonomous action happens.
-- Disabled sources are filtered out of hydrated retrieval results.
-- Retrieval can only find chunks that have been ingested, normalized, chunked,
-  and vector-upserted.
-- Retrieval scores are similarity signals, not proof of correctness.
-
-## UI Usage
-
-The web UI is a dark AI-console shell for the existing IGY6 workflows. It shows:
-
-- Local readiness and status.
-- Source registry and source permission summaries.
-- Collection runs, raw artifacts, normalized documents, chunks, evidence items,
-  and claims.
-- Vector memory and graph schema status.
-- Patterns, hypotheses, predictions, and recommendations.
-- Work items, approvals, feedback, outcomes, reports, and audit events.
-- Chat Retrieval Preview, which calls same-origin
-  `/api/chat/retrieval-preview`.
-- Settings, which calls same-origin `/api/settings/env`,
-  `/api/settings/env/verify`, and `/api/settings/env/apply`.
-- MVP Action Console controls that call existing FastAPI endpoints only.
-
-Scaffolded visual controls are disabled or labeled honestly. The UI does not add
-ComfyUI, image generation, model management, model downloads, autonomous agents,
-or AI-stack backend behavior.
-
-## Help Bubbles
-
-IGY6 includes hover/focus help bubbles for technical terms in the web UI. Keep
-the pointer or keyboard focus on the small `?` marker for about one second to
-see a plain-language explanation.
-
-Help bubbles are cosmetic only. They do not change API names, saved data,
-backend behavior, settings behavior, or labels stored in the database. Common
-words such as Completed, Failed, Reports, Settings, Search, and Save may not
-have bubbles because they are already clear in context.
-
-Exact technical keys remain visible where needed, especially in Settings. For
-example, `ENV_FILE_PATH`, `ENV_BACKUP_DIR`,
-`IGY6_DATA_ROOT`, `QDRANT_CHUNK_VECTOR_SIZE`,
-`EXTERNAL_MODEL_POLICY_DEFAULT`, and `APPROVAL_REQUIRED_DEFAULT` keep their
-exact names while explaining what they control and what restart or safety
-limits apply.
-
-## Settings Page
-
-The Settings section edits the local IGY6 `.env` only. It is a sensitive,
-system-changing workflow, so the UI never blindly saves edits.
-
-Current flow:
-
-1. The UI loads sanitized settings from `GET /settings/env`.
-2. Editable allowlisted keys are grouped by App / Web, PostgreSQL, Redis /
-   Celery, Qdrant, Neo4j, MLflow, Phoenix, Storage, and Policy / Safety.
-3. Secret values such as passwords and URLs containing passwords are masked by
-   default.
-4. To change a secret, use the replacement field; the current secret is not
-   shown in plain text.
-5. Click `Verify Dry Run`.
-6. The API validates the proposed candidate without writing `.env`.
-7. If dry-run passes, the API returns a candidate hash/verification token.
-8. `Save Settings` is enabled only for the exact candidate that passed dry-run.
-9. Save revalidates the same candidate, requires the matching token, creates a
-   timestamped backup, atomically writes normalized `.env` content, and records
-   an audit event without secret values.
-
-Dry-run validates:
-
-- Unknown keys are not editable. Existing unknown `.env` keys are shown as
-  read-only unmanaged keys and preserved.
-- `IGY6_DATA_ROOT` is not empty, is not a filesystem or drive root, does not use
-  Windows backslashes, and does not contain traversal except the default
-  `../IGY6_Data`.
-- Required allowlisted keys are present.
-- Ports are valid integers from `1` to `65535`.
-- Boolean values parse for `SINGLE_USER_MODE` and
-  `APPROVAL_REQUIRED_DEFAULT`.
-- URLs and URIs are syntactically plausible.
-- `DATABASE_URL`, `NEO4J_URI`, and `QDRANT_URL` agree with their matching host,
-  port, user, password, and database fields where applicable.
-- Storage paths are absolute container paths and do not contain obvious path
-  traversal.
-- External model policy and audit log level values are constrained.
-- Qdrant vector size is a positive integer, with a warning that changing it can
-  require rebuilding vector storage.
-- Changing `IGY6_DATA_ROOT` warns that Docker stack restart/recreate is required,
-  existing data is not migrated, and the target folder must exist or be
-  creatable by Docker.
-- Docker Compose config validation is attempted from the API runtime only when
-  Docker CLI and the Compose file are available. If unavailable, dry-run returns
-  a warning instead of failing solely for that reason.
-
-Dry-run passing means the candidate configuration is syntactically and
-structurally valid. It does not guarantee every service will work after restart.
-
-Saved settings are written to `.env`; they are not applied to running
-containers. Restart or recreate the Docker stack before expecting changed values
-to take effect. No automatic restart or container recreate is implemented.
-Saving a new `IGY6_DATA_ROOT` does not move existing data.
-
-Backups are written to `ENV_BACKUP_DIR`. Automatic rollback is not implemented
-in this DIFF. Manual rollback is:
-
-```bash
-cp storage/env_backups/.env.TIMESTAMP.bak .env
-docker compose -f infra/docker-compose.yml --env-file .env up --build
-```
-
-Use the actual backup path returned by the Settings save response.
+4. Use Work & Processing to inspect queue state and dispatch metadata.
+5. Use Safety & Audit to review approval decisions and audit events after an
+   agent action.
+6. Use Reports to render a migration or verification summary.
+
+## Manual Upload Test Flow
+
+Use this as a small local smoke test:
+
+1. Data & Knowledge -> Sources: create a source.
+   - Source name: `Router Troubleshooting Notes` or `IGY6 Build Logs`
+   - Source type: `manual_upload`
+   - Location: `local notes folder` or `local repo logs`
+   - Sensitivity: `private` or `internal`
+   - Allowed operations: `read, collect` or `read, collect, dry_run`
+2. Safety & Audit -> Approvals: request approval if required.
+   - Normal user reason: `Allow IGY6 to process this uploaded troubleshooting note.`
+   - Coder reason: `Approve processing this local build log for evidence extraction.`
+3. Data & Knowledge -> Uploads & Collection: upload UTF-8 text.
+4. Work & Processing: confirm collection/work records were created.
+5. Data & Knowledge -> Evidence: inspect documents, chunks, evidence items, and
+   source trails.
+6. Assistant: ask an evidence question and verify citations or retrieval context.
+
+Current manual upload works best with UTF-8 text. Binary PDF/image/audio parsing
+is not claimed by this flow unless a later DIFF adds it.
+
+## Safety And Approvals
+
+Read-only actions, retrieval preview, and local status checks are designed to be
+safe by default. System-changing actions must show approval requirements and use
+matching approval records before execution.
+
+Supported assistant action labels include:
+
+- Show project health
+- Show git status
+- Show latest DIFF
+- Show work items
+- Run retrieval preview
+- Start stack
+- Stop stack
+- Run last healthy stack
+
+Stack start/stop/recovery actions require approval and only run if the API
+runtime has the fixed allowlisted host bridge capability it needs. IGY6 does not
+run arbitrary shell text from user input.
+
+## Settings
+
+Settings shows environment status, redacted config values, runtime service
+status, storage paths, and developer diagnostics. Secret-like values are masked.
+The UI should never display raw secrets and should not encourage pasting tokens
+or private keys into unsafe fields.
+
+Settings changes use verify-before-apply behavior where supported. Some values
+are read-only or require service restart/recreate after editing.
 
 ## Troubleshooting
 
-| Symptom | What to check |
-| --- | --- |
-| Docker daemon unavailable | Confirm Docker Desktop or the Docker daemon is running, then rerun the Compose command. |
-| Port already in use | Another local process may already be bound to `3000`, `8000`, `5432`, `6379`, `6333`, `7474`, `7687`, `5000`, or `6006`. Stop the other process or change the local port mapping deliberately. |
-| API readiness is not `ok` | Call `/health/ready` and inspect which dependency is degraded: PostgreSQL, Redis, Qdrant, Neo4j, MLflow, or Phoenix. |
-| Worker not responding | Check the `worker` service logs and run the Celery ping command in the verification section. |
-| Migrations not current | Run `docker compose -f infra/docker-compose.yml --env-file .env exec -T api alembic current` and inspect API startup logs. |
-| Qdrant search returns no hits | Make sure collection, normalization, document chunking, and vector upsert work items have completed. Also verify the vector collection exists. |
-| Manual upload rejected as non-UTF-8 | Manual upload collection currently accepts UTF-8 text only. Convert the content to UTF-8 text before upload. |
-| Local project path escapes source location | Keep every permission path under the source `location`; scoped paths cannot escape that root. |
-| No evidence answer is returned | There may be no ingested, chunked, and vector-upserted evidence yet, or matching evidence may belong to a disabled source. |
-| Settings dry-run passes but services fail after restart | Dry-run validates structure, not live service availability. Review the changed keys and Docker logs after restart. |
-| Settings save fails because `.env` is not writable | Confirm Docker Compose mounted the repository at `/workspace/project` and that the local `.env` file exists and is writable. |
-| Fresh system after changing storage | `IGY6_DATA_ROOT` may point at an empty data folder. This DIFF does not migrate old Docker named-volume data automatically. |
-| `npm --prefix apps/web run lint` is unavailable | The web package currently defines `dev`, `build`, and `start`, but no `lint` script. Use `npm --prefix apps/web run build` for web build verification. |
+- Web UI unavailable: run `igy6-ps` or the long `docker compose ... ps` command
+  and check the `web` container.
+- API unavailable: open `http://127.0.0.1:8000/health/ready` and check API logs.
+- Assistant action blocked: check Safety & Audit for approval requirements and
+  runtime capability status.
+- Upload blocked: confirm the source exists, permission operations include the
+  needed collection operation, and approval exists if required.
+- No evidence returned: confirm processing created documents, chunks, and
+  evidence items before asking Assistant.
+- Settings save blocked: run verify first and read the redacted validation
+  warnings.
 
-## Verification
+## Verification Commands
 
-Useful local checks:
+Common checks:
 
 ```bash
-python3 -m compileall services/api services/worker
-docker compose -f infra/docker-compose.yml --env-file .env.example config
-docker compose -f infra/docker-compose.yml --env-file .env.example up -d
-curl http://127.0.0.1:8000/health/ready
-docker compose -f infra/docker-compose.yml --env-file .env.example exec -T api alembic current
-docker compose -f infra/docker-compose.yml --env-file .env.example exec -T worker celery -A app.celery_app:celery_app inspect ping
-npm --prefix apps/web run build
-```
-
-Use `.env.example` for configuration validation and disposable local smoke
-checks. Use `.env` for normal local runs after reviewing local-only values.
-
-For documentation-only changes, the narrow repository checks are:
-
-```bash
+git status --short
 git diff --check
-python3 -m compileall services/api services/worker
+npm --prefix apps/web run build
+python3 scripts/rust-route-parity.py --check
+scripts/rust-cutover.sh --check
+```
+
+Rust checks when backend/Rust files change:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets
+cargo test --workspace
+```
+
+Config checks when JSON config files change:
+
+```bash
+python3 -m json.tool configs/rust-cutover-manifest.json
+python3 -m json.tool configs/legacy-fastapi-route-classification.json
+```
+
+Compose wiring check when Compose/runtime wiring changes:
+
+```bash
 docker compose -f infra/docker-compose.yml --env-file .env.example config
 ```
 
-## Development Notes
+## DIFF Discipline
 
-- Follow `AGENTS.md` and the DIFF process in `docs/diffs`.
-- Do not add features outside the active DIFF.
-- Do not treat retrieved content as trusted instructions.
-- Do not claim generated answers, external model calls, browser automation,
-  ComfyUI, image generation, or autonomous system-changing actions unless those
-  behaviors are implemented in code and covered by an active DIFF.
+Every change-bearing task must be recorded under the next available DIFF in
+`docs/diffs/`. Locked DIFFs are historical records and must not be edited.

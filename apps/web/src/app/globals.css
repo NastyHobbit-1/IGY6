@@ -164,10 +164,15 @@ a {
 }
 
 .sidebarActions button,
+.sidebarButton,
+.inlineAction,
 .previewForm button,
 .actionBox button,
 .settingsActions button,
 .agentCommandActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 38px;
   border: 1px solid rgba(96, 165, 250, 0.42);
   border-radius: 10px;
@@ -177,11 +182,17 @@ a {
   box-shadow: 0 10px 28px rgba(13, 34, 58, 0.22);
 }
 
+.sidebarButton:not(.primary),
 .sidebarActions button:nth-child(n+2) {
   border-color: rgba(148, 163, 184, 0.16);
   background: #111827;
   color: #cbd5e1;
   box-shadow: none;
+}
+
+.inlineAction {
+  width: fit-content;
+  padding: 0 14px;
 }
 
 .sidebarActions button:disabled {
@@ -192,12 +203,20 @@ a {
 }
 
 .sidebarSearch,
-.previewForm label {
+.previewForm label,
+.agentCommandGrid label {
   display: grid;
   gap: 7px;
   color: #94a3b8;
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.previewForm small,
+.agentCommandGrid small {
+  color: #9fb0c6;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .sidebarSearch input,
@@ -1130,6 +1149,145 @@ a {
   white-space: pre-wrap;
 }
 
+.workflowHero,
+.workflowSection {
+  scroll-margin-top: 90px;
+}
+
+.quickStartGrid,
+.fieldGuide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quickStartGrid article,
+.fieldGuide article,
+.panelInset,
+.advancedPanel {
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 12px;
+  background: rgba(8, 13, 22, 0.58);
+  padding: 12px;
+}
+
+.quickStartGrid article,
+.fieldGuide article {
+  display: grid;
+  gap: 7px;
+}
+
+.quickStartGrid p,
+.fieldGuide span,
+.panelInset p,
+.workflowSteps span,
+.routeHint {
+  color: #a8b6c9;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.fieldGuide {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.fieldGuide strong {
+  color: #f1f5f9;
+}
+
+.lifecycleFlow,
+.workflowTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.lifecycleFlow span,
+.workflowTabs a {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 999px;
+  background: rgba(30, 64, 112, 0.18);
+  color: #d8e7fb;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 6px 10px;
+}
+
+.lifecycleFlow span::after {
+  content: ">";
+  margin-left: 8px;
+  color: #7dd3fc;
+}
+
+.lifecycleFlow span:last-child::after {
+  content: "";
+  margin: 0;
+}
+
+.workflowSteps {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.workflowSteps li {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.48);
+  padding: 12px;
+}
+
+.workflowSteps strong {
+  color: #eef4ff;
+}
+
+.advancedPanel {
+  margin-top: 14px;
+}
+
+.advancedPanel summary {
+  cursor: pointer;
+  color: #dbeafe;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.advancedPanel pre {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: #050810;
+  color: #dbeafe;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.panelInset {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.agentCommandPanel .agentCommandGrid {
+  grid-template-columns: 1fr;
+}
+
+.advancedPanel .agentCommandGrid {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.6fr);
+}
+
 @media (max-width: 1180px) {
   .consoleShell {
     grid-template-columns: 240px minmax(0, 1fr);
@@ -1176,6 +1334,8 @@ a {
   .metrics,
   .split,
   .quad,
+  .quickStartGrid,
+  .fieldGuide,
   .actionGrid,
   .agentActionList,
   .agentCommandGrid,
