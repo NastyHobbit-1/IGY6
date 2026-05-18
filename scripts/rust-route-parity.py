@@ -28,6 +28,14 @@ CLASSIFICATION_BUCKETS = {
     "duplicate_or_superseded",
     "unsafe_to_migrate_now",
 }
+EXPLICIT_DYNAMIC_WEB_ROUTES = {
+    # DIFF-120: these controls are assembled through string concatenation in
+    # apps/web and must remain visible to the parity guard.
+    ("POST", "/analysis/patterns/{pattern_id}/review"),
+    ("POST", "/approvals/{approval_id}/decision"),
+    ("POST", "/reports/{report_id}/render"),
+    ("POST", "/work-items/{work_item_id}/dispatch"),
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -101,7 +109,9 @@ def rust_gateway_routes() -> set[Route]:
 
 
 def web_used_routes() -> set[Route]:
-    routes: set[Route] = set()
+    routes: set[Route] = {
+        Route(method, path) for method, path in EXPLICIT_DYNAMIC_WEB_ROUTES
+    }
     method_by_function = {"getJson": "GET", "postJson": "POST"}
     literal_route = re.compile(r'(?P<fn>getJson|postJson)<?[^("]*\(\s*"(?P<path>/[^"]+)"')
     fetch_route = re.compile(r'fetch\([^`\n]*`[^`]*\$\{apiBaseUrl\}(?P<path>/[^`]+)`')

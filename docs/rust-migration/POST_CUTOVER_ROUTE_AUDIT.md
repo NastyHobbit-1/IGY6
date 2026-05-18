@@ -20,15 +20,16 @@ Rust gateway service: api
     |   writes, DIFF-111 source creation, DIFF-112 report creation, and
     |   DIFF-113 analysis pattern writes, DIFF-114 collection dry-run
     |   previews, DIFF-115 settings verify/apply, DIFF-116 work-item
-    |   creation, DIFF-117 manual upload collection creation, and DIFF-118
-    |   agent action request/execution routes
+    |   creation, DIFF-117 manual upload collection creation, DIFF-118
+    |   agent action request/execution routes, and DIFF-120 dynamic web
+    |   control routes
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
 FastAPI is still required for classified non-web routes. No web-used route
-requires FastAPI fallback after DIFF-118, and DIFF-119 records the final
+requires FastAPI fallback after DIFF-120, and DIFF-120 records the current
 non-web fallback posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
@@ -74,6 +75,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/analysis/patterns` | Rust-native DB read |
 | GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
 | POST | `/analysis/patterns` | Rust-native DB write with evidence validation and audit event |
+| POST | `/analysis/patterns/{pattern_id}/review` | Rust-native DB status transition with audit event |
 | POST | `/analysis/patterns/detect-baseline` | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/hypotheses` | Rust-native DB read |
 | GET | `/analysis/hypotheses/{hypothesis_id}` | Rust-native DB read |
@@ -83,6 +85,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/analysis/recommendations/{recommendation_id}` | Rust-native DB read |
 | GET | `/approvals` | Rust-native DB read |
 | GET | `/approvals/{approval_id}` | Rust-native DB read |
+| POST | `/approvals/{approval_id}/decision` | Rust-native pending-only approval decision with audit event |
 | GET | `/artifacts` | Rust-native DB read |
 | GET | `/artifacts/{artifact_id}` | Rust-native DB read |
 | GET | `/audit-events` | Rust-native DB read |
@@ -108,6 +111,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/reports` | Rust-native DB read |
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | POST | `/reports` | Rust-native DB write with audit event |
+| POST | `/reports/{report_id}/render` | Rust-native bounded metadata report render with artifact and audit event |
 | GET | `/sources` | Rust-native DB read |
 | GET | `/sources/{source_id}` | Rust-native DB read |
 | GET | `/sources/{source_id}/permissions` | Rust-native DB read |
@@ -116,42 +120,36 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/work-items/{work_item_id}` | Rust-native DB read |
 | POST | `/work-items` | Rust-native DB write with intent verification and audit event |
 | POST | `/work-items/` | Rust-native DB write with intent verification and audit event |
+| POST | `/work-items/{work_item_id}/dispatch` | Rust-native dispatch validation and non-executing audit marker |
 
 All other routes are forwarded to `legacy-api` when the fallback origin is
 configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 |
 
-## DIFF-119 Non-Web FastAPI Classification
+## DIFF-120 Dynamic Web Control Route Parity
 
-DIFF-119 does not migrate or remove routes. It classifies the 34 FastAPI routes
-missing from Rust and makes `scripts/rust-route-parity.py --check` fail when a
-missing route is not classified.
-
-Manual inspection of `apps/web` found dynamic page controls for
-`POST /analysis/patterns/{pattern_id}/review`,
-`POST /approvals/{approval_id}/decision`, `POST /reports/{report_id}/render`,
-and `POST /work-items/{work_item_id}/dispatch`. The existing route parity guard
-still reports `web_routes_requiring_fallback=0` because those dynamic controls
-are outside its normalized route extraction, but DIFF-119 marks them
-`used_by_apps_web=true` in the classification JSON. FastAPI therefore remains
-required and Rust-only cannot be claimed.
+DIFF-120 migrates the four dynamically referenced `apps/web` page controls that
+DIFF-119 found outside the extractor, and adds them explicitly to
+`scripts/rust-route-parity.py` so they cannot be missed again. FastAPI remains
+required for the 30 classified routes still missing from Rust, and Rust-only
+cannot be claimed.
 
 | Classification | Count |
 | --- | ---: |
-| `active_parity_required` | 13 |
+| `active_parity_required` | 11 |
 | `intentional_legacy_fallback` | 7 |
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
-| `unsafe_to_migrate_now` | 13 |
+| `unsafe_to_migrate_now` | 11 |
 
 FastAPI remains required because `intentional_legacy_fallback` and
 `unsafe_to_migrate_now` are non-empty. Rust-only cannot honestly be claimed.
@@ -166,13 +164,14 @@ FastAPI remains required because `intentional_legacy_fallback` and
 | POST | `/agent/actions/{action_name}/execute` | Next.js proxy and page action execution | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
 | GET | `/analysis/patterns` | Page data load | Rust-native DB read |
 | POST | `/analysis/patterns` | Page pattern create | Rust-native DB write with evidence validation and audit event |
+| POST | `/analysis/patterns/{pattern_id}/review` | Page pattern review | Rust-native candidate-only status transition with audit event |
 | POST | `/analysis/patterns/detect-baseline` | Page baseline pattern detection | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/hypotheses` | Page data load | Rust-native DB read |
 | GET | `/analysis/predictions` | Page data load | Rust-native DB read |
 | GET | `/analysis/recommendations` | Page data load | Rust-native DB read |
 | GET | `/approvals` | Next.js proxy and page data load | Rust-native DB read |
 | POST | `/approvals` | Next.js proxy and page approval request | Rust-native DB write with audit event |
-| POST | `/approvals/{approval_id}/decision` | Page approval decision | Proxied to FastAPI |
+| POST | `/approvals/{approval_id}/decision` | Page approval decision | Rust-native pending-only decision with audit event |
 | POST | `/chat/retrieval-preview` | Next.js proxy and page chat preview | Rust-native contract response |
 | POST | `/chat/evidence-answer` | Page evidence answer | Rust-native contract response |
 | GET | `/artifacts` | Page data load | Rust-native DB read |
@@ -192,7 +191,7 @@ FastAPI remains required because `intentional_legacy_fallback` and
 | GET | `/memory/vector/chunks` | Page data load | Rust-native read-only status |
 | POST | `/reports` | Page report create | Rust-native DB write with audit event |
 | GET | `/reports` | Page data load | Rust-native DB read |
-| POST | `/reports/{report_id}/render` | Page report render | Proxied to FastAPI |
+| POST | `/reports/{report_id}/render` | Page report render | Rust-native bounded metadata render with artifact and audit event |
 | GET | `/settings/env` | Next.js proxy and page settings load | Rust-native redacted config metadata |
 | POST | `/settings/env/verify` | Next.js proxy and page settings verify | Rust-native settings validation with redaction and token generation |
 | POST | `/settings/env/apply` | Next.js proxy and page settings apply | Rust-native settings apply with safe `.env` backup/write and audit event |
@@ -200,7 +199,7 @@ FastAPI remains required because `intentional_legacy_fallback` and
 | POST | `/sources` | Page source create | Rust-native DB write with optional permission and audit event |
 | GET | `/work-items` | Page data load | Rust-native DB read |
 | POST | `/work-items/` | Page work item creation | Rust-native DB write with intent verification and audit event |
-| POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Proxied to FastAPI |
+| POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Rust-native validation and non-executing dispatch audit marker |
 
 ## FastAPI Route Inventory
 
@@ -215,7 +214,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/agent/actions/{action_name}/execute` | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
 | GET | `/analysis/patterns` | Rust-native DB read |
 | POST | `/analysis/patterns` | Rust-native DB write with evidence validation and audit event |
-| POST | `/analysis/patterns/{pattern_id}/review` | Proxied to FastAPI |
+| POST | `/analysis/patterns/{pattern_id}/review` | Rust-native DB status transition with audit event |
 | POST | `/analysis/patterns/detect-baseline` | Rust-native DB write with deterministic local detection and audit events |
 | GET | `/analysis/patterns/{pattern_id}` | Rust-native DB read |
 | GET | `/analysis/hypotheses` | Rust-native DB read |
@@ -230,7 +229,7 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/approvals` | Rust-native DB read |
 | POST | `/approvals` | Rust-native DB write with audit event |
 | GET | `/approvals/{approval_id}` | Rust-native DB read |
-| POST | `/approvals/{approval_id}/decision` | Proxied to FastAPI |
+| POST | `/approvals/{approval_id}/decision` | Rust-native pending-only decision with audit event |
 | GET | `/artifacts` | Rust-native DB read |
 | POST | `/artifacts` | Proxied to FastAPI |
 | GET | `/artifacts/{artifact_id}` | Rust-native DB read |
@@ -283,7 +282,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/reports` | Rust-native DB write with audit event |
 | POST | `/reports/{report_id}/status` | Proxied to FastAPI |
 | POST | `/reports/{report_id}/work-item` | Proxied to FastAPI |
-| POST | `/reports/{report_id}/render` | Proxied to FastAPI |
+| POST | `/reports/{report_id}/render` | Rust-native bounded metadata render with artifact and audit event |
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | GET | `/retrieval/chunks/{chunk_id}/trail` | Proxied to FastAPI |
 | POST | `/retrieval/chunks/search` | Proxied to FastAPI |
@@ -297,7 +296,7 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/sources/{source_id}/permissions` | Proxied to FastAPI |
 | GET | `/work-items` | Rust-native DB read |
 | POST | `/work-items` | Rust-native DB write with intent verification and audit event |
-| POST | `/work-items/{work_item_id}/dispatch` | Proxied to FastAPI |
+| POST | `/work-items/{work_item_id}/dispatch` | Rust-native validation and non-executing dispatch audit marker |
 | POST | `/work-items/{work_item_id}/status` | Proxied to FastAPI |
 | GET | `/work-items/{work_item_id}` | Rust-native DB read |
 

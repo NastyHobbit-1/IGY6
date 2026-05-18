@@ -34,6 +34,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/analysis/patterns"),
     ("GET", "/analysis/patterns/{pattern_id}"),
     ("POST", "/analysis/patterns"),
+    ("POST", "/analysis/patterns/{pattern_id}/review"),
     ("POST", "/analysis/patterns/detect-baseline"),
     ("GET", "/analysis/predictions"),
     ("GET", "/analysis/predictions/{prediction_id}"),
@@ -45,6 +46,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/approvals"),
     ("GET", "/approvals/{approval_id}"),
     ("POST", "/approvals"),
+    ("POST", "/approvals/{approval_id}/decision"),
     ("GET", "/artifacts"),
     ("GET", "/artifacts/{artifact_id}"),
     ("GET", "/audit-events"),
@@ -72,6 +74,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/reports"),
     ("GET", "/reports/{report_id}"),
     ("POST", "/reports"),
+    ("POST", "/reports/{report_id}/render"),
     ("GET", "/settings/env"),
     ("POST", "/settings/env/apply"),
     ("POST", "/settings/env/verify"),
@@ -83,6 +86,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/work-items/{work_item_id}"),
     ("POST", "/work-items"),
     ("POST", "/work-items/"),
+    ("POST", "/work-items/{work_item_id}/dispatch"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +278,18 @@ pub fn handle_gateway_request_with_db(
         ("POST", _) => {
             if let Some(action_name) = agent_action_execute_path(&request.path) {
                 agent_action_execute_response(&action_name, &request.body, database_url)
+            } else if let Some(pattern_id) = pattern_review_path(&request.path) {
+                action_route_response(review_pattern(&pattern_id, &request.body, database_url))
+            } else if let Some(approval_id) = approval_decision_path(&request.path) {
+                action_route_response(decide_approval(&approval_id, &request.body, database_url))
+            } else if let Some(report_id) = report_render_path(&request.path) {
+                action_route_response(render_report(&report_id, &request.body, database_url))
+            } else if let Some(work_item_id) = work_item_dispatch_path(&request.path) {
+                action_route_response(dispatch_work_item(
+                    &work_item_id,
+                    &request.body,
+                    database_url,
+                ))
             } else {
                 fallback_or_error(request, fallback_origin)
             }
@@ -1480,6 +1496,344 @@ fn create_work_item(body: &str, database_url: Option<&str>) -> Result<String, Ga
     Ok(response_body)
 }
 
+fn review_pattern(
+    pattern_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let pattern_id = validate_route_id(pattern_id, "pattern_id")?;
+    let payload = parse_pattern_review(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt("SELECT status FROM patterns WHERE id = $1", &[&pattern_id])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Pattern not found".to_string()));
+    };
+    let previous_status: String = row.get(0);
+    if previous_status != "candidate" {
+        return Err(GatewayError::Conflict(
+            "Only candidate patterns can be reviewed".to_string(),
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE patterns SET status = $2, updated_at = now() WHERE id = $1",
+            &[&pattern_id, &payload.status],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "previous_status": previous_status,
+        "new_status": payload.status,
+        "review_note": payload.review_note
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'analysis.pattern.reviewed', $2, 'pattern', $3, NULL, $4::jsonb)",
+            &[&payload.reviewed_by_actor_id, &payload.status, &pattern_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, pattern_type, status, summary, evidence_ids, confidence, metadata_json, created_at, updated_at FROM patterns WHERE id = $1) t",
+            &[&pattern_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn decide_approval(
+    approval_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let approval_id = validate_route_id(approval_id, "approval_id")?;
+    let payload = parse_approval_decision(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT request_type, status FROM approvals WHERE id = $1",
+            &[&approval_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Approval not found".to_string()));
+    };
+    let request_type: String = row.get(0);
+    let previous_status: String = row.get(1);
+    if previous_status != "pending" {
+        return Err(GatewayError::Conflict(
+            "Approval already decided".to_string(),
+        ));
+    }
+    transaction
+        .execute(
+            "UPDATE approvals SET status = $2, decided_by_actor_id = $3, decision_reason = $4, decided_at = now(), updated_at = now() WHERE id = $1",
+            &[
+                &approval_id,
+                &payload.status,
+                &payload.decided_by_actor_id,
+                &payload.decision_reason,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "request_type": request_type,
+        "status": payload.status
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'approval.decided', $2, 'approval', $3, NULL, $4::jsonb)",
+            &[&payload.decided_by_actor_id, &payload.status, &approval_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, request_type, status, requested_by_actor_id, decided_by_actor_id, decision_reason, request_payload_json, decided_at, created_at, updated_at FROM approvals WHERE id = $1) t",
+            &[&approval_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn render_report(
+    report_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let report_id = validate_route_id(report_id, "report_id")?;
+    let payload = parse_report_render(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, title, report_type, status, requested_by_actor_id, metadata_json FROM reports WHERE id = $1",
+            &[&report_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Report not found".to_string()));
+    };
+    let report = ReportRenderRecord {
+        id: row.get(0),
+        title: row.get(1),
+        report_type: row.get(2),
+        status: row.get(3),
+        requested_by_actor_id: row.get(4),
+        metadata_json: row.get(5),
+    };
+    let content = build_report_markdown(&mut transaction, &report, payload.notes.as_deref())?;
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let stored = store
+        .write_bytes(content.as_bytes())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    if stored.size_bytes > i32::MAX as u64 {
+        return Err(GatewayError::Conflict(
+            "Rendered report artifact is too large".to_string(),
+        ));
+    }
+    let artifact_id = generated_record_id("artifact");
+    let mut metadata_json = report.metadata_json;
+    if let Value::Object(ref mut object) = metadata_json {
+        object.insert(
+            "rendered_artifact_id".to_string(),
+            Value::String(artifact_id.clone()),
+        );
+        object.insert(
+            "rendered_mime_type".to_string(),
+            Value::String("text/markdown".to_string()),
+        );
+    } else {
+        metadata_json = serde_json::json!({
+            "rendered_artifact_id": artifact_id,
+            "rendered_mime_type": "text/markdown"
+        });
+    }
+    let artifact_metadata = serde_json::json!({
+        "generated_by": "DIFF-120",
+        "artifact_kind": "report",
+        "report_id": report.id,
+        "report_type": report.report_type,
+        "filename": format!("{}.md", report.id)
+    });
+    transaction
+        .execute(
+            "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, NULL, NULL, $2, $3, 'text/markdown', $4::integer, $5::jsonb)",
+            &[
+                &artifact_id,
+                &stored.content_hash,
+                &stored.storage_path,
+                &(stored.size_bytes as i32),
+                &artifact_metadata,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .execute(
+            "UPDATE reports SET status = 'ready', artifact_path = $2, metadata_json = $3::jsonb, updated_at = now() WHERE id = $1",
+            &[&report.id, &stored.storage_path, &metadata_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "artifact_id": artifact_id,
+        "artifact_path": stored.storage_path,
+        "content_hash": stored.content_hash,
+        "content_already_existed": stored.existed
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'report.rendered', 'ready', 'report', $2, $3, $4::jsonb)",
+            &[&payload.actor_id, &report.id, &artifact_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t",
+            &[&report.id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn dispatch_work_item(
+    work_item_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let work_item_id = validate_route_id(work_item_id, "work_item_id")?;
+    let payload = parse_work_item_dispatch(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, work_type, status, payload_json FROM work_items WHERE id = $1",
+            &[&work_item_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Work item not found".to_string()));
+    };
+    let work_item = WorkItemDispatchRecord {
+        id: row.get(0),
+        work_type: row.get(1),
+        status: row.get(2),
+        payload_json: row.get(3),
+    };
+    if work_item.status != "queued" {
+        return Err(GatewayError::Conflict(
+            "Only queued work items can be dispatched".to_string(),
+        ));
+    }
+    if !has_intent_verification(&work_item.payload_json) {
+        return Err(GatewayError::Conflict(
+            "Work item requires recorded intent verification before dispatch".to_string(),
+        ));
+    }
+    let task_name = dispatch_task_name(&work_item)?;
+    let task_id = generated_record_id("dispatch");
+    let mut payload_json = work_item.payload_json;
+    match payload_json {
+        Value::Object(ref mut object) => {
+            object.insert(
+                "dispatch".to_string(),
+                serde_json::json!({
+                    "task_name": task_name,
+                    "task_id": task_id,
+                    "dispatched_by_actor_id": payload.actor_id,
+                    "rust_gateway_execution": "not_executed",
+                    "safe_dispatch_only": true,
+                    "parity_limit": "DIFF-120 does not invoke Celery from the Rust gateway"
+                }),
+            );
+        }
+        _ => {
+            payload_json = serde_json::json!({
+                "dispatch": {
+                    "task_name": task_name,
+                    "task_id": task_id,
+                    "dispatched_by_actor_id": payload.actor_id,
+                    "rust_gateway_execution": "not_executed",
+                    "safe_dispatch_only": true,
+                    "parity_limit": "DIFF-120 does not invoke Celery from the Rust gateway"
+                }
+            });
+        }
+    }
+    transaction
+        .execute(
+            "UPDATE work_items SET payload_json = $2::jsonb, updated_at = now() WHERE id = $1",
+            &[&work_item.id, &payload_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "work_type": work_item.work_type,
+        "task_name": task_name,
+        "task_id": task_id,
+        "rust_gateway_execution": "not_executed",
+        "safe_dispatch_only": true
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.dispatched', 'queued_without_execution', 'work_item', $2, $3, $4::jsonb)",
+            &[&payload.actor_id, &work_item.id, &task_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(format!(
+        "{{\"work_item_id\":\"{}\",\"work_type\":\"{}\",\"task_name\":\"{}\",\"task_id\":\"{}\",\"status\":\"{}\",\"rust_gateway_execution\":\"not_executed\"}}",
+        escape_json(&work_item.id),
+        escape_json(&work_item.work_type),
+        escape_json(&task_name),
+        escape_json(&task_id),
+        escape_json(&work_item.status)
+    ))
+}
+
 fn insert_pattern_with_audit(
     transaction: &mut postgres::Transaction<'_>,
     payload: &PatternCreatePayload,
@@ -1597,6 +1951,136 @@ fn load_existing_detector_keys(
                 .collect()
         })
         .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn build_report_markdown(
+    transaction: &mut postgres::Transaction<'_>,
+    report: &ReportRenderRecord,
+    notes: Option<&str>,
+) -> Result<String, GatewayError> {
+    let counts = [
+        ("approvals", count_table(transaction, "approvals")?),
+        ("artifacts", count_table(transaction, "raw_artifacts")?),
+        (
+            "collection_runs",
+            count_table(transaction, "collection_runs")?,
+        ),
+        (
+            "evidence_items",
+            count_table(transaction, "evidence_items")?,
+        ),
+        ("experiments", count_table(transaction, "experiment_runs")?),
+        (
+            "feedback_events",
+            count_table(transaction, "feedback_events")?,
+        ),
+        (
+            "improvement_items",
+            count_table(transaction, "improvement_items")?,
+        ),
+        ("outcomes", count_table(transaction, "outcomes")?),
+        ("patterns", count_table(transaction, "patterns")?),
+        (
+            "recommendations",
+            count_table(transaction, "recommendations")?,
+        ),
+        ("sources", count_table(transaction, "sources")?),
+        ("work_items", count_table(transaction, "work_items")?),
+    ];
+    let mut lines = vec![
+        format!("# {}", report.title),
+        String::new(),
+        format!("- Report ID: `{}`", report.id),
+        format!("- Report type: `{}`", report.report_type),
+        format!("- Requested by: `{}`", report.requested_by_actor_id),
+        format!("- Status before render: `{}`", report.status),
+        String::new(),
+        "## Inventory Counts".to_string(),
+        String::new(),
+    ];
+    for (label, count) in counts {
+        lines.push(format!("- {label}: {count}"));
+    }
+    lines.extend([
+        String::new(),
+        "## Boundaries".to_string(),
+        String::new(),
+        "- This report is generated from local metadata records only.".to_string(),
+        "- It does not read raw artifact contents.".to_string(),
+        "- It does not call external models or execute actions.".to_string(),
+    ]);
+    if let Some(notes) = notes.filter(|value| !value.trim().is_empty()) {
+        lines.extend([
+            String::new(),
+            "## Notes".to_string(),
+            String::new(),
+            notes.to_string(),
+        ]);
+    }
+    lines.push(String::new());
+    Ok(lines.join("\n"))
+}
+
+fn count_table(
+    transaction: &mut postgres::Transaction<'_>,
+    table_name: &str,
+) -> Result<i64, GatewayError> {
+    let sql = format!("SELECT COUNT(*)::bigint FROM {table_name}");
+    transaction
+        .query_one(&sql, &[])
+        .map(|row| row.get::<_, i64>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn has_intent_verification(payload_json: &Value) -> bool {
+    payload_json
+        .get("intent_verification")
+        .is_some_and(Value::is_object)
+        || payload_json
+            .get("intent_verification_recorded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn dispatch_task_name(work_item: &WorkItemDispatchRecord) -> Result<String, GatewayError> {
+    match work_item.work_type.as_str() {
+        "collection_normalization" => {
+            if !work_item
+                .payload_json
+                .get("collection_run_id")
+                .is_some_and(Value::is_string)
+                || !work_item
+                    .payload_json
+                    .get("raw_artifact_ids")
+                    .is_some_and(Value::is_array)
+            {
+                return Err(GatewayError::Validation(
+                    "Invalid normalization payload".to_string(),
+                ));
+            }
+            Ok("collection.normalize_collection_run".to_string())
+        }
+        "document_chunking" => {
+            let has_document_ids = work_item
+                .payload_json
+                .get("document_ids")
+                .is_some_and(Value::is_array);
+            let has_document_id = work_item
+                .payload_json
+                .get("document_id")
+                .is_some_and(Value::is_string);
+            if !has_document_ids && !has_document_id {
+                return Err(GatewayError::Validation(
+                    "Invalid document chunking payload".to_string(),
+                ));
+            }
+            Ok("evidence.generate_document_chunks".to_string())
+        }
+        "chunk_vector_upsert" => Ok("memory.vector.upsert_chunks".to_string()),
+        _ => Err(GatewayError::Validation(
+            "Unsupported work item dispatch type".to_string(),
+        )),
+    }
 }
 
 fn baseline_pattern_candidates(
@@ -2079,11 +2563,20 @@ struct ReportCreatePayload {
     metadata_json: Value,
 }
 
+struct ReportRenderPayload {
+    actor_id: String,
+    notes: Option<String>,
+}
+
 struct WorkItemCreatePayload {
     work_type: String,
     requested_by_actor_id: String,
     intent: Value,
     payload_json: Value,
+}
+
+struct WorkItemDispatchPayload {
+    actor_id: String,
 }
 
 struct PatternCreatePayload {
@@ -2094,6 +2587,18 @@ struct PatternCreatePayload {
     status: String,
     actor_id: String,
     metadata_json: Value,
+}
+
+struct PatternReviewPayload {
+    status: String,
+    reviewed_by_actor_id: String,
+    review_note: Option<String>,
+}
+
+struct ApprovalDecisionPayload {
+    status: String,
+    decided_by_actor_id: String,
+    decision_reason: Option<String>,
 }
 
 struct BaselinePatternDetectPayload {
@@ -2164,6 +2669,22 @@ struct CollectionPermission {
     allowed_operations: Vec<String>,
     external_model_policy: String,
     approval_required: bool,
+}
+
+struct ReportRenderRecord {
+    id: String,
+    title: String,
+    report_type: String,
+    status: String,
+    requested_by_actor_id: String,
+    metadata_json: Value,
+}
+
+struct WorkItemDispatchRecord {
+    id: String,
+    work_type: String,
+    status: String,
+    payload_json: Value,
 }
 
 #[derive(Debug)]
@@ -2431,6 +2952,13 @@ fn parse_report_create(body: &str) -> Result<ReportCreatePayload, GatewayError> 
     })
 }
 
+fn parse_report_render(body: &str) -> Result<ReportRenderPayload, GatewayError> {
+    let object = parse_json_object(body, "Report render request body")?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    let notes = optional_nullable_string_field(&object, "notes")?;
+    Ok(ReportRenderPayload { actor_id, notes })
+}
+
 fn parse_work_item_create(body: &str) -> Result<WorkItemCreatePayload, GatewayError> {
     let object = parse_json_object(body, "Work item request body")?;
     let work_type = required_string_field(&object, "work_type", 64)?;
@@ -2458,6 +2986,12 @@ fn parse_work_item_create(body: &str) -> Result<WorkItemCreatePayload, GatewayEr
         intent,
         payload_json,
     })
+}
+
+fn parse_work_item_dispatch(body: &str) -> Result<WorkItemDispatchPayload, GatewayError> {
+    let object = parse_json_object(body, "Work item dispatch request body")?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    Ok(WorkItemDispatchPayload { actor_id })
 }
 
 fn validate_work_item_intent(
@@ -2501,6 +3035,42 @@ fn parse_pattern_create(body: &str) -> Result<PatternCreatePayload, GatewayError
         status,
         actor_id,
         metadata_json,
+    })
+}
+
+fn parse_pattern_review(body: &str) -> Result<PatternReviewPayload, GatewayError> {
+    let object = parse_json_object(body, "Pattern review request body")?;
+    let status = required_string_field(&object, "status", 64)?;
+    if !matches!(status.as_str(), "verified" | "rejected") {
+        return Err(GatewayError::Validation(
+            "Pattern review status must be verified or rejected".to_string(),
+        ));
+    }
+    let reviewed_by_actor_id =
+        optional_string_field_with_max(&object, "reviewed_by_actor_id", "local-owner", 128)?;
+    let review_note = optional_nullable_string_field(&object, "review_note")?;
+    Ok(PatternReviewPayload {
+        status,
+        reviewed_by_actor_id,
+        review_note,
+    })
+}
+
+fn parse_approval_decision(body: &str) -> Result<ApprovalDecisionPayload, GatewayError> {
+    let object = parse_json_object(body, "Approval decision request body")?;
+    let status = required_string_field(&object, "status", 64)?;
+    if !matches!(status.as_str(), "approved" | "denied") {
+        return Err(GatewayError::Validation(
+            "Approval decision must be approved or denied".to_string(),
+        ));
+    }
+    let decided_by_actor_id =
+        optional_string_field_with_max(&object, "decided_by_actor_id", "local-owner", 128)?;
+    let decision_reason = optional_nullable_string_field(&object, "decision_reason")?;
+    Ok(ApprovalDecisionPayload {
+        status,
+        decided_by_actor_id,
+        decision_reason,
     })
 }
 
@@ -4072,6 +4642,50 @@ fn agent_action_execute_path(path: &str) -> Option<String> {
         return None;
     }
     Some(percent_decode_path_segment(action_name))
+}
+
+fn pattern_review_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/analysis/patterns/", "/review")
+}
+
+fn approval_decision_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/approvals/", "/decision")
+}
+
+fn report_render_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/reports/", "/render")
+}
+
+fn work_item_dispatch_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/work-items/", "/dispatch")
+}
+
+fn dynamic_post_id_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let id = path.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    if id.is_empty() || id.contains('/') {
+        return None;
+    }
+    Some(percent_decode_path_segment(id))
+}
+
+fn validate_route_id(value: &str, field_name: &str) -> Result<String, GatewayError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(GatewayError::Validation(format!(
+            "{field_name} must not be empty."
+        )));
+    }
+    if trimmed.len() > 128 {
+        return Err(GatewayError::Validation(format!(
+            "{field_name} must be 128 characters or fewer."
+        )));
+    }
+    if trimmed.contains('/') || trimmed.contains("..") {
+        return Err(GatewayError::Validation(format!(
+            "{field_name} contains invalid path characters."
+        )));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn percent_decode_path_segment(value: &str) -> String {
@@ -6134,6 +6748,10 @@ mod tests {
                 "/analysis/patterns/detect-baseline",
                 r#"{"recurrence_threshold":3}"#,
             ),
+            (
+                "/analysis/patterns/pattern-1/review",
+                r#"{"status":"verified","review_note":"grounded"}"#,
+            ),
         ] {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
@@ -6168,6 +6786,103 @@ mod tests {
             assert_eq!(response.status_code, 422, "{body}");
             assert!(!response.proxied_to_fallback, "{body}");
         }
+
+        for body in [
+            "{}",
+            r#"{"status":"candidate"}"#,
+            r#"{"status":"verified","reviewed_by_actor_id":""}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/analysis/patterns/pattern-1/review", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn dynamic_web_control_routes_are_rust_native_without_fallback() {
+        for (path, body) in [
+            (
+                "/approvals/approval-1/decision",
+                r#"{"status":"approved","decision_reason":"ok"}"#,
+            ),
+            ("/reports/report-1/render", r#"{"notes":"handoff"}"#),
+            ("/work-items/work-1/dispatch", "{}"),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
+    fn dynamic_web_control_validation_rejects_invalid_requests_without_fallback() {
+        for (path, body) in [
+            ("/approvals/approval-1/decision", "{}"),
+            ("/approvals/approval-1/decision", r#"{"status":"pending"}"#),
+            (
+                "/approvals/approval-1/decision",
+                r#"{"status":"approved","decided_by_actor_id":""}"#,
+            ),
+            ("/reports/report-1/render", "[]"),
+            ("/reports/report-1/render", r#"{"actor_id":""}"#),
+            ("/work-items/work-1/dispatch", "[]"),
+            ("/work-items/work-1/dispatch", r#"{"actor_id":""}"#),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{path} {body}");
+            assert!(!response.proxied_to_fallback, "{path} {body}");
+        }
+    }
+
+    #[test]
+    fn dynamic_web_control_path_helpers_reject_unsafe_ids() {
+        assert_eq!(
+            pattern_review_path("/analysis/patterns/pattern-1/review").as_deref(),
+            Some("pattern-1")
+        );
+        assert!(pattern_review_path("/analysis/patterns/../x/review").is_none());
+        assert!(validate_route_id("../x", "pattern_id").is_err());
+        assert!(validate_route_id("x/y", "pattern_id").is_err());
+    }
+
+    #[test]
+    fn work_item_dispatch_plan_is_allowlisted_and_non_executing() {
+        let work_item = WorkItemDispatchRecord {
+            id: "work-1".to_string(),
+            work_type: "document_chunking".to_string(),
+            status: "queued".to_string(),
+            payload_json: serde_json::json!({
+                "document_id": "doc-1",
+                "intent_verification": {"recorded_by": "test"}
+            }),
+        };
+        assert!(has_intent_verification(&work_item.payload_json));
+        assert_eq!(
+            dispatch_task_name(&work_item).expect("task"),
+            "evidence.generate_document_chunks"
+        );
+
+        let unsupported = WorkItemDispatchRecord {
+            work_type: "report_generation".to_string(),
+            ..work_item
+        };
+        assert!(dispatch_task_name(&unsupported).is_err());
     }
 
     #[test]

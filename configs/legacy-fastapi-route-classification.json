@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-119",
+  "diff": "DIFF-120",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,19 +9,19 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 60,
-    "fastapi_routes_missing_from_rust": 34,
-    "web_used_routes": 41,
+    "rust_native_routes": 64,
+    "fastapi_routes_missing_from_rust": 30,
+    "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
   "fastapi_fallback_required": true,
   "rust_only_claim_allowed": false,
   "classification_counts": {
-    "active_parity_required": 13,
+    "active_parity_required": 11,
     "intentional_legacy_fallback": 7,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
-    "unsafe_to_migrate_now": 13
+    "unsafe_to_migrate_now": 11
   },
   "routes": [
     {
@@ -36,7 +36,7 @@
       "used_by_scripts_tests_docs": false,
       "migration_risk": "low",
       "retirement_condition": "Confirm no local workflow depends on the FastAPI root identity response, then retire or ignore during FastAPI removal.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "GET",
@@ -120,7 +120,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust retrieval API returns equivalent chunk, document, artifact, evidence, source, and claim trail data.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -134,21 +134,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust analysis API supports hypothesis creation with evidence validation and audit parity.",
-      "recommended_future_diff": "DIFF-120"
-    },
-    {
-      "method": "POST",
-      "path": "/analysis/patterns/{pattern_id}/review",
-      "python_module": "services/api/app/analysis.py",
-      "python_handler": "review_pattern",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Pattern verification/rejection is core review behavior and should become Rust-native with deterministic status transitions.",
-      "used_by_apps_web": true,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust analysis API supports candidate-only review transitions and audit parity.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -162,7 +148,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust analysis API supports prediction creation with evidence validation and audit parity.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -176,21 +162,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust analysis API supports recommendation creation with validation and audit parity.",
-      "recommended_future_diff": "DIFF-120"
-    },
-    {
-      "method": "POST",
-      "path": "/approvals/{approval_id}/decision",
-      "python_module": "services/api/app/approvals.py",
-      "python_handler": "decide_approval",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Approval decisions are sensitive gate changes and need a dedicated Rust parity DIFF with negative tests for already-decided and unauthorized cases.",
-      "used_by_apps_web": true,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust approval decision route enforces pending-only transitions, actor validation, and approval.decided audit parity.",
-      "recommended_future_diff": "DIFF-123"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -260,7 +232,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust evidence API supports document creation with collection/artifact validation and audit parity.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -274,7 +246,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust evidence API generates equivalent chunks with deterministic IDs/order and audit or lineage behavior as required.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -288,7 +260,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust evidence API supports evidence item creation with source/document validation and audit parity.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -404,20 +376,6 @@
     },
     {
       "method": "POST",
-      "path": "/reports/{report_id}/render",
-      "python_module": "services/api/app/reports.py",
-      "python_handler": "render_report",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Report rendering is intended product behavior and should become Rust-native or be replaced by a verified Rust report renderer.",
-      "used_by_apps_web": true,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust reports API renders equivalent report content/artifacts and preserves audit/status behavior.",
-      "recommended_future_diff": "DIFF-120"
-    },
-    {
-      "method": "POST",
       "path": "/reports/{report_id}/status",
       "python_module": "services/api/app/reports.py",
       "python_handler": "update_report_status",
@@ -428,7 +386,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust reports API preserves report status validation, transitions, and audit behavior.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -456,7 +414,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust retrieval API returns equivalent hydrated chunk search results without relying on FastAPI fallback.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -470,21 +428,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust sources API creates permissions with equivalent validation, safety defaults, and audit behavior.",
-      "recommended_future_diff": "DIFF-120"
-    },
-    {
-      "method": "POST",
-      "path": "/work-items/{work_item_id}/dispatch",
-      "python_module": "services/api/app/work_items.py",
-      "python_handler": "dispatch_work_item",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Work-item dispatch sends Celery tasks and must not move without explicit worker dispatch parity, approval posture, and no-arbitrary-execution tests.",
-      "used_by_apps_web": true,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust dispatch route preserves fixed task planning, intent verification, audit behavior, and bounded worker execution semantics.",
-      "recommended_future_diff": "DIFF-123"
+      "recommended_future_diff": "DIFF-121"
     },
     {
       "method": "POST",
@@ -498,7 +442,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust work-items API preserves allowed statuses, transition behavior, and audit parity.",
-      "recommended_future_diff": "DIFF-120"
+      "recommended_future_diff": "DIFF-121"
     }
   ]
 }

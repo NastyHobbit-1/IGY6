@@ -56,6 +56,13 @@ class RouteParityClassificationTests(unittest.TestCase):
         ]
         self.assertEqual([], web_fallback)
 
+    def test_dynamic_web_controls_are_explicitly_tracked(self) -> None:
+        web = {route.key() for route in self.route_parity.web_used_routes()}
+        self.assertIn("POST /analysis/patterns/{pattern_id}/review", web)
+        self.assertIn("POST /approvals/{approval_id}/decision", web)
+        self.assertIn("POST /reports/{report_id}/render", web)
+        self.assertIn("POST /work-items/{work_item_id}/dispatch", web)
+
     def test_guard_accepts_current_manifest_and_classification(self) -> None:
         fastapi = self.route_parity.fastapi_routes()
         rust = self.route_parity.rust_gateway_routes()
