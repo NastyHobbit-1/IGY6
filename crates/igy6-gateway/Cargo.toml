@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 igy6-agent-api = { path = "../igy6-agent-api" }
+igy6-artifacts = { path = "../igy6-artifacts" }
 igy6-evidence-answer = { path = "../igy6-evidence-answer" }
 igy6-read-only-api = { path = "../igy6-read-only-api" }
 igy6-retrieval-preview = { path = "../igy6-retrieval-preview" }

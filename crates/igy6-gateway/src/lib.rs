@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{classify_agent_intent, AgentIntentRequest, ACTION_REGISTRY};
+use igy6_artifacts::ArtifactStore;
 use igy6_evidence_answer::build_evidence_answer_packet;
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
@@ -44,6 +45,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/collection-runs"),
     ("GET", "/collection-runs/{collection_run_id}"),
     ("POST", "/collection-runs/dry-run"),
+    ("POST", "/collection-runs/manual-upload"),
     ("GET", "/evidence/documents"),
     ("GET", "/evidence/documents/{document_id}"),
     ("GET", "/evidence/items"),
@@ -245,6 +247,9 @@ pub fn handle_gateway_request_with_db(
         }
         ("POST", "/collection-runs/dry-run") => {
             collection_dry_run_response(&request.body, database_url)
+        }
+        ("POST", "/collection-runs/manual-upload") => {
+            manual_upload_response(&request.body, database_url)
         }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
@@ -626,6 +631,10 @@ fn collection_dry_run_response(body: &str, database_url: Option<&str>) -> Gatewa
     write_route_response(create_collection_dry_run(body, database_url))
 }
 
+fn manual_upload_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_manual_upload_collection(body, database_url))
+}
+
 fn settings_env_verify_response(body: &str) -> GatewayResponse {
     match verify_settings_env(body) {
         Ok(response_body) => json_response(200, "OK", response_body, false),
@@ -880,6 +889,182 @@ fn create_collection_dry_run(
                 &decision,
                 &collection_run_id,
                 &dry_run_details,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs WHERE id = $1) t",
+            &[&collection_run_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_manual_upload_collection(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_manual_upload_collection(body)?;
+    let content = decode_base64(&payload.content_base64)?;
+    require_supported_text_mime_type(payload.mime_type.as_deref())?;
+    require_utf8_text_content(&content)?;
+    if content.len() > i32::MAX as usize {
+        return Err(GatewayError::Validation(
+            "Manual upload content is too large".to_string(),
+        ));
+    }
+
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source = load_source_for_collection(&mut transaction, &payload.source_id)?;
+    if !source.enabled {
+        return Err(GatewayError::Conflict("Source is disabled".to_string()));
+    }
+    if source.source_type != "manual_upload" {
+        return Err(GatewayError::Conflict(
+            "Source is not a manual_upload source".to_string(),
+        ));
+    }
+    let permission =
+        load_permission_for_collection(&mut transaction, &payload.source_permission_id)?;
+    if permission.source_id != source.id {
+        return Err(GatewayError::Conflict(
+            "Source permission does not belong to the source".to_string(),
+        ));
+    }
+    if !permission_allows(&permission.allowed_operations, &["collect", "read"]) {
+        return Err(GatewayError::Forbidden(
+            "Source permission does not allow manual upload collection".to_string(),
+        ));
+    }
+    let approval_id = require_collection_approval(
+        &mut transaction,
+        payload.approval_id.as_deref(),
+        &source,
+        &permission,
+        "manual_upload_collection",
+    )?;
+
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let stored = store
+        .write_bytes(&content)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let collection_run_id = generated_record_id("collection");
+    let raw_artifact_id = generated_record_id("artifact");
+    let work_item_id = generated_record_id("work");
+    let summary_json = serde_json::json!({
+        "mode": "manual_upload_collection",
+        "source_permission_id": permission.id,
+        "filename": payload.filename,
+        "content_hash": stored.content_hash,
+        "storage_path": stored.storage_path,
+        "size_bytes": stored.size_bytes,
+        "content_already_existed": stored.existed,
+        "would_normalize": true,
+        "normalization_input_type": "utf_8_text",
+        "approval_id": approval_id,
+        "normalization_work_item_created": true,
+        "normalization_work_item_id": work_item_id,
+        "raw_artifact_ids": [raw_artifact_id]
+    });
+    let artifact_metadata = manual_upload_artifact_metadata(
+        &payload.metadata_json,
+        payload.filename.as_deref(),
+        &permission.id,
+        approval_id.as_deref(),
+    );
+    let work_payload = manual_upload_normalization_work_payload(
+        &collection_run_id,
+        &source,
+        &permission.id,
+        &raw_artifact_id,
+    );
+
+    transaction
+        .execute(
+            "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'completed', false, $3, $4::jsonb, NULL)",
+            &[
+                &collection_run_id,
+                &source.id,
+                &payload.requested_by_actor_id,
+                &summary_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let collection_details = serde_json::json!({
+        "source_id": source.id,
+        "dry_run": false,
+        "status": "completed"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'collection_run.created', 'recorded', 'collection_run', $2, NULL, $3::jsonb)",
+            &[&payload.requested_by_actor_id, &collection_run_id, &collection_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .execute(
+            "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::jsonb)",
+            &[
+                &raw_artifact_id,
+                &source.id,
+                &collection_run_id,
+                &stored.content_hash,
+                &stored.storage_path,
+                &payload.mime_type,
+                &(stored.size_bytes as i32),
+                &artifact_metadata,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let artifact_details = serde_json::json!({
+        "source_id": source.id,
+        "collection_run_id": collection_run_id,
+        "content_hash": stored.content_hash,
+        "storage_path": stored.storage_path,
+        "size_bytes": stored.size_bytes,
+        "content_already_existed": stored.existed
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'raw_artifact.created', 'recorded', 'raw_artifact', $2, NULL, $3::jsonb)",
+            &[&payload.requested_by_actor_id, &raw_artifact_id, &artifact_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'collection_normalization', 'queued', $2, $3::jsonb, NULL)",
+            &[&work_item_id, &payload.requested_by_actor_id, &work_payload],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let work_details = serde_json::json!({
+        "work_type": "collection_normalization",
+        "collection_run_id": collection_run_id,
+        "raw_artifact_ids": [raw_artifact_id],
+        "scaffold_only": false,
+        "executes_normalization": true
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'queued', 'work_item', $2, $3, $4::jsonb)",
+            &[
+                &payload.requested_by_actor_id,
+                &work_item_id,
+                &collection_run_id,
+                &work_details,
             ],
         )
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -1702,6 +1887,24 @@ struct CollectionDryRunPayload {
     notes: Value,
 }
 
+struct ManualUploadCollectionPayload {
+    source_id: String,
+    source_permission_id: String,
+    approval_id: Option<String>,
+    content_base64: String,
+    filename: Option<String>,
+    mime_type: Option<String>,
+    metadata_json: Value,
+    requested_by_actor_id: String,
+}
+
+struct CollectionApproval {
+    id: String,
+    status: String,
+    request_type: String,
+    request_payload_json: Value,
+}
+
 struct CollectionSource {
     id: String,
     name: String,
@@ -2082,6 +2285,34 @@ fn parse_collection_dry_run(body: &str) -> Result<CollectionDryRunPayload, Gatew
         source_permission_id,
         requested_by_actor_id,
         notes,
+    })
+}
+
+fn parse_manual_upload_collection(
+    body: &str,
+) -> Result<ManualUploadCollectionPayload, GatewayError> {
+    let object = parse_json_object(body, "Manual upload request body")?;
+    let source_id = required_string_field(&object, "source_id", 36)?;
+    let source_permission_id = required_string_field(&object, "source_permission_id", 36)?;
+    let approval_id = optional_nullable_string_field_with_max(&object, "approval_id", 36)?;
+    let content_base64 = required_text_field(&object, "content_base64")?;
+    let filename = optional_nullable_string_field_with_max(&object, "filename", 255)?;
+    if let Some(filename) = &filename {
+        validate_safe_filename(filename)?;
+    }
+    let mime_type = optional_nullable_string_field_with_max(&object, "mime_type", 255)?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    Ok(ManualUploadCollectionPayload {
+        source_id,
+        source_permission_id,
+        approval_id,
+        content_base64,
+        filename,
+        mime_type,
+        metadata_json,
+        requested_by_actor_id,
     })
 }
 
@@ -3157,6 +3388,27 @@ fn load_permission_for_collection(
     })
 }
 
+fn load_collection_approval(
+    transaction: &mut postgres::Transaction<'_>,
+    approval_id: &str,
+) -> Result<CollectionApproval, GatewayError> {
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, status, request_type, request_payload_json FROM approvals WHERE id = $1",
+            &[&approval_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Approval not found".to_string()));
+    };
+    Ok(CollectionApproval {
+        id: row.get(0),
+        status: row.get(1),
+        request_type: row.get(2),
+        request_payload_json: row.get(3),
+    })
+}
+
 fn json_value_string_array(value: Value, field_name: &str) -> Result<Vec<String>, GatewayError> {
     let Some(items) = value.as_array() else {
         return Err(GatewayError::Database(format!(
@@ -3179,6 +3431,62 @@ fn permission_allows(allowed_operations: &[String], allowed: &[&str]) -> bool {
     allowed_operations
         .iter()
         .any(|operation| allowed.iter().any(|candidate| operation == candidate))
+}
+
+fn require_collection_approval(
+    transaction: &mut postgres::Transaction<'_>,
+    approval_id: Option<&str>,
+    source: &CollectionSource,
+    permission: &CollectionPermission,
+    operation: &str,
+) -> Result<Option<String>, GatewayError> {
+    if !permission.approval_required {
+        return Ok(None);
+    }
+    let approval_id = approval_id.ok_or_else(|| {
+        GatewayError::Forbidden("Collection requires an approved approval record".to_string())
+    })?;
+    let approval = load_collection_approval(transaction, approval_id)?;
+    if approval.status != "approved" {
+        return Err(GatewayError::Forbidden(
+            "Approval is not approved".to_string(),
+        ));
+    }
+    if !matches!(
+        approval.request_type.as_str(),
+        "source_collection" | "manual_upload_collection" | "local_project_collection"
+    ) {
+        return Err(GatewayError::Conflict(
+            "Approval is not for source collection".to_string(),
+        ));
+    }
+    approval_payload_matches(&approval.request_payload_json, "source_id", &source.id)?;
+    approval_payload_matches(
+        &approval.request_payload_json,
+        "source_permission_id",
+        &permission.id,
+    )?;
+    approval_payload_matches(&approval.request_payload_json, "operation", operation)?;
+    Ok(Some(approval.id))
+}
+
+fn approval_payload_matches(
+    payload: &Value,
+    key: &str,
+    expected: &str,
+) -> Result<(), GatewayError> {
+    let Some(value) = payload.get(key) else {
+        return Err(GatewayError::Conflict(format!(
+            "Approval is missing required {key} for requested collection"
+        )));
+    };
+    if value.as_str() == Some(expected) {
+        Ok(())
+    } else {
+        Err(GatewayError::Conflict(format!(
+            "Approval {key} does not match requested collection"
+        )))
+    }
 }
 
 fn connector_dry_run_result(
@@ -3273,6 +3581,209 @@ fn collection_dry_run_summary(
     })
 }
 
+fn artifact_data_root() -> PathBuf {
+    if let Ok(artifact_store_path) = env::var("ARTIFACT_STORE_PATH") {
+        let path = PathBuf::from(artifact_store_path);
+        if path.file_name().is_some_and(|name| name == "artifacts") {
+            return path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("/workspace/storage"));
+        }
+        return path;
+    }
+    if let Ok(path) = env::var("IGY6_ARTIFACT_DATA_ROOT") {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = env::var("IGY6_DATA_ROOT") {
+        let candidate = PathBuf::from(path);
+        if !candidate
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return candidate;
+        }
+    }
+    PathBuf::from("/workspace/storage")
+}
+
+fn decode_base64(value: &str) -> Result<Vec<u8>, GatewayError> {
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 4];
+    let mut buffer_len = 0;
+    let mut saw_padding = false;
+    for byte in value.bytes() {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        let decoded = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                saw_padding = true;
+                64
+            }
+            _ => {
+                return Err(GatewayError::Validation(
+                    "Invalid base64 content".to_string(),
+                ))
+            }
+        };
+        if saw_padding && decoded != 64 {
+            return Err(GatewayError::Validation(
+                "Invalid base64 content".to_string(),
+            ));
+        }
+        buffer[buffer_len] = decoded;
+        buffer_len += 1;
+        if buffer_len == 4 {
+            decode_base64_quad(&buffer, &mut output)?;
+            buffer_len = 0;
+        }
+    }
+    if buffer_len != 0 {
+        return Err(GatewayError::Validation(
+            "Invalid base64 content".to_string(),
+        ));
+    }
+    Ok(output)
+}
+
+fn decode_base64_quad(quad: &[u8; 4], output: &mut Vec<u8>) -> Result<(), GatewayError> {
+    if quad[0] == 64 || quad[1] == 64 {
+        return Err(GatewayError::Validation(
+            "Invalid base64 content".to_string(),
+        ));
+    }
+    output.push((quad[0] << 2) | (quad[1] >> 4));
+    match (quad[2], quad[3]) {
+        (64, 64) => Ok(()),
+        (64, _) => Err(GatewayError::Validation(
+            "Invalid base64 content".to_string(),
+        )),
+        (third, 64) => {
+            output.push((quad[1] << 4) | (third >> 2));
+            Ok(())
+        }
+        (third, fourth) => {
+            output.push((quad[1] << 4) | (third >> 2));
+            output.push((third << 6) | fourth);
+            Ok(())
+        }
+    }
+}
+
+fn require_utf8_text_content(content: &[u8]) -> Result<(), GatewayError> {
+    let text = std::str::from_utf8(content).map_err(|_| {
+        GatewayError::Validation(
+            "Manual upload normalization currently supports UTF-8 text artifacts only".to_string(),
+        )
+    })?;
+    if text.trim().is_empty() {
+        return Err(GatewayError::Validation(
+            "Manual upload content is empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_supported_text_mime_type(mime_type: Option<&str>) -> Result<(), GatewayError> {
+    let Some(mime_type) = mime_type else {
+        return Ok(());
+    };
+    if mime_type.trim().is_empty() {
+        return Ok(());
+    }
+    let normalized = mime_type
+        .split_once(';')
+        .map(|(value, _)| value)
+        .unwrap_or(mime_type)
+        .trim()
+        .to_ascii_lowercase();
+    if normalized.starts_with("text/") || normalized == "application/json" {
+        Ok(())
+    } else {
+        Err(GatewayError::Validation(
+            "Unsupported manual upload file type; this ingestion path supports UTF-8 text only"
+                .to_string(),
+        ))
+    }
+}
+
+fn validate_safe_filename(filename: &str) -> Result<(), GatewayError> {
+    if filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains('\0')
+        || filename == "."
+        || filename == ".."
+    {
+        return Err(GatewayError::Validation(
+            "filename must not contain path traversal.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn manual_upload_artifact_metadata(
+    request_metadata: &Value,
+    filename: Option<&str>,
+    permission_id: &str,
+    approval_id: Option<&str>,
+) -> Value {
+    let mut metadata = request_metadata.as_object().cloned().unwrap_or_default();
+    metadata.insert(
+        "filename".to_string(),
+        filename.map_or(Value::Null, |value| Value::String(value.to_string())),
+    );
+    metadata.insert(
+        "source_permission_id".to_string(),
+        Value::String(permission_id.to_string()),
+    );
+    metadata.insert(
+        "approval_id".to_string(),
+        approval_id.map_or(Value::Null, |value| Value::String(value.to_string())),
+    );
+    Value::Object(metadata)
+}
+
+fn manual_upload_normalization_work_payload(
+    collection_run_id: &str,
+    source: &CollectionSource,
+    permission_id: &str,
+    raw_artifact_id: &str,
+) -> Value {
+    serde_json::json!({
+        "collection_run_id": collection_run_id,
+        "source_id": source.id,
+        "source_permission_id": permission_id,
+        "raw_artifact_ids": [raw_artifact_id],
+        "artifact_count": 1,
+        "collection_mode": "manual_upload_collection",
+        "scaffold_only": false,
+        "executes_normalization": true,
+        "worker_task_name": "collection.normalize_collection_run",
+        "normalization_input_type": "utf_8_text",
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": "Queue normalization for manual_upload_collection",
+            "interpretation": "Create a queued worker item to normalize collected UTF-8 text artifacts.",
+            "proposed_work_type": "collection_normalization",
+            "sources_likely_used": [source.id.clone()],
+            "expected_output": "Normalized document records for the collected raw artifacts.",
+            "safety_requirements": [
+                "Use only stored local artifacts linked to this collection run.",
+                "Do not perform external model calls or system-changing actions."
+            ],
+            "assumptions": ["Collected artifacts are UTF-8 text artifacts supported by the current worker."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 collection enqueue governance"
+        }
+    })
+}
+
 fn parse_json_object(
     body: &str,
     description: &str,
@@ -3364,6 +3875,20 @@ fn optional_nullable_string_field(
             "{key} must be a string or null."
         ))),
     }
+}
+
+fn optional_nullable_string_field_with_max(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_len: usize,
+) -> Result<Option<String>, GatewayError> {
+    let value = optional_nullable_string_field(object, key)?;
+    if value.as_ref().is_some_and(|value| value.len() > max_len) {
+        return Err(GatewayError::Validation(format!(
+            "{key} must be {max_len} characters or fewer."
+        )));
+    }
+    Ok(value)
 }
 
 fn optional_bool_field(
@@ -4243,15 +4768,14 @@ mod tests {
 
     #[test]
     fn unsupported_routes_plan_fastapi_fallback() {
-        let request = request(
-            "POST",
-            "/collection-runs/manual-upload",
-            "{\"source_id\":\"x\"}",
-        );
+        let request = request("POST", "/agent/actions/show_project_health/execute", "{}");
         let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
         assert_eq!(plan.host, "legacy-api");
         assert_eq!(plan.port, 8000);
-        assert_eq!(plan.request_target, "/collection-runs/manual-upload");
+        assert_eq!(
+            plan.request_target,
+            "/agent/actions/show_project_health/execute"
+        );
 
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
@@ -4709,6 +5233,97 @@ mod tests {
     }
 
     #[test]
+    fn manual_upload_is_rust_native_and_requires_database_url_after_validation() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/collection-runs/manual-upload",
+                &valid_manual_upload_body(),
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+
+        let parsed =
+            parse_manual_upload_collection(&valid_manual_upload_body()).expect("manual upload");
+        assert_eq!(parsed.source_id, "source-1");
+        assert_eq!(parsed.source_permission_id, "permission-1");
+        assert_eq!(parsed.filename.as_deref(), Some("manual-note.txt"));
+        assert_eq!(
+            decode_base64(&parsed.content_base64).expect("base64"),
+            b"hello\n"
+        );
+    }
+
+    #[test]
+    fn manual_upload_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"source_id":"","source_permission_id":"permission-1","content_base64":"aGVsbG8K"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"","content_base64":"aGVsbG8K"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"not base64"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"ICAg"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"//8="}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","mime_type":"image/png"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","filename":"../secret.txt"}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","metadata_json":[]}"#,
+            r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","requested_by_actor_id":""}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/collection-runs/manual-upload", body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn manual_upload_summary_and_work_payload_are_deterministic() {
+        let source = CollectionSource {
+            id: "source-1".to_string(),
+            name: "Manual".to_string(),
+            source_type: "manual_upload".to_string(),
+            location: None,
+            sensitivity: "internal".to_string(),
+            enabled: true,
+            metadata_json: serde_json::json!({}),
+        };
+        let work_payload = manual_upload_normalization_work_payload(
+            "collection-1",
+            &source,
+            "permission-1",
+            "artifact-1",
+        );
+        assert_eq!(work_payload["work_item_id"], Value::Null);
+        assert_eq!(work_payload["work_type"], Value::Null);
+        assert_eq!(work_payload["collection_run_id"], "collection-1");
+        assert_eq!(work_payload["raw_artifact_ids"][0], "artifact-1");
+        assert_eq!(work_payload["executes_normalization"], true);
+        assert_eq!(
+            work_payload["intent_verification"]["recorded_by"],
+            "DIFF-074 collection enqueue governance"
+        );
+
+        let metadata = manual_upload_artifact_metadata(
+            &serde_json::json!({"operator_note": "ok"}),
+            Some("manual-note.txt"),
+            "permission-1",
+            Some("approval-1"),
+        );
+        assert_eq!(metadata["filename"], "manual-note.txt");
+        assert_eq!(metadata["source_permission_id"], "permission-1");
+        assert_eq!(metadata["approval_id"], "approval-1");
+        assert_eq!(metadata["operator_note"], "ok");
+    }
+
+    #[test]
     fn collection_dry_run_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -4994,6 +5609,7 @@ mod tests {
             ("GET", "/evidence/chunks/{chunk_id}"),
             ("GET", "/evidence/claims"),
             ("GET", "/evidence/claims/{claim_id}"),
+            ("POST", "/collection-runs/manual-upload"),
             ("POST", "/work-items"),
             ("POST", "/work-items/"),
         ] {
@@ -5166,6 +5782,22 @@ mod tests {
                 "document_ids": ["doc-1"],
                 "chunk_size": 1000
             }
+        })
+        .to_string()
+    }
+
+    fn valid_manual_upload_body() -> String {
+        serde_json::json!({
+            "source_id": "source-1",
+            "source_permission_id": "permission-1",
+            "approval_id": null,
+            "filename": "manual-note.txt",
+            "mime_type": "text/plain",
+            "content_base64": "aGVsbG8K",
+            "metadata_json": {
+                "operator_note": "test"
+            },
+            "requested_by_actor_id": "local-owner"
         })
         .to_string()
     }

@@ -5,19 +5,19 @@
   "operational_status": "rust-primary-with-required-fastapi-fallback",
   "fastapi_fallback_required": true,
   "route_parity": {
-    "diff": "DIFF-116",
+    "diff": "DIFF-117",
     "status": "partial",
-    "rust_native_routes": 57,
+    "rust_native_routes": 58,
     "fastapi_router_routes": 90,
     "fastapi_total_routes": 91,
-    "fastapi_routes_missing_from_rust": 36,
+    "fastapi_routes_missing_from_rust": 35,
     "web_used_routes": 41,
-    "web_routes_requiring_fallback": 3,
+    "web_routes_requiring_fallback": 2,
     "fastapi_root_route": true,
     "unsupported_routes_proxy_to_legacy_api": true,
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-117"
+    "next_required_diff": "DIFF-118"
   },
   "required_phases": [
     "host_bridge",
@@ -328,11 +328,11 @@
     },
     "route_parity": {
       "status": "partial",
-      "diff": "DIFF-116",
+      "diff": "DIFF-117",
       "verification": [
         "FastAPI route parity guard found 90 APIRouter routes plus root route.",
-        "Rust gateway route inventory found 57 Rust-native routes after DIFF-116.",
-        "apps/web route inventory found 3 active routes still requiring FastAPI fallback after DIFF-116.",
+        "Rust gateway route inventory found 58 Rust-native routes after DIFF-117.",
+        "apps/web route inventory found 2 active routes still requiring FastAPI fallback after DIFF-117.",
         "DIFF-106 migrates read-only DB-backed sources, approvals, evidence documents/items/chunks/claims, reports, and work-items route reads into the Rust gateway.",
         "DIFF-107 migrates read-only DB-backed audit events, artifacts, collection runs, feedback, outcomes, and analysis pattern/hypothesis/prediction/recommendation reads into the Rust gateway.",
         "DIFF-108 migrates read-only settings/env metadata, vector status, and graph status routes into the Rust gateway without reading .env contents or mutating external services.",
@@ -344,6 +344,7 @@
         "DIFF-114 migrates DB-backed collection dry-run preview creation with source/permission validation, scaffold connector preview parity, collection_run.created audit event insertion, and collection_run.dry_run_preview audit event insertion into the Rust gateway.",
         "DIFF-115 migrates settings env verify/apply with allowlisted validation, secret redaction, candidate hash token compatibility, safe .env backup/write constraints, and settings.env.updated audit event insertion into the Rust gateway.",
         "DIFF-116 migrates DB-backed work-item creation with intent verification context validation, deterministic pending_intent_verification status, and work_item.created audit event insertion into the Rust gateway without dispatching work.",
+        "DIFF-117 migrates DB-backed manual upload collection creation with source permission checks, approval checks, bounded content-addressed artifact storage, collection_run.created, raw_artifact.created, and work_item.created audit insertion into the Rust gateway without synchronous ingestion, dispatch, or agent execution.",
         "infra/docker-compose.yml confirms Rust api service depends on legacy-api fallback.",
         "scripts/rust-cutover.sh validates governance cutover readiness but does not validate full route parity.",
         "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan.",

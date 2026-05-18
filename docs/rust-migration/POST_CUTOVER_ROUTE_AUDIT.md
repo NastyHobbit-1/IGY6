@@ -19,8 +19,8 @@ Rust gateway service: api
     |   DIFF-109 approval request creation, DIFF-110 feedback/outcome
     |   writes, DIFF-111 source creation, DIFF-112 report creation, and
     |   DIFF-113 analysis pattern writes, DIFF-114 collection dry-run
-    |   previews, DIFF-115 settings verify/apply, and DIFF-116 work-item
-    |   creation
+    |   previews, DIFF-115 settings verify/apply, DIFF-116 work-item
+    |   creation, and DIFF-117 manual upload collection creation
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
@@ -82,6 +82,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/collection-runs` | Rust-native DB read |
 | GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
 | POST | `/collection-runs/dry-run` | Rust-native DB write with source/permission validation and audit events |
+| POST | `/collection-runs/manual-upload` | Rust-native DB/artifact write with source permission, approval, and audit events |
 | GET | `/evidence/documents` | Rust-native DB read |
 | GET | `/evidence/documents/{document_id}` | Rust-native DB read |
 | GET | `/evidence/items` | Rust-native DB read |
@@ -113,13 +114,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 |
 
 ## Web-Used Route Matrix
 
@@ -143,6 +144,7 @@ Route parity counts:
 | GET | `/audit-events` | Page data load | Rust-native DB read |
 | GET | `/collection-runs` | Page data load | Rust-native DB read |
 | POST | `/collection-runs/dry-run` | Page collection preview | Rust-native DB write with source/permission validation and audit events |
+| POST | `/collection-runs/manual-upload` | Page manual upload collection | Rust-native DB/artifact write with source permission, approval, and audit events |
 | GET | `/evidence/documents` | Page data load | Rust-native DB read |
 | GET | `/evidence/chunks` | Page data load | Rust-native DB read |
 | GET | `/evidence/items` | Page data load | Rust-native DB read |
@@ -204,7 +206,7 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/collection-runs` | Rust-native DB read |
 | POST | `/collection-runs` | Proxied to FastAPI |
 | POST | `/collection-runs/dry-run` | Rust-native DB write with source/permission validation and audit events |
-| POST | `/collection-runs/manual-upload` | Proxied to FastAPI |
+| POST | `/collection-runs/manual-upload` | Rust-native DB/artifact write with source permission, approval, and audit events |
 | POST | `/collection-runs/manual-upload/ingest` | Proxied to FastAPI |
 | POST | `/collection-runs/local-project` | Proxied to FastAPI |
 | GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
@@ -301,7 +303,17 @@ DIFF-116 adds Rust-native work-item creation with intent verification context
 validation, supported-type validation, deterministic
 `pending_intent_verification` status, and `work_item.created` audit events. It
 does not dispatch work, execute agents, migrate manual upload, or change
-work-item status routes.
+work-item status routes. DIFF-117 adds Rust-native manual upload collection
+creation with source type, source permission, approval, text MIME/content, and
+safe filename validation; bounded content-addressed artifact writes via
+`crates/igy6-artifacts`; collection run, raw artifact, and queued normalization
+work item metadata inserts; and `collection_run.created`, `raw_artifact.created`,
+and `work_item.created` audit events. It does not execute normalization,
+dispatch workers, ingest into vector/graph memory, or execute agents
+synchronously. If the artifact write succeeds but the database transaction later
+fails, the content-addressed artifact may remain under the configured safe
+artifact root without DB metadata; retrying the same upload reuses the same
+hash path.
 
 ## Manifest Finding
 
@@ -342,11 +354,14 @@ deliberately retired:
    audit parity.
 12. DIFF-116: migrate work-item creation with intent verification and
    `work_item.created` audit parity, without dispatching work.
-13. DIFF-117: continue with the remaining write/action fallback routes only
-   where approval, audit, and response-shape parity can be explicit and
-   testable.
-14. Later DIFFs: migrate agent action execution, report render/work-item
+13. DIFF-117: migrate manual upload collection creation with source permission,
+   approval, artifact storage, queued normalization metadata, and audit parity
+   without synchronous ingestion or dispatch.
+14. DIFF-118: handle the remaining web-used agent action creation/execution
+   routes only where approval, audit, fixed allowlists, timeout bounds, and
+   no-arbitrary-command guarantees can be explicit and testable.
+15. Later DIFFs: migrate agent action execution, report render/work-item
    writes, collection writes, retrieval hydration, vector/graph memory,
    analysis, feedback, outcomes, improvements, and experiments.
-14. Final retirement DIFF: remove or disable `legacy-api` only after route
+16. Final retirement DIFF: remove or disable `legacy-api` only after route
    parity tests prove no active route depends on it.
