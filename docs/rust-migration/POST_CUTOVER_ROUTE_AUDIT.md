@@ -27,10 +27,13 @@ Rust gateway service: api
         for all unsupported routes
 ```
 
-FastAPI is still required for unsupported non-web routes. No web-used route
-requires FastAPI fallback after DIFF-118, but `legacy-api` must not be archived,
-removed, or disabled until route parity proves every active route is served by
-Rust or deliberately retired.
+FastAPI is still required for classified non-web routes. No web-used route
+requires FastAPI fallback after DIFF-118, and DIFF-119 records the final
+non-web fallback posture in
+`configs/legacy-fastapi-route-classification.json` and
+`docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
+`legacy-api` must not be archived, removed, or disabled until route parity
+proves every active route is served by Rust or deliberately retired.
 
 ## Runtime Topology
 
@@ -43,8 +46,9 @@ Rust or deliberately retired.
 | `web` | Next.js UI with `API_BASE_URL=http://api:8000`; browser-side helpers also call `http://127.0.0.1:8000`. |
 | `worker` and `beat` | Python/Celery execution remains active. |
 
-The web UI calls the Rust gateway endpoint, but many web workflows still depend
-on gateway proxying to `legacy-api`.
+The web UI calls the Rust gateway endpoint. The route parity guard reports zero
+web-used routes requiring fallback, while non-web FastAPI routes continue to be
+proxied to `legacy-api`.
 
 ## Rust-Native Gateway Routes
 
@@ -118,13 +122,39 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 |
+
+## DIFF-119 Non-Web FastAPI Classification
+
+DIFF-119 does not migrate or remove routes. It classifies the 34 FastAPI routes
+missing from Rust and makes `scripts/rust-route-parity.py --check` fail when a
+missing route is not classified.
+
+Manual inspection of `apps/web` found dynamic page controls for
+`POST /analysis/patterns/{pattern_id}/review`,
+`POST /approvals/{approval_id}/decision`, `POST /reports/{report_id}/render`,
+and `POST /work-items/{work_item_id}/dispatch`. The existing route parity guard
+still reports `web_routes_requiring_fallback=0` because those dynamic controls
+are outside its normalized route extraction, but DIFF-119 marks them
+`used_by_apps_web=true` in the classification JSON. FastAPI therefore remains
+required and Rust-only cannot be claimed.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 13 |
+| `intentional_legacy_fallback` | 7 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 13 |
+
+FastAPI remains required because `intentional_legacy_fallback` and
+`unsafe_to_migrate_now` are non-empty. Rust-only cannot honestly be claimed.
 
 ## Web-Used Route Matrix
 

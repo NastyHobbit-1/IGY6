@@ -2,10 +2,10 @@
   "schema_version": 1,
   "cutover_ready": true,
   "target_architecture": "rust-primary",
-  "operational_status": "rust-primary-with-required-fastapi-fallback",
+  "operational_status": "rust-primary-for-web-with-classified-fastapi-fallback",
   "fastapi_fallback_required": true,
   "route_parity": {
-    "diff": "DIFF-118",
+    "diff": "DIFF-119",
     "status": "partial",
     "rust_native_routes": 60,
     "fastapi_router_routes": 90,
@@ -15,9 +15,10 @@
     "web_routes_requiring_fallback": 0,
     "fastapi_root_route": true,
     "unsupported_routes_proxy_to_legacy_api": true,
+    "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-119"
+    "next_required_diff": "DIFF-120"
   },
   "required_phases": [
     "host_bridge",
@@ -328,11 +329,14 @@
     },
     "route_parity": {
       "status": "partial",
-      "diff": "DIFF-118",
+      "diff": "DIFF-119",
       "verification": [
         "FastAPI route parity guard found 90 APIRouter routes plus root route.",
-        "Rust gateway route inventory found 60 Rust-native routes after DIFF-118.",
-        "apps/web route inventory found 0 active routes requiring FastAPI fallback after DIFF-118.",
+        "Rust gateway route inventory found 60 Rust-native routes after DIFF-119.",
+        "apps/web route inventory found 0 active routes requiring FastAPI fallback after DIFF-119.",
+        "DIFF-119 classifies all 34 FastAPI routes missing from Rust in configs/legacy-fastapi-route-classification.json.",
+        "DIFF-119 manual app inspection marks 4 dynamically referenced missing routes as used_by_apps_web in the classification file even though the existing route parity guard reports 0 web routes requiring fallback.",
+        "DIFF-119 keeps fastapi_fallback_required true and does not claim Rust-only while intentional legacy fallback and unsafe-to-migrate non-web routes remain.",
         "DIFF-106 migrates read-only DB-backed sources, approvals, evidence documents/items/chunks/claims, reports, and work-items route reads into the Rust gateway.",
         "DIFF-107 migrates read-only DB-backed audit events, artifacts, collection runs, feedback, outcomes, and analysis pattern/hypothesis/prediction/recommendation reads into the Rust gateway.",
         "DIFF-108 migrates read-only settings/env metadata, vector status, and graph status routes into the Rust gateway without reading .env contents or mutating external services.",

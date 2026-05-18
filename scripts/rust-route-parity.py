@@ -20,6 +20,14 @@ FASTAPI_APP = REPO_ROOT / "services" / "api" / "app"
 GATEWAY_LIB = REPO_ROOT / "crates" / "igy6-gateway" / "src" / "lib.rs"
 WEB_ROOT = REPO_ROOT / "apps" / "web"
 MANIFEST = REPO_ROOT / "configs" / "rust-cutover-manifest.json"
+CLASSIFICATION = REPO_ROOT / "configs" / "legacy-fastapi-route-classification.json"
+CLASSIFICATION_BUCKETS = {
+    "active_parity_required",
+    "intentional_legacy_fallback",
+    "retireable_unused",
+    "duplicate_or_superseded",
+    "unsafe_to_migrate_now",
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -135,6 +143,138 @@ def route_set_contains(routes: set[Route], route: Route) -> bool:
     )
 
 
+def _route_from_classification(entry: dict[str, object]) -> Route:
+    method = entry.get("method")
+    path = entry.get("path")
+    if not isinstance(method, str) or not isinstance(path, str):
+        raise ValueError("classification route entries require string method and path")
+    return Route(method, path)
+
+
+def _classification_errors(
+    summary: dict[str, object],
+    missing_from_rust: list[Route],
+    manifest: dict[str, object],
+) -> list[str]:
+    errors: list[str] = []
+    if summary["web_routes_requiring_fallback"] != 0:
+        errors.append("web_routes_requiring_fallback must remain 0 after DIFF-118")
+
+    if not CLASSIFICATION.exists():
+        errors.append(f"missing route classification file: {CLASSIFICATION}")
+        return errors
+
+    classification = json.loads(CLASSIFICATION.read_text(encoding="utf-8"))
+    routes = classification.get("routes")
+    if not isinstance(routes, list):
+        errors.append("classification routes must be a list")
+        return errors
+
+    missing_keys = {route.key() for route in missing_from_rust}
+    classified_keys: set[str] = set()
+    bucket_counts = {bucket: 0 for bucket in CLASSIFICATION_BUCKETS}
+
+    for entry in routes:
+        if not isinstance(entry, dict):
+            errors.append("classification route entries must be objects")
+            continue
+        try:
+            route = _route_from_classification(entry)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        key = route.key()
+        if key in classified_keys:
+            errors.append(f"duplicate classified route: {key}")
+        classified_keys.add(key)
+
+        if entry.get("rust_status") != "missing_from_rust":
+            errors.append(f"classified route {key} must have rust_status missing_from_rust")
+        bucket = entry.get("classification")
+        if bucket not in CLASSIFICATION_BUCKETS:
+            errors.append(f"classified route {key} has invalid classification {bucket!r}")
+        elif isinstance(bucket, str):
+            bucket_counts[bucket] += 1
+
+        for field_name in (
+            "python_module",
+            "python_handler",
+            "reason",
+            "migration_risk",
+            "retirement_condition",
+            "recommended_future_diff",
+        ):
+            if not isinstance(entry.get(field_name), str) or not entry.get(field_name):
+                errors.append(f"classified route {key} is missing {field_name}")
+        for field_name in ("used_by_apps_web", "used_by_scripts_tests_docs"):
+            if not isinstance(entry.get(field_name), bool):
+                errors.append(f"classified route {key} is missing boolean {field_name}")
+
+    unclassified = sorted(missing_keys - classified_keys)
+    unexpected = sorted(classified_keys - missing_keys)
+    if unclassified:
+        errors.append("unclassified missing FastAPI routes: " + ", ".join(unclassified))
+    if unexpected:
+        errors.append("classification contains routes not missing from Rust: " + ", ".join(unexpected))
+
+    recorded_counts = classification.get("classification_counts")
+    if recorded_counts != dict(sorted(bucket_counts.items())) and recorded_counts != bucket_counts:
+        errors.append("classification_counts do not match classified routes")
+
+    recorded_parity = classification.get("route_parity", {})
+    if not isinstance(recorded_parity, dict):
+        errors.append("classification route_parity must be an object")
+    else:
+        parity_checks = {
+            "fastapi_routes": summary["fastapi_routes"],
+            "rust_native_routes": summary["rust_native_routes"],
+            "fastapi_routes_missing_from_rust": summary["fastapi_routes_missing_from_rust"],
+            "web_used_routes": summary["web_used_routes"],
+            "web_routes_requiring_fallback": summary["web_routes_requiring_fallback"],
+        }
+        for key, value in parity_checks.items():
+            if recorded_parity.get(key) != value:
+                errors.append(f"classification route_parity {key} is stale")
+
+    requires_legacy = (
+        bucket_counts["intentional_legacy_fallback"] > 0
+        or bucket_counts["unsafe_to_migrate_now"] > 0
+        or bool(missing_from_rust)
+    )
+    if bool(classification.get("fastapi_fallback_required")) != requires_legacy:
+        errors.append("classification fastapi_fallback_required is stale")
+    if classification.get("rust_only_claim_allowed") is not (not requires_legacy):
+        errors.append("classification rust_only_claim_allowed is stale")
+
+    route_parity = manifest.get("route_parity", {})
+    if not isinstance(route_parity, dict):
+        errors.append("manifest route_parity must be an object")
+        route_parity = {}
+
+    if bool(manifest.get("fastapi_fallback_required")) != summary["fastapi_fallback_required"]:
+        errors.append("manifest fastapi_fallback_required does not match route parity")
+    if route_parity.get("rust_native_routes") != summary["rust_native_routes"]:
+        errors.append("manifest rust_native_routes is stale")
+    if route_parity.get("fastapi_routes_missing_from_rust") != summary["fastapi_routes_missing_from_rust"]:
+        errors.append("manifest fastapi_routes_missing_from_rust is stale")
+    if route_parity.get("web_routes_requiring_fallback") != summary["web_routes_requiring_fallback"]:
+        errors.append("manifest web_routes_requiring_fallback is stale")
+    if route_parity.get("status") == "complete" and summary["fastapi_fallback_required"]:
+        errors.append("manifest route_parity cannot be complete while fallback is required")
+
+    target_architecture = str(manifest.get("target_architecture", ""))
+    operational_status = str(manifest.get("operational_status", ""))
+    if requires_legacy and (
+        "rust-only" in target_architecture
+        or "rust-only" in operational_status
+        or route_parity.get("status") == "complete"
+        or not bool(manifest.get("fastapi_fallback_required"))
+    ):
+        errors.append("manifest must not claim Rust-only while legacy fallback remains")
+
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check IGY6 Rust/FastAPI route parity.")
     parser.add_argument("--check", action="store_true", help="validate manifest against route parity")
@@ -155,6 +295,7 @@ def main() -> int:
         "web_routes_requiring_fallback": len(web_requires_fallback),
         "fastapi_fallback_required": bool(missing_from_rust or web_requires_fallback),
         "rust_native": [route.key() for route in sorted(rust)],
+        "missing_from_rust": [route.key() for route in missing_from_rust],
         "web_requires_fallback": [route.key() for route in web_requires_fallback],
     }
 
@@ -172,16 +313,9 @@ def main() -> int:
 
     if args.check:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        manifest_fallback = bool(manifest.get("fastapi_fallback_required"))
-        route_parity = manifest.get("route_parity", {})
-        if manifest_fallback != summary["fastapi_fallback_required"]:
-            raise SystemExit(
-                "manifest fastapi_fallback_required does not match route parity"
-            )
-        if route_parity.get("rust_native_routes") != summary["rust_native_routes"]:
-            raise SystemExit("manifest rust_native_routes is stale")
-        if route_parity.get("status") == "complete" and summary["fastapi_fallback_required"]:
-            raise SystemExit("manifest route_parity cannot be complete while fallback is required")
+        errors = _classification_errors(summary, missing_from_rust, manifest)
+        if errors:
+            raise SystemExit("\n".join(errors))
     return 0
 
 
