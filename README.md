@@ -55,6 +55,28 @@ docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200
 Do not use `down -v` as a normal stop command. `down -v` can delete stored
 Docker volume data.
 
+Run the safe runtime smoke check against an already-running stack:
+
+```bash
+scripts/runtime-smoke.sh --check
+```
+
+The smoke script validates Docker Compose config, expected running services, API
+live/ready endpoints, and the web UI. By default it does not start or stop
+anything. To start explicitly:
+
+```bash
+scripts/runtime-smoke.sh --start --detached
+```
+
+To stop explicitly:
+
+```bash
+scripts/runtime-smoke.sh --stop
+```
+
+The stop command uses `docker compose down`, never `down -v`.
+
 ## Simple WSL Aliases
 
 Add aliases like these to your shell profile, adjusting the path:
@@ -203,7 +225,15 @@ are read-only or require service restart/recreate after editing.
 
 - Web UI unavailable: run `igy6-ps` or the long `docker compose ... ps` command
   and check the `web` container.
+- Empty `ps` output usually means the stack is not running for the selected
+  Compose project/env file. Start with `igy6-start` or
+  `scripts/runtime-smoke.sh --start --detached`.
+- `127.0.0.1:3000` refused usually means the `web` container is not running, is
+  still building, or failed during Next.js startup. Check `igy6-logs` or
+  `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web`.
 - API unavailable: open `http://127.0.0.1:8000/health/ready` and check API logs.
+- Phoenix logs that show `GET / 200 OK` are normal health/readiness probes for
+  the local Phoenix service; they do not mean external model calls are happening.
 - Assistant action blocked: check Safety & Audit for approval requirements and
   runtime capability status.
 - Upload blocked: confirm the source exists, permission operations include the
@@ -222,6 +252,7 @@ git status --short
 git diff --check
 npm --prefix apps/web run build
 npm --prefix apps/web run test:ui-smoke
+scripts/runtime-smoke.sh --check
 python3 scripts/rust-route-parity.py --check
 scripts/rust-cutover.sh --check
 ```

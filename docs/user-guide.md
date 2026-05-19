@@ -88,3 +88,60 @@ The check verifies the Home, Assistant, Data & Knowledge, Work & Processing,
 Reports, Safety & Audit, and Settings workflow contract. It also checks that
 Assistant action buttons start gated, Advanced panels preserve raw/debug
 controls, and manual upload guidance remains visible.
+
+## Runtime Smoke Check
+
+Check an already-running local stack:
+
+```bash
+scripts/runtime-smoke.sh --check
+```
+
+The runtime smoke check validates Docker Compose config, expected running
+services, `http://127.0.0.1:8000/health/live`,
+`http://127.0.0.1:8000/health/ready`, and `http://127.0.0.1:3000`. It prints
+clear PASS/FAIL lines and does not start or stop services in default check mode.
+
+Start explicitly:
+
+```bash
+scripts/runtime-smoke.sh --start --detached
+```
+
+Stop explicitly:
+
+```bash
+scripts/runtime-smoke.sh --stop
+```
+
+The stop command uses `docker compose down`, not `down -v`. Do not use
+`down -v` as a normal stop command because it can delete stored Docker volume
+data.
+
+Long Docker commands:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env up --build
+docker compose -f infra/docker-compose.yml --env-file .env down
+docker compose -f infra/docker-compose.yml --env-file .env ps
+docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200
+```
+
+WSL aliases:
+
+```bash
+igy6-start
+igy6-stop
+igy6-ps
+igy6-logs
+```
+
+Troubleshooting:
+
+- Empty `ps` output means the stack is probably not running for the selected
+  Compose project/env file.
+- `127.0.0.1:3000` refused usually means the web container is stopped, still
+  starting, or failed during Next.js startup.
+- Phoenix `GET / 200 OK` log lines are normal local health/readiness probes.
+- For API logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api`
+- For web logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web`
