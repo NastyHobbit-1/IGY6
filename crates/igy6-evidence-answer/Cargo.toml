@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+igy6-llm = { path = "../igy6-llm" }
 igy6-retrieval-preview = { path = "../igy6-retrieval-preview" }

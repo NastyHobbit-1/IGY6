@@ -102,10 +102,12 @@ details, status meanings, and log commands.
 
 ## Optional Local LLM Plan
 
-IGY6 does not call an external model by default. Local LLM support is planned as
-an optional feature, starting with Ollama on the user's machine. DIFF-127 adds a
-Rust local Ollama adapter crate for later use, but Assistant still uses
-deterministic evidence behavior until a later DIFF wires generation in.
+IGY6 does not call an external model by default. Local LLM support is optional,
+starts with Ollama on the user's machine, and remains disabled when
+`LLM_PROVIDER=none`. Evidence answers keep deterministic fallback. If a local
+provider is unavailable or timed out, Assistant reports fallback status instead
+of guessing. If no evidence exists, Assistant says insufficient evidence without
+calling the provider.
 
 Planned local defaults:
 
@@ -115,8 +117,8 @@ Planned local defaults:
 - `LLM_TIMEOUT_SECONDS=60`
 - `LLM_EVIDENCE_REQUIRED=true`
 
-Future local LLM answers must cite retrieved evidence or say insufficient
-evidence. They must not execute actions or change approval requirements. See
+Local LLM answers must cite retrieved evidence or say insufficient evidence.
+They must not execute actions or change approval requirements. See
 `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
 
 ## Safety Notes

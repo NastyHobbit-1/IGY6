@@ -431,16 +431,16 @@ const TERM_HELP: Record<string, TermHelpContent> = {
   },
   evidenceAnswer: {
     title: "Evidence Answer",
-    explanation: "Evidence Answer creates a deterministic evidence summary from local retrieved evidence.",
+    explanation: "Evidence Answer creates an evidence-grounded answer from local retrieved evidence.",
     manage: "Use Assistant evidence controls or the chat evidence-answer API.",
-    purpose: "It summarizes local facts, assumptions, uncertainty, and source trails.",
-    warning: "It is not an LLM answer and does not call an external model."
+    purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic fallback.",
+    warning: "Local LLM generation is optional, disabled by default, evidence-required, and falls back deterministically when unavailable."
   },
   deterministic: {
     title: "Deterministic",
     explanation: "Deterministic means output is rule-based, local, and repeatable from stored records.",
     manage: "Review deterministic evidence outputs in Assistant retrieval preview and evidence answer.",
-    purpose: "It keeps current answers auditable while LLM generation is not implemented.",
+    purpose: "It keeps answers auditable when local LLM generation is disabled, unavailable, or unsupported by evidence.",
     warning: "Deterministic output does not include hidden AI reasoning."
   },
   noExternalModel: {
@@ -1456,7 +1456,7 @@ function MvpActionConsole() {
           <h3><HelpHeading term="evidenceAnswer">Evidence Answer</HelpHeading></h3>
           <textarea name="answer_message" rows={3} defaultValue="What does the system know?" />
           <input name="answer_limit" type="number" min="1" max="50" defaultValue="5" />
-          <button type="submit">Build Answer</button>
+          <button type="submit">Build Evidence-Grounded Answer</button>
         </form>
 
         <form className="actionBox" data-review>

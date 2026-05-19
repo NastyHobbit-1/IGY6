@@ -280,6 +280,7 @@ version = "0.1.0"
 name = "igy6-evidence-answer"
 version = "0.1.0"
 dependencies = [
+ "igy6-llm",
  "igy6-retrieval-preview",
 ]
 
@@ -291,6 +292,7 @@ dependencies = [
  "igy6-artifacts",
  "igy6-evidence-answer",
  "igy6-host-bridge",
+ "igy6-llm",
  "igy6-read-only-api",
  "igy6-retrieval-preview",
  "postgres",

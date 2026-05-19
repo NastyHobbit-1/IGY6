@@ -234,8 +234,9 @@ worker/API/Redis log commands.
 ## Optional Local LLM Plan
 
 IGY6 does not call an external model by default. DIFF-126 adds a plan for a
-future optional local LLM adapter, and DIFF-127 adds the Rust local-Ollama-only
-adapter crate without wiring model generation into Assistant yet.
+future optional local LLM adapter, DIFF-127 adds the Rust local-Ollama-only
+adapter crate, and DIFF-128 wires optional local generation into evidence-answer
+logic behind evidence-required checks and deterministic fallback.
 
 Safe local planning defaults in `.env.example`:
 
@@ -247,13 +248,12 @@ LLM_TIMEOUT_SECONDS=60
 LLM_EVIDENCE_REQUIRED=true
 ```
 
-`LLM_PROVIDER=none` means no model calls. The `igy6-llm` crate supports
-disabled-provider status and local Ollama health/generate helpers for later
-DIFFs, tested with fakes rather than a real Ollama dependency. If a later DIFF
-enables `LLM_PROVIDER=ollama` in Assistant, answers must still be
-evidence-grounded, timeout-bound, and citation-oriented. If no evidence exists,
-Assistant must say insufficient evidence instead of guessing. See
-`docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
+`LLM_PROVIDER=none` means no model calls and deterministic evidence fallback is
+active. If `LLM_PROVIDER=ollama` is configured, evidence-answer generation is
+still evidence-required, timeout-bound, citation-oriented, and local-only.
+Provider disabled, unavailable, invalid, or timed out states fall back to the
+deterministic answer. If no evidence exists, Assistant says insufficient
+evidence without calling the provider. See `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
 
 ## Safety And Approvals
 

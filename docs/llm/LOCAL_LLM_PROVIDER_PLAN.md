@@ -118,9 +118,13 @@ Seasoned coders:
   redaction, and fake-transport tests.
 - DIFF-127 does not wire local LLM generation into Assistant and does not call a
   real Ollama process during tests.
+- DIFF-128 wires optional local LLM generation into evidence answer generation
+  behind evidence-required checks. Provider disabled, unavailable, invalid, or
+  timed out states fall back to deterministic evidence answers. Missing evidence
+  returns insufficient evidence without calling the provider. Tests use fake
+  transports only.
 
-## Not Implemented In DIFF-126 Or DIFF-127
+## Not Implemented In DIFF-126 Through DIFF-128
 
-These DIFFs do not wire Assistant answers to an LLM or change backend answer
-behavior. That requires a later focused DIFF with evidence-grounded generation
-tests.
+These DIFFs do not add external model providers, LLM action execution, broad
+retrieval rewrites, or Rust-only operation.

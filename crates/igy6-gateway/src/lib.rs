@@ -12,8 +12,9 @@ use igy6_agent_api::{
     ACTION_REGISTRY,
 };
 use igy6_artifacts::ArtifactStore;
-use igy6_evidence_answer::build_evidence_answer_packet;
+use igy6_evidence_answer::{answer_with_optional_llm, deterministic_fallback_for_llm_config_error};
 use igy6_host_bridge::{allowed_action as host_bridge_allowed_action, redact_output};
+use igy6_llm::{LlmConfig, StdHttpTransport};
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
 use postgres::{Client, NoTls};
@@ -5995,14 +5996,25 @@ fn evidence_answer_json(body: &str) -> String {
         Vec::<igy6_retrieval_preview::HydratedChunkSearchHit>::new(),
         5,
     );
-    let answer = build_evidence_answer_packet(retrieval_context);
+    let answer = match LlmConfig::from_env() {
+        Ok(config) => answer_with_optional_llm(retrieval_context, &config, &StdHttpTransport),
+        Err(error) => deterministic_fallback_for_llm_config_error(retrieval_context, &error),
+    };
+    let deterministic = &answer.deterministic_answer;
     format!(
-        "{{\"message\":\"{}\",\"answer_status\":\"{}\",\"facts\":[],\"source_trails\":[],\"assumptions\":{},\"uncertainty\":{},\"missing_information\":{}}}",
-        escape_json(&answer.message),
+        "{{\"message\":\"{}\",\"answer_status\":\"{}\",\"generation_mode\":\"{}\",\"llm_provider\":\"{}\",\"llm_status\":\"{}\",\"llm_text\":{},\"llm_error\":{},\"redacted_output_preview\":{},\"prompt_evidence_bytes\":{},\"facts\":[],\"source_trails\":[],\"assumptions\":{},\"uncertainty\":{},\"missing_information\":{}}}",
+        escape_json(&deterministic.message),
         answer.answer_status,
-        json_owned_string_array(&answer.assumptions),
-        json_owned_string_array(&answer.uncertainty),
-        json_owned_string_array(&answer.missing_information)
+        escape_json(&answer.generation_mode),
+        escape_json(&answer.llm_provider),
+        escape_json(&answer.llm_status),
+        option_string_json(answer.llm_text.as_deref()),
+        option_string_json(answer.llm_error.as_deref()),
+        option_string_json(answer.redacted_output_preview.as_deref()),
+        answer.prompt_evidence_bytes,
+        json_owned_string_array(&deterministic.assumptions),
+        json_owned_string_array(&deterministic.uncertainty),
+        json_owned_string_array(&deterministic.missing_information)
     )
 }
 

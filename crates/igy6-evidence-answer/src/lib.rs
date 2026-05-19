@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
 
+use igy6_llm::{
+    generate, redact_sensitive_text, LlmConfig, LlmError, LlmGenerateRequest, LlmHttpTransport,
+};
 use igy6_retrieval_preview::HydratedChunkSearchResult;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +48,19 @@ pub struct EvidenceAnswerResponse {
     pub missing_information: Vec<String>,
     pub source_trails: Vec<AnswerSourceTrail>,
     pub retrieval_context: HydratedChunkSearchResult,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvidenceGroundedAnswer {
+    pub deterministic_answer: EvidenceAnswerResponse,
+    pub answer_status: String,
+    pub generation_mode: String,
+    pub llm_provider: String,
+    pub llm_status: String,
+    pub llm_text: Option<String>,
+    pub llm_error: Option<String>,
+    pub redacted_output_preview: Option<String>,
+    pub prompt_evidence_bytes: usize,
 }
 
 pub fn build_evidence_answer_packet(
@@ -181,6 +197,168 @@ pub fn build_evidence_answer_packet(
     }
 }
 
+pub fn answer_with_optional_llm<T: LlmHttpTransport>(
+    retrieval_context: HydratedChunkSearchResult,
+    config: &LlmConfig,
+    transport: &T,
+) -> EvidenceGroundedAnswer {
+    let deterministic_answer = build_evidence_answer_packet(retrieval_context);
+    if deterministic_answer.facts.is_empty() {
+        return EvidenceGroundedAnswer {
+            answer_status: "insufficient_evidence".to_string(),
+            generation_mode: "insufficient_evidence".to_string(),
+            llm_provider: config.status().provider,
+            llm_status: "not_called".to_string(),
+            llm_text: None,
+            llm_error: None,
+            redacted_output_preview: None,
+            prompt_evidence_bytes: 0,
+            deterministic_answer,
+        };
+    }
+
+    let prompt = build_llm_prompt(&deterministic_answer, config.max_evidence_bytes);
+    let prompt_evidence_bytes = prompt.len();
+    match generate(
+        config,
+        &LlmGenerateRequest {
+            prompt,
+            evidence_bytes: prompt_evidence_bytes,
+        },
+        transport,
+    ) {
+        Ok(response) => EvidenceGroundedAnswer {
+            answer_status: "evidence_grounded_llm".to_string(),
+            generation_mode: "local_llm_evidence_grounded".to_string(),
+            llm_provider: response.provider,
+            llm_status: "ok".to_string(),
+            llm_text: Some(response.text),
+            llm_error: None,
+            redacted_output_preview: Some(response.redacted_output_preview),
+            prompt_evidence_bytes,
+            deterministic_answer,
+        },
+        Err(LlmError::ProviderDisabled) => deterministic_fallback(
+            deterministic_answer,
+            config.status().provider,
+            "disabled",
+            None,
+            prompt_evidence_bytes,
+        ),
+        Err(error) => deterministic_fallback(
+            deterministic_answer,
+            config.status().provider,
+            "llm_unavailable",
+            Some(redact_sensitive_text(&error.to_string())),
+            prompt_evidence_bytes,
+        ),
+    }
+}
+
+pub fn deterministic_fallback_for_llm_config_error(
+    retrieval_context: HydratedChunkSearchResult,
+    error: &LlmError,
+) -> EvidenceGroundedAnswer {
+    let deterministic_answer = build_evidence_answer_packet(retrieval_context);
+    let answer_status = deterministic_answer.answer_status.clone();
+    EvidenceGroundedAnswer {
+        deterministic_answer,
+        answer_status,
+        generation_mode: "deterministic_fallback".to_string(),
+        llm_provider: "unknown".to_string(),
+        llm_status: "llm_unavailable".to_string(),
+        llm_text: None,
+        llm_error: Some(redact_sensitive_text(&error.to_string())),
+        redacted_output_preview: None,
+        prompt_evidence_bytes: 0,
+    }
+}
+
+fn deterministic_fallback(
+    deterministic_answer: EvidenceAnswerResponse,
+    provider: String,
+    llm_status: &str,
+    llm_error: Option<String>,
+    prompt_evidence_bytes: usize,
+) -> EvidenceGroundedAnswer {
+    let answer_status = deterministic_answer.answer_status.clone();
+    EvidenceGroundedAnswer {
+        deterministic_answer,
+        answer_status,
+        generation_mode: "deterministic_fallback".to_string(),
+        llm_provider: provider,
+        llm_status: llm_status.to_string(),
+        llm_text: None,
+        llm_error,
+        redacted_output_preview: None,
+        prompt_evidence_bytes,
+    }
+}
+
+fn build_llm_prompt(answer: &EvidenceAnswerResponse, max_evidence_bytes: usize) -> String {
+    let mut prompt = String::from(
+        "Answer only using the retrieved IGY6 evidence below. Cite the provided citation ids. If the evidence does not support an answer, say insufficient evidence. Do not execute actions.\n\nEvidence:\n",
+    );
+    truncate_to_budget(&mut prompt, max_evidence_bytes);
+    for (index, fact) in answer.facts.iter().enumerate() {
+        let citation = fact
+            .citations
+            .first()
+            .map(|citation| citation.citation_id.as_str())
+            .unwrap_or("uncited");
+        let line = format!(
+            "[{}] citation={} fact={}\n",
+            index + 1,
+            citation,
+            excerpt(&fact.text, 500)
+        );
+        if prompt.len() + line.len() > max_evidence_bytes {
+            append_with_budget(
+                &mut prompt,
+                "[evidence truncated to configured budget]\n",
+                max_evidence_bytes,
+            );
+            break;
+        }
+        prompt.push_str(&line);
+    }
+    append_with_budget(&mut prompt, "\nSource trails:\n", max_evidence_bytes);
+    for trail in &answer.source_trails {
+        let line = format!(
+            "- document={} chunk={} source={}\n",
+            trail.document_id,
+            trail.chunk_id,
+            trail.source_name.as_deref().unwrap_or("unknown")
+        );
+        if prompt.len() + line.len() > max_evidence_bytes {
+            append_with_budget(
+                &mut prompt,
+                "[source trails truncated to configured budget]\n",
+                max_evidence_bytes,
+            );
+            break;
+        }
+        prompt.push_str(&line);
+    }
+    prompt
+}
+
+fn append_with_budget(prompt: &mut String, value: &str, max_evidence_bytes: usize) {
+    if prompt.len() >= max_evidence_bytes {
+        return;
+    }
+    let remaining = max_evidence_bytes - prompt.len();
+    prompt.push_str(&value.chars().take(remaining).collect::<String>());
+}
+
+fn truncate_to_budget(prompt: &mut String, max_evidence_bytes: usize) {
+    if prompt.len() <= max_evidence_bytes {
+        return;
+    }
+    let truncated = prompt.chars().take(max_evidence_bytes).collect::<String>();
+    *prompt = truncated;
+}
+
 pub fn confidence_from_hit(score: f64, evidence_confidence: Option<i32>) -> i32 {
     let score_confidence = (score * 100.0).round().clamp(0.0, 100.0) as i32;
     match evidence_confidence {
@@ -206,10 +384,62 @@ pub fn excerpt(value: &str, max_length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use igy6_llm::{
+        HttpRequest, HttpResponse, LlmError, LlmHttpTransport, LlmProvider, OLLAMA_PROVIDER,
+    };
     use igy6_retrieval_preview::{
         HydratedChunkSearchHit, HydratedChunkSearchResult, RetrievalChunk, RetrievalDocument,
         RetrievalEvidenceItem, RetrievalRawArtifact, RetrievalSource,
     };
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct FakeTransport {
+        response: Result<HttpResponse, LlmError>,
+        requests: RefCell<Vec<HttpRequest>>,
+    }
+
+    impl FakeTransport {
+        fn ok(body: &str) -> Self {
+            Self {
+                response: Ok(HttpResponse {
+                    status_code: 200,
+                    body: body.to_string(),
+                }),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn error(error: LlmError) -> Self {
+            Self {
+                response: Err(error),
+                requests: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl LlmHttpTransport for FakeTransport {
+        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, LlmError> {
+            self.requests.borrow_mut().push(request.clone());
+            self.response.clone()
+        }
+    }
+
+    fn disabled_config() -> LlmConfig {
+        LlmConfig::default()
+    }
+
+    fn ollama_config() -> LlmConfig {
+        LlmConfig {
+            provider: LlmProvider::Ollama,
+            base_url: "http://host.docker.internal:11434".to_string(),
+            model: Some("llama3.2:latest".to_string()),
+            timeout: Duration::from_secs(5),
+            evidence_required: true,
+            max_evidence_bytes: 4096,
+        }
+    }
 
     fn context(with_evidence: bool) -> HydratedChunkSearchResult {
         HydratedChunkSearchResult {
@@ -310,5 +540,94 @@ mod tests {
         let answer = build_evidence_answer_packet(context(true));
         assert_eq!(answer.inferences.len(), 1);
         assert!(answer.inferences[0].text.contains("evidence-1"));
+    }
+
+    #[test]
+    fn optional_llm_no_evidence_returns_insufficient_evidence_without_call() {
+        let mut retrieval_context = context(false);
+        retrieval_context.hits.clear();
+        let transport = FakeTransport::ok("{\"response\":\"unused\",\"done\":true}");
+
+        let answer = answer_with_optional_llm(retrieval_context, &ollama_config(), &transport);
+
+        assert_eq!(answer.answer_status, "insufficient_evidence");
+        assert_eq!(answer.generation_mode, "insufficient_evidence");
+        assert_eq!(answer.llm_status, "not_called");
+        assert!(transport.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn optional_llm_disabled_uses_deterministic_fallback() {
+        let transport = FakeTransport::ok("{\"response\":\"unused\",\"done\":true}");
+
+        let answer = answer_with_optional_llm(context(true), &disabled_config(), &transport);
+
+        assert_eq!(answer.answer_status, "evidence_summary");
+        assert_eq!(answer.generation_mode, "deterministic_fallback");
+        assert_eq!(answer.llm_provider, "none");
+        assert_eq!(answer.llm_status, "disabled");
+        assert!(answer.llm_text.is_none());
+        assert!(transport.requests.borrow().is_empty());
+    }
+
+    #[test]
+    fn optional_llm_timeout_or_transport_error_falls_back_explicitly() {
+        let transport = FakeTransport::error(LlmError::Transport(
+            "timeout while using token abc".to_string(),
+        ));
+
+        let answer = answer_with_optional_llm(context(true), &ollama_config(), &transport);
+
+        assert_eq!(answer.answer_status, "evidence_summary");
+        assert_eq!(answer.generation_mode, "deterministic_fallback");
+        assert_eq!(answer.llm_status, "llm_unavailable");
+        assert_eq!(
+            answer.llm_error.as_deref(),
+            Some("LLM transport error: timeout while using [redacted] abc")
+        );
+        assert_eq!(transport.requests.borrow().len(), 1);
+    }
+
+    #[test]
+    fn optional_llm_with_evidence_calls_adapter_with_bounded_packet() {
+        let transport = FakeTransport::ok(
+            "{\"response\":\"The evidence says the stored statement [evidence-1].\",\"done\":true}",
+        );
+
+        let answer = answer_with_optional_llm(context(true), &ollama_config(), &transport);
+
+        assert_eq!(answer.answer_status, "evidence_grounded_llm");
+        assert_eq!(answer.generation_mode, "local_llm_evidence_grounded");
+        assert_eq!(answer.llm_provider, OLLAMA_PROVIDER);
+        assert_eq!(answer.llm_status, "ok");
+        assert_eq!(answer.deterministic_answer.source_trails.len(), 1);
+        assert_eq!(
+            answer.deterministic_answer.facts[0].citations[0].citation_id,
+            "evidence-1"
+        );
+        assert!(answer.prompt_evidence_bytes > 0);
+        assert!(answer.prompt_evidence_bytes <= ollama_config().max_evidence_bytes);
+
+        let requests = transport.requests.borrow();
+        let body = requests[0].body.as_ref().expect("prompt body expected");
+        assert!(body.contains("evidence-1"));
+        assert!(body.contains("Do not execute actions"));
+    }
+
+    #[test]
+    fn llm_prompt_respects_evidence_budget() {
+        let mut config = ollama_config();
+        config.max_evidence_bytes = 260;
+        let transport = FakeTransport::ok("{\"response\":\"short [evidence-1]\",\"done\":true}");
+        let mut retrieval_context = context(true);
+        retrieval_context.hits[0].evidence_items[0].statement =
+            "long local evidence statement ".repeat(40);
+
+        let answer = answer_with_optional_llm(retrieval_context, &config, &transport);
+
+        assert!(answer.prompt_evidence_bytes <= 260);
+        let requests = transport.requests.borrow();
+        let body = requests[0].body.as_ref().expect("prompt body expected");
+        assert!(body.contains("truncated to configured budget"));
     }
 }
