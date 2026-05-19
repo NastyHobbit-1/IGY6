@@ -100,6 +100,25 @@ The live worker is Python/Celery. Rust gateway dispatch is safe-limited and does
 not invoke Celery directly. See `docs/runtime/PROCESSING_STATUS.md` for pipeline
 details, status meanings, and log commands.
 
+## Optional Local LLM Plan
+
+IGY6 does not call an external model by default. Local LLM support is planned as
+an optional feature, starting with Ollama on the user's machine. Until a later
+DIFF implements and enables an adapter, Assistant continues to use deterministic
+evidence behavior.
+
+Planned local defaults:
+
+- `LLM_PROVIDER=none`
+- `OLLAMA_BASE_URL=http://host.docker.internal:11434`
+- `OLLAMA_MODEL=` left blank until the user chooses a local model
+- `LLM_TIMEOUT_SECONDS=60`
+- `LLM_EVIDENCE_REQUIRED=true`
+
+Future local LLM answers must cite retrieved evidence or say insufficient
+evidence. They must not execute actions or change approval requirements. See
+`docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
+
 ## Safety Notes
 
 IGY6 is local-first and evidence-only by default. It does not claim Rust-only

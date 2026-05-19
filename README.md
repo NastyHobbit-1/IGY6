@@ -24,6 +24,11 @@ python3 scripts/rust-route-parity.py --check
 The web UI should show the same truth: local-first, evidence-only, no external
 model by default, and approval-gated for system-changing actions.
 
+Optional local LLM support is planned but disabled by default. The initial
+planned provider is Ollama running locally. Deterministic evidence answers remain
+the fallback, and any future LLM answer must cite retrieved evidence or say
+there is insufficient evidence.
+
 ## Start And Stop Locally
 
 Create `.env` from `.env.example` before normal local runs.
@@ -225,6 +230,27 @@ python3 scripts/processing-status-smoke.py
 
 See `docs/runtime/PROCESSING_STATUS.md` for the pipeline, status meanings, and
 worker/API/Redis log commands.
+
+## Optional Local LLM Plan
+
+IGY6 does not call an external model by default. DIFF-126 adds a plan for a
+future optional local LLM adapter, starting with Ollama, without wiring model
+generation into Assistant yet.
+
+Safe local planning defaults in `.env.example`:
+
+```env
+LLM_PROVIDER=none
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=
+LLM_TIMEOUT_SECONDS=60
+LLM_EVIDENCE_REQUIRED=true
+```
+
+`LLM_PROVIDER=none` means no model calls. If a later DIFF enables
+`LLM_PROVIDER=ollama`, answers must still be evidence-grounded, timeout-bound,
+and citation-oriented. If no evidence exists, Assistant must say insufficient
+evidence instead of guessing. See `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
 
 ## Safety And Approvals
 

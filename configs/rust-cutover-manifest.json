@@ -357,6 +357,17 @@
         "DIFF-105 adds scripts/rust-route-parity.py and runs it from scripts/rust-cutover.sh --check.",
         "DIFF-106 updates scripts/rust-route-parity.py to count the Rust gateway route registry without counting test fixtures."
       ]
+    },
+    "local_llm_provider_plan": {
+      "status": "partial",
+      "diff": "DIFF-126",
+      "verification": [
+        "DIFF-126 documents optional local LLM provider requirements in docs/llm/LOCAL_LLM_PROVIDER_PLAN.md.",
+        "DIFF-126 adds safe disabled-by-default local LLM keys to .env.example.",
+        "LLM_PROVIDER=none means no model calls.",
+        "No provider adapter, Ollama call, Assistant answer-generation wiring, external model call, or Rust-only claim is added by DIFF-126.",
+        "Future local LLM answers must remain evidence-grounded, timeout-bound, and citation-oriented, with deterministic evidence fallback and insufficient-evidence behavior when evidence is absent."
+      ]
     }
   },
     "archive_plan": {
