@@ -190,6 +190,26 @@ Use this as a small local smoke test:
 Current manual upload works best with UTF-8 text. Binary PDF/image/audio parsing
 is not claimed by this flow unless a later DIFF adds it.
 
+For a guided end-to-end checklist and local helper script, see
+`docs/runtime/E2E_MANUAL_UPLOAD_SMOKE.md`.
+
+Non-mutating preflight:
+
+```bash
+python3 scripts/e2e-manual-upload-smoke.py --check
+```
+
+Run the local smoke path against an already-running stack:
+
+```bash
+python3 scripts/e2e-manual-upload-smoke.py --run
+```
+
+The `--run` mode creates harmless local runtime records using the test keyword
+`blue-raven-117`. It does not write test data to the repository. Worker
+processing may remain queued; the script reports upload success, artifact/work
+item creation, evidence availability, and retrieval visibility separately.
+
 ## Safety And Approvals
 
 Read-only actions, retrieval preview, and local status checks are designed to be
