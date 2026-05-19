@@ -210,6 +210,22 @@ The `--run` mode creates harmless local runtime records using the test keyword
 processing may remain queued; the script reports upload success, artifact/work
 item creation, evidence availability, and retrieval visibility separately.
 
+## Processing Status Diagnostics
+
+Manual upload creates raw artifact metadata and queued processing work. Live
+processing is still owned by the Python/Celery worker. The Rust worker crate is
+a deterministic planning foundation, and the Rust gateway dispatch route records
+safe dispatch metadata without invoking Celery directly.
+
+Check worker/processing status:
+
+```bash
+python3 scripts/processing-status-smoke.py
+```
+
+See `docs/runtime/PROCESSING_STATUS.md` for the pipeline, status meanings, and
+worker/API/Redis log commands.
+
 ## Safety And Approvals
 
 Read-only actions, retrieval preview, and local status checks are designed to be

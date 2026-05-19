@@ -87,6 +87,19 @@ python3 scripts/e2e-manual-upload-smoke.py --run
 The test keyword is `blue-raven-117`. If Assistant cannot find that keyword,
 first check that worker processing created chunks/evidence.
 
+## Processing Status
+
+Manual upload may create queued work before evidence exists. Check processing
+status with:
+
+```bash
+python3 scripts/processing-status-smoke.py
+```
+
+The live worker is Python/Celery. Rust gateway dispatch is safe-limited and does
+not invoke Celery directly. See `docs/runtime/PROCESSING_STATUS.md` for pipeline
+details, status meanings, and log commands.
+
 ## Safety Notes
 
 IGY6 is local-first and evidence-only by default. It does not claim Rust-only
