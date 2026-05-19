@@ -84,7 +84,22 @@ includesAll("assistant evidence controls", page, [
   "Ask a question or request an action...",
   "Ask over evidence",
   "What does this document say about my bill?",
-  "What failed in this build log? Cite the evidence."
+  "What failed in this build log? Cite the evidence.",
+  "deterministic evidence",
+  "local LLM evidence-grounded",
+  "unavailable until model is selected"
+]);
+
+includesAll("local llm status copy", page, [
+  "Local LLM Status",
+  "Provider",
+  "Health status",
+  "Answer mode",
+  "Evidence required",
+  "Use local model to summarize uploaded warranty note using only evidence.",
+  "Use local model to explain build log failure with citations.",
+  "Advanced: raw provider diagnostics",
+  "No model calls are made while LLM_PROVIDER is none"
 ]);
 
 includesAll("advanced panels", page, [

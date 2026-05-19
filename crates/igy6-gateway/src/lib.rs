@@ -3180,6 +3180,7 @@ const SETTING_GROUPS: &[(&str, &str)] = &[
     ("neo4j", "Neo4j"),
     ("mlflow", "MLflow"),
     ("phoenix", "Phoenix"),
+    ("llm", "Local LLM"),
     ("storage", "Storage"),
     ("policy", "Policy / Safety"),
 ];
@@ -3216,6 +3217,11 @@ const SETTING_DEFINITIONS: &[SettingDefinition] = &[
     SettingDefinition { key: "PHOENIX_HOST", group: "phoenix", description: "Phoenix service hostname." },
     SettingDefinition { key: "PHOENIX_PORT", group: "phoenix", description: "Published local Phoenix port." },
     SettingDefinition { key: "PHOENIX_COLLECTOR_ENDPOINT", group: "phoenix", description: "Reserved local Phoenix endpoint." },
+    SettingDefinition { key: "LLM_PROVIDER", group: "llm", description: "Optional local LLM provider: none or ollama." },
+    SettingDefinition { key: "OLLAMA_BASE_URL", group: "llm", description: "Local Ollama base URL. No tokens or cloud endpoints." },
+    SettingDefinition { key: "OLLAMA_MODEL", group: "llm", description: "Local Ollama model name. Empty is allowed when provider is none." },
+    SettingDefinition { key: "LLM_TIMEOUT_SECONDS", group: "llm", description: "Timeout for local LLM generation attempts." },
+    SettingDefinition { key: "LLM_EVIDENCE_REQUIRED", group: "llm", description: "Require retrieved evidence before local LLM generation." },
     SettingDefinition { key: "ARTIFACT_STORE_PATH", group: "storage", description: "Container path for content-addressed artifacts." },
     SettingDefinition { key: "EXPORT_STORE_PATH", group: "storage", description: "Container path for report/export output." },
     SettingDefinition { key: "ENV_FILE_PATH", group: "storage", description: "Controlled container path to the mounted local .env file." },
@@ -3417,6 +3423,19 @@ fn settings_base_values(
         .entry("IGY6_DATA_ROOT".to_string())
         .or_insert_with(|| config.igy6_data_root.clone());
     values
+        .entry("LLM_PROVIDER".to_string())
+        .or_insert_with(|| "none".to_string());
+    values
+        .entry("OLLAMA_BASE_URL".to_string())
+        .or_insert_with(|| "http://host.docker.internal:11434".to_string());
+    values.entry("OLLAMA_MODEL".to_string()).or_default();
+    values
+        .entry("LLM_TIMEOUT_SECONDS".to_string())
+        .or_insert_with(|| "60".to_string());
+    values
+        .entry("LLM_EVIDENCE_REQUIRED".to_string())
+        .or_insert_with(|| "true".to_string());
+    values
 }
 
 fn settings_unmanaged_values(parsed: &ParsedSettingsEnv) -> HashMap<String, String> {
@@ -3441,6 +3460,7 @@ fn validate_settings_candidate(
     let mut warnings = Vec::new();
     for definition in SETTING_DEFINITIONS {
         if !setting_read_only(definition.key)
+            && definition.key != "OLLAMA_MODEL"
             && candidate.get(definition.key).is_none_or(String::is_empty)
         {
             errors.push(settings_issue(
@@ -3542,6 +3562,46 @@ fn validate_settings_candidate(
         ));
     }
     if !matches!(
+        candidate.get("LLM_PROVIDER").map_or("none", String::as_str),
+        "none" | "ollama"
+    ) {
+        errors.push(settings_issue(
+            Some("LLM_PROVIDER"),
+            "LLM provider must be none or ollama.",
+        ));
+    }
+    if candidate.get("LLM_PROVIDER").map_or("none", String::as_str) == "ollama"
+        && candidate.get("OLLAMA_MODEL").is_none_or(String::is_empty)
+    {
+        errors.push(settings_issue(
+            Some("OLLAMA_MODEL"),
+            "Ollama model is required when LLM_PROVIDER is ollama.",
+        ));
+    }
+    match candidate
+        .get("LLM_TIMEOUT_SECONDS")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        Some(value) if value > 0 => {}
+        _ => errors.push(settings_issue(
+            Some("LLM_TIMEOUT_SECONDS"),
+            "LLM timeout must be a positive integer.",
+        )),
+    }
+    let ollama_base_url = candidate.get("OLLAMA_BASE_URL").map_or("", String::as_str);
+    if !ollama_base_url.is_empty()
+        && (!settings_url_plausible("OLLAMA_BASE_URL", ollama_base_url)
+            || ollama_base_url.contains('@')
+            || !(ollama_base_url.starts_with("http://localhost")
+                || ollama_base_url.starts_with("http://127.0.0.1")
+                || ollama_base_url.starts_with("http://host.docker.internal")))
+    {
+        errors.push(settings_issue(
+            Some("OLLAMA_BASE_URL"),
+            "Ollama base URL must be local http without credentials.",
+        ));
+    }
+    if !matches!(
         candidate
             .get("AUDIT_LOG_LEVEL")
             .map_or("", String::as_str)
@@ -3628,7 +3688,11 @@ fn validate_settings_candidate(
 
 const SETTINGS_READ_ONLY_KEYS: &[&str] = &["ENV_FILE_PATH", "ENV_BACKUP_DIR"];
 const SETTINGS_SECRET_KEYS: &[&str] = &["POSTGRES_PASSWORD", "DATABASE_URL", "NEO4J_PASSWORD"];
-const SETTINGS_BOOLEAN_KEYS: &[&str] = &["SINGLE_USER_MODE", "APPROVAL_REQUIRED_DEFAULT"];
+const SETTINGS_BOOLEAN_KEYS: &[&str] = &[
+    "SINGLE_USER_MODE",
+    "APPROVAL_REQUIRED_DEFAULT",
+    "LLM_EVIDENCE_REQUIRED",
+];
 const SETTINGS_PORT_KEYS: &[&str] = &[
     "APP_PORT",
     "POSTGRES_PORT",
@@ -3649,6 +3713,7 @@ const SETTINGS_URL_KEYS: &[&str] = &[
     "NEO4J_URI",
     "MLFLOW_TRACKING_URI",
     "PHOENIX_COLLECTOR_ENDPOINT",
+    "OLLAMA_BASE_URL",
 ];
 const SETTINGS_STORAGE_KEYS: &[&str] = &[
     "ARTIFACT_STORE_PATH",
@@ -3689,6 +3754,11 @@ const SETTINGS_RESTART_KEYS: &[&str] = &[
     "PHOENIX_HOST",
     "PHOENIX_PORT",
     "PHOENIX_COLLECTOR_ENDPOINT",
+    "LLM_PROVIDER",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "LLM_TIMEOUT_SECONDS",
+    "LLM_EVIDENCE_REQUIRED",
     "ARTIFACT_STORE_PATH",
     "EXPORT_STORE_PATH",
     "EXTERNAL_MODEL_POLICY_DEFAULT",
@@ -5695,6 +5765,7 @@ fn settings_env_status_json() -> String {
         ("redis", "Redis"),
         ("qdrant", "Qdrant"),
         ("neo4j", "Neo4j"),
+        ("llm", "Local LLM"),
         ("storage", "Storage"),
         ("policy", "Policy"),
     ];
@@ -5796,6 +5867,41 @@ fn settings_env_status_json() -> String {
             false,
             true,
         ),
+        (
+            "LLM_PROVIDER",
+            "llm",
+            "Optional local LLM provider: none or ollama.",
+            false,
+            true,
+        ),
+        (
+            "OLLAMA_BASE_URL",
+            "llm",
+            "Local Ollama base URL. No tokens or cloud endpoints.",
+            false,
+            true,
+        ),
+        (
+            "OLLAMA_MODEL",
+            "llm",
+            "Local Ollama model name. Empty is allowed when provider is none.",
+            false,
+            true,
+        ),
+        (
+            "LLM_TIMEOUT_SECONDS",
+            "llm",
+            "Timeout for local LLM generation attempts.",
+            false,
+            true,
+        ),
+        (
+            "LLM_EVIDENCE_REQUIRED",
+            "llm",
+            "Require retrieved evidence before local LLM generation.",
+            false,
+            true,
+        ),
     ];
 
     let groups = GROUPS
@@ -5853,6 +5959,7 @@ fn group_label(group: &str) -> &str {
         "redis" => "Redis",
         "qdrant" => "Qdrant",
         "neo4j" => "Neo4j",
+        "llm" => "Local LLM",
         "storage" => "Storage",
         "policy" => "Policy",
         _ => group,

@@ -255,6 +255,13 @@ Provider disabled, unavailable, invalid, or timed out states fall back to the
 deterministic answer. If no evidence exists, Assistant says insufficient
 evidence without calling the provider. See `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
 
+Settings shows local LLM provider status, provider name, redacted local Ollama
+base URL, model name, timeout, evidence-required state, and Advanced raw provider
+diagnostics. Assistant shows whether the answer path is deterministic evidence,
+local LLM evidence-grounded, or unavailable. Normal user example: use a local
+model to summarize an uploaded warranty note using only evidence. Coder example:
+use a local model to explain a build log failure with citations.
+
 ## Safety And Approvals
 
 Read-only actions, retrieval preview, and local status checks are designed to be

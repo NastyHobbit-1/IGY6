@@ -123,6 +123,10 @@ Seasoned coders:
   timed out states fall back to deterministic evidence answers. Missing evidence
   returns insufficient evidence without calling the provider. Tests use fake
   transports only.
+- DIFF-129 adds user-facing Assistant and Settings status for provider, local
+  Ollama URL, model, health/status text, timeout, evidence-required state,
+  answer mode, examples, and Advanced raw provider diagnostics without requiring
+  secrets.
 
 ## Not Implemented In DIFF-126 Through DIFF-128
 

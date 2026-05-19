@@ -436,6 +436,13 @@ const TERM_HELP: Record<string, TermHelpContent> = {
     purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic fallback.",
     warning: "Local LLM generation is optional, disabled by default, evidence-required, and falls back deterministically when unavailable."
   },
+  localLlm: {
+    title: "Local LLM",
+    explanation: "Local LLM means optional Ollama generation running on this machine, not a cloud model.",
+    manage: "Review provider, model, timeout, and evidence-required state in Settings.",
+    purpose: "It can draft evidence-grounded wording from retrieved evidence while preserving deterministic fallback.",
+    warning: "It must not execute actions, bypass approvals, or answer without evidence."
+  },
   deterministic: {
     title: "Deterministic",
     explanation: "Deterministic means output is rule-based, local, and repeatable from stored records.",
@@ -661,6 +668,7 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
     qdrant: "qdrant",
     neo4j: "neo4j",
     storage: "artifactStore",
+    llm: "localLlm",
     policy: "externalModelPolicy"
   };
   const settingHelpTerms: Record<string, keyof typeof TERM_HELP> = {
@@ -670,6 +678,11 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
     QDRANT_CHUNK_VECTOR_SIZE: "QDRANT_CHUNK_VECTOR_SIZE",
     EXTERNAL_MODEL_POLICY_DEFAULT: "EXTERNAL_MODEL_POLICY_DEFAULT",
     APPROVAL_REQUIRED_DEFAULT: "APPROVAL_REQUIRED_DEFAULT",
+    LLM_PROVIDER: "localLlm",
+    OLLAMA_BASE_URL: "localLlm",
+    OLLAMA_MODEL: "localLlm",
+    LLM_TIMEOUT_SECONDS: "localLlm",
+    LLM_EVIDENCE_REQUIRED: "localLlm",
     ARTIFACT_STORE_PATH: "artifactStore",
     EXPORT_STORE_PATH: "exportStore"
   };
@@ -800,6 +813,8 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
       </div>
       {envSettings.error ? <p className="errorText">{envSettings.error}</p> : null}
 
+      <LocalLlmStatusPanel envSettings={envSettings} context="settings" />
+
       <section className="settingsMeta">
         <article><span>Env file</span><strong>{data.file_status.path}</strong></article>
         <article><span>Backup dir</span><strong>{data.file_status.backup_dir}</strong></article>
@@ -900,6 +915,112 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
+}
+
+type LlmDisplay = {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  timeout: string;
+  evidenceRequired: string;
+  answerMode: string;
+  healthStatus: string;
+  healthDetail: string;
+  rawDiagnostics: Record<string, string>;
+};
+
+function LocalLlmStatusPanel({
+  envSettings,
+  context
+}: {
+  envSettings: ApiResult<EnvSettingsResponse>;
+  context: "assistant" | "settings";
+}) {
+  const llm = buildLlmDisplay(envSettings.data);
+  return (
+    <section className={context === "settings" ? "settingsGroup llmStatusPanel" : "llmStatusPanel"} data-llm-status>
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">{context === "settings" ? "Local model provider" : "Answer mode"}</p>
+          <h3><HelpHeading term="localLlm">Local LLM Status</HelpHeading></h3>
+        </div>
+        <StatusPill state={llm.healthStatus} />
+      </div>
+      <div className="metrics compact">
+        <article><span>Provider</span><strong>{llm.provider}</strong></article>
+        <article><span>Health status</span><strong>{llm.healthStatus}</strong></article>
+        <article><span>Answer mode</span><strong>{llm.answerMode}</strong></article>
+        <article><span>Evidence required</span><strong>{llm.evidenceRequired}</strong></article>
+      </div>
+      <p className="agentRuntimeReason">{llm.healthDetail}</p>
+      <div className="exampleGrid">
+        <article>
+          <span>Normal user example</span>
+          <strong>Use local model to summarize uploaded warranty note using only evidence.</strong>
+        </article>
+        <article>
+          <span>Coder example</span>
+          <strong>Use local model to explain build log failure with citations.</strong>
+        </article>
+      </div>
+      <details className="advancedPanel">
+        <summary>Advanced: raw provider diagnostics</summary>
+        <pre>{JSON.stringify(llm.rawDiagnostics, null, 2)}</pre>
+      </details>
+    </section>
+  );
+}
+
+function buildLlmDisplay(data: EnvSettingsResponse): LlmDisplay {
+  const provider = settingValue(data, "LLM_PROVIDER", "none") || "none";
+  const baseUrl = redactLlmUrl(settingValue(data, "OLLAMA_BASE_URL", "http://host.docker.internal:11434"));
+  const model = settingValue(data, "OLLAMA_MODEL", "") || "not selected";
+  const timeout = settingValue(data, "LLM_TIMEOUT_SECONDS", "60") || "60";
+  const evidenceRequired = settingValue(data, "LLM_EVIDENCE_REQUIRED", "true") || "true";
+  const enabled = provider === "ollama";
+  const configured = enabled && model !== "not selected";
+  const healthStatus = !enabled ? "disabled" : configured ? "configured-local" : "needs-model";
+  const answerMode = !enabled
+    ? "deterministic evidence"
+    : configured
+      ? "local LLM evidence-grounded with deterministic fallback"
+      : "unavailable until model is selected";
+  const healthDetail = !enabled
+    ? "No model calls are made while LLM_PROVIDER is none. Assistant uses deterministic evidence answers and insufficient-evidence responses."
+    : configured
+      ? "Settings does not contact Ollama. Evidence answers perform a timeout-bound local call only when retrieved evidence exists, then fall back deterministically if unavailable."
+      : "Select a local Ollama model before enabling evidence-grounded local generation. No token or cloud endpoint is required.";
+  return {
+    provider,
+    baseUrl,
+    model,
+    timeout,
+    evidenceRequired,
+    answerMode,
+    healthStatus,
+    healthDetail,
+    rawDiagnostics: {
+      provider,
+      ollama_base_url: baseUrl,
+      model,
+      timeout_seconds: timeout,
+      evidence_required: evidenceRequired,
+      external_model_default: "blocked",
+      secrets_required: "false"
+    }
+  };
+}
+
+function settingValue(data: EnvSettingsResponse, key: string, fallback: string): string {
+  const setting = data.settings.find((item) => item.key === key);
+  if (!setting) return fallback;
+  if (setting.secret) return setting.masked_value ?? fallback;
+  return setting.value ?? fallback;
+}
+
+function redactLlmUrl(value: string): string {
+  if (value.includes("@")) return "http://[redacted]";
+  return value;
 }
 
 function ChatRetrievalPreview() {
@@ -1738,6 +1859,7 @@ export default async function Home() {
             </article>
           </div>
 
+          <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
           <ChatRetrievalPreview />
           <AgentCommandPanel capabilities={agentCapabilities} />
         </section>

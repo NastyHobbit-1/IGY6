@@ -121,6 +121,16 @@ Local LLM answers must cite retrieved evidence or say insufficient evidence.
 They must not execute actions or change approval requirements. See
 `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
 
+Settings shows provider `none` or `ollama`, local Ollama base URL, model name,
+health/status text, timeout, and evidence-required state. Advanced provider
+diagnostics are available without exposing tokens. Assistant shows the current
+answer mode: deterministic evidence, local LLM evidence-grounded, or unavailable.
+
+Examples:
+
+- Normal user: `Use local model to summarize uploaded warranty note using only evidence.`
+- Coder: `Use local model to explain build log failure with citations.`
+
 ## Safety Notes
 
 IGY6 is local-first and evidence-only by default. It does not claim Rust-only
