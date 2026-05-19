@@ -360,12 +360,13 @@
     },
     "local_llm_provider_plan": {
       "status": "partial",
-      "diff": "DIFF-126",
+      "diff": "DIFF-127",
       "verification": [
         "DIFF-126 documents optional local LLM provider requirements in docs/llm/LOCAL_LLM_PROVIDER_PLAN.md.",
         "DIFF-126 adds safe disabled-by-default local LLM keys to .env.example.",
+        "DIFF-127 adds the Rust igy6-llm crate with disabled-provider handling and a local-Ollama-only adapter tested with fake transports.",
         "LLM_PROVIDER=none means no model calls.",
-        "No provider adapter, Ollama call, Assistant answer-generation wiring, external model call, or Rust-only claim is added by DIFF-126.",
+        "No real Ollama call, Assistant answer-generation wiring, external model call, or Rust-only claim is added by DIFF-127.",
         "Future local LLM answers must remain evidence-grounded, timeout-bound, and citation-oriented, with deterministic evidence fallback and insufficient-evidence behavior when evidence is absent."
       ]
     }

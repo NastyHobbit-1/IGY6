@@ -1,7 +1,8 @@
 # Local LLM Provider Plan
 
 IGY6 may add optional local LLM support in later DIFFs. This plan defines the
-provider contract and safety posture before any model-calling code is added.
+provider contract and safety posture before normal Assistant answer generation
+uses model-calling code.
 
 ## Current Posture
 
@@ -108,8 +109,18 @@ Seasoned coders:
   recommendation.
 - Ask for a concise migration summary with citations to uploaded evidence.
 
-## Not Implemented In DIFF-126
+## Implementation Status
 
-DIFF-126 does not add provider code, call Ollama, wire Assistant answers to an
-LLM, or change backend behavior. Those changes require later DIFFs with focused
+- DIFF-126 documented the provider plan and safe disabled-by-default config.
+- DIFF-127 adds the Rust `igy6-llm` crate with disabled-provider handling, a
+  local-Ollama-only adapter, safe health/generate helpers, timeout propagation,
+  local URL validation, structured output, explicit errors, output preview
+  redaction, and fake-transport tests.
+- DIFF-127 does not wire local LLM generation into Assistant and does not call a
+  real Ollama process during tests.
+
+## Not Implemented In DIFF-126 Or DIFF-127
+
+These DIFFs do not wire Assistant answers to an LLM or change backend answer
+behavior. That requires a later focused DIFF with evidence-grounded generation
 tests.

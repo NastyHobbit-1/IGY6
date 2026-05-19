@@ -103,9 +103,9 @@ details, status meanings, and log commands.
 ## Optional Local LLM Plan
 
 IGY6 does not call an external model by default. Local LLM support is planned as
-an optional feature, starting with Ollama on the user's machine. Until a later
-DIFF implements and enables an adapter, Assistant continues to use deterministic
-evidence behavior.
+an optional feature, starting with Ollama on the user's machine. DIFF-127 adds a
+Rust local Ollama adapter crate for later use, but Assistant still uses
+deterministic evidence behavior until a later DIFF wires generation in.
 
 Planned local defaults:
 

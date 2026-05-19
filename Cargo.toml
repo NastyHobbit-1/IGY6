@@ -14,6 +14,7 @@ members = [
     "crates/igy6-agent-api",
     "crates/igy6-retrieval-preview",
     "crates/igy6-evidence-answer",
+    "crates/igy6-llm",
     "crates/igy6-write-api",
     "crates/igy6-work-queue-reports",
     "crates/igy6-gateway",
