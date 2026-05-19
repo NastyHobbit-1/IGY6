@@ -131,6 +131,64 @@ Examples:
 - Normal user: `Use local model to summarize uploaded warranty note using only evidence.`
 - Coder: `Use local model to explain build log failure with citations.`
 
+### Ollama Local Setup
+
+Ollama is optional. IGY6 still works without it by using deterministic evidence
+fallback. No external model calls are made by default.
+
+Check local state:
+
+```bash
+scripts/ollama-local-setup.sh --check
+scripts/ollama-local-setup.sh --list-recommended
+ollama --version
+curl http://127.0.0.1:11434/api/tags
+```
+
+Install manually:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Pull only the default recommended models:
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama pull llama3.1:8b
+ollama pull gemma3:4b
+```
+
+Test a model manually:
+
+```bash
+ollama run qwen2.5-coder:7b
+```
+
+Configure IGY6 after installing local models:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen2.5-coder:7b
+LLM_EVIDENCE_REQUIRED=true
+```
+
+Use `LLM_PROVIDER=none` to return to deterministic mode.
+
+Model recommendations:
+
+| Model | Best for |
+| --- | --- |
+| `qwen2.5-coder:7b` | Code, repo state, logs, scripts, DIFFs, route parity |
+| `llama3.1:8b` | General evidence summaries and default chat |
+| `gemma3:4b` | Fast triage and short explanations |
+| `gemma3:12b` | Optional longer report drafts if local performance is acceptable |
+
+Task routing is defined in `configs/local-llm-routing.json`. Each task has a
+different system instruction, model, temperature, purpose, and
+`evidence_required=true`.
+
 ## Safety Notes
 
 IGY6 is local-first and evidence-only by default. It does not claim Rust-only

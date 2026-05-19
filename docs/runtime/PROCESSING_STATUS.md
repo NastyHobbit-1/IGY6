@@ -74,3 +74,12 @@ Redis logs:
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 redis
 ```
+
+Optional local Ollama check:
+
+```bash
+scripts/ollama-local-setup.sh --check
+```
+
+Ollama is not required for worker processing. Local model setup is optional and
+does not replace deterministic evidence fallback.

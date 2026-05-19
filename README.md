@@ -262,6 +262,83 @@ local LLM evidence-grounded, or unavailable. Normal user example: use a local
 model to summarize an uploaded warranty note using only evidence. Coder example:
 use a local model to explain a build log failure with citations.
 
+### Ollama Setup And Task Routing
+
+DIFF-130 adds a safe local setup helper. The default mode is check-only:
+
+```bash
+scripts/ollama-local-setup.sh --check
+scripts/ollama-local-setup.sh --list-recommended
+```
+
+It does not install Ollama, pull models, edit `.env`, delete models, run Docker
+destructive commands, or call cloud APIs unless you pass explicit flags.
+
+Manual Ollama checks:
+
+```bash
+ollama --version
+curl http://127.0.0.1:11434/api/tags
+```
+
+Manual install and default model pulls:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5-coder:7b
+ollama pull llama3.1:8b
+ollama pull gemma3:4b
+ollama run qwen2.5-coder:7b
+```
+
+Scripted local setup when intentionally requested:
+
+```bash
+scripts/ollama-local-setup.sh --install --yes
+scripts/ollama-local-setup.sh --pull-default-models
+scripts/ollama-local-setup.sh --write-env code_repo
+```
+
+`--write-env` backs up `.env` first, preserves unrelated values, and writes:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen2.5-coder:7b
+LLM_TIMEOUT_SECONDS=60
+LLM_EVIDENCE_REQUIRED=true
+```
+
+Revert to deterministic mode with:
+
+```env
+LLM_PROVIDER=none
+```
+
+Recommended local models for a normal PC such as an RTX 3060 12GB setup:
+
+| Model | Use | Default pull |
+| --- | --- | --- |
+| `qwen2.5-coder:7b` | Code/repo work, logs, stack traces, DIFFs, route parity, scripts | Yes |
+| `llama3.1:8b` | General evidence summaries and default chat | Yes |
+| `gemma3:4b` | Fast/lightweight triage and action explanations | Yes |
+| `gemma3:12b` | Optional longer report drafting if performance is acceptable | No |
+
+Do not pull `qwen2.5-coder:32b`, `llama3.1:70b`, `llama3.1:405b`,
+`gemma3:27b`, or other large models by default on a 12GB VRAM setup.
+
+Task routing lives in `configs/local-llm-routing.json`:
+
+- `code_repo` -> `qwen2.5-coder:7b`
+- `evidence_summary` -> `llama3.1:8b`
+- `fast_triage` -> `gemma3:4b`
+- `report_draft` -> `llama3.1:8b`, optional `gemma3:12b`
+- `action_explanation` -> `gemma3:4b`
+- `chat_default` -> `llama3.1:8b`
+
+Each route includes its own system instruction, temperature, purpose, and
+`evidence_required=true`.
+
 ## Safety And Approvals
 
 Read-only actions, retrieval preview, and local status checks are designed to be

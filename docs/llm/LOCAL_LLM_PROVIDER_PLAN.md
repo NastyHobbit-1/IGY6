@@ -127,8 +127,77 @@ Seasoned coders:
   Ollama URL, model, health/status text, timeout, evidence-required state,
   answer mode, examples, and Advanced raw provider diagnostics without requiring
   secrets.
+- DIFF-130 adds safe local Ollama setup support and task-based routing config in
+  `configs/local-llm-routing.json`. The setup helper is check-only by default,
+  pulls only the approved default models when explicitly requested, and can
+  safely write local `.env` Ollama keys after creating a backup.
 
-## Not Implemented In DIFF-126 Through DIFF-128
+## Task Routing
+
+Task routing maps local work types to a model, system instruction, temperature,
+purpose, and context note. All routes require evidence.
+
+| Task | Model | Purpose |
+| --- | --- | --- |
+| `code_repo` | `qwen2.5-coder:7b` | Code, logs, stack traces, DIFF prompts, repo summaries, route parity, scripts |
+| `evidence_summary` | `llama3.1:8b` | Uploaded notes, warranty text, bills, router notes, general evidence records |
+| `fast_triage` | `gemma3:4b` | Quick classification, short summaries, first-pass triage, UI helper explanations |
+| `report_draft` | `llama3.1:8b`; optional `gemma3:12b` | Longer evidence-grounded reports and migration summaries |
+| `action_explanation` | `gemma3:4b` | Approval-required action explanations, safety reasons, audit summaries |
+| `chat_default` | `llama3.1:8b` | Default Assistant evidence-grounded chat when not code-specific |
+
+`qwen2.5-coder:7b` is the default for code/repo tasks because it is tuned for
+code, logs, scripts, and repository summaries while staying practical for an RTX
+3060 12GB class machine. `llama3.1:8b` is the default general evidence model.
+`gemma3:4b` is the fast/lightweight route. `gemma3:12b` is optional and heavier.
+
+## Ollama Setup Commands
+
+Check local state:
+
+```bash
+scripts/ollama-local-setup.sh --check
+scripts/ollama-local-setup.sh --list-recommended
+ollama --version
+curl http://127.0.0.1:11434/api/tags
+```
+
+Install Ollama manually:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Pull default models:
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama pull llama3.1:8b
+ollama pull gemma3:4b
+```
+
+Test a model manually:
+
+```bash
+ollama run qwen2.5-coder:7b
+```
+
+Configure IGY6:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen2.5-coder:7b
+LLM_EVIDENCE_REQUIRED=true
+```
+
+Return to deterministic mode:
+
+```env
+LLM_PROVIDER=none
+```
+
+## Not Implemented In DIFF-126 Through DIFF-130
 
 These DIFFs do not add external model providers, LLM action execution, broad
-retrieval rewrites, or Rust-only operation.
+retrieval rewrites, mandatory Ollama startup, or Rust-only operation.

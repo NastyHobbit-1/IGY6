@@ -9,6 +9,7 @@ pub const OLLAMA_PROVIDER: &str = "ollama";
 pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://host.docker.internal:11434";
 pub const DEFAULT_TIMEOUT_SECONDS: u64 = 60;
 pub const DEFAULT_MAX_EVIDENCE_BYTES: usize = 32 * 1024;
+pub const DEFAULT_TASK_NAME: &str = "chat_default";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfig {
@@ -170,6 +171,169 @@ pub struct LlmGenerateResponse {
     pub redacted_output_preview: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalLlmRoutingConfig {
+    pub schema_version: i64,
+    pub provider: String,
+    pub default_provider: String,
+    pub hardware_target: String,
+    pub default_models: Vec<String>,
+    pub optional_models: Vec<String>,
+    pub blocked_default_models: Vec<String>,
+    pub tasks: Vec<LocalLlmTaskRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalLlmTaskRoute {
+    pub task_name: String,
+    pub model: String,
+    pub optional_model: Option<String>,
+    pub purpose: String,
+    pub system_instruction: String,
+    pub temperature: f64,
+    pub evidence_required: bool,
+    pub max_context_note: String,
+}
+
+impl LocalLlmRoutingConfig {
+    pub fn from_json_str(content: &str) -> Result<Self, LlmError> {
+        let value: serde_json::Value = serde_json::from_str(content).map_err(|error| {
+            LlmError::InvalidConfig(format!("local LLM routing JSON is invalid: {error}"))
+        })?;
+        Self::from_value(&value)
+    }
+
+    pub fn from_value(value: &serde_json::Value) -> Result<Self, LlmError> {
+        let object = value.as_object().ok_or_else(|| {
+            LlmError::InvalidConfig("local LLM routing config must be a JSON object".to_string())
+        })?;
+        let tasks_value = object
+            .get("tasks")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| {
+                LlmError::InvalidConfig("local LLM routing config requires tasks array".to_string())
+            })?;
+        let mut tasks = Vec::new();
+        for task_value in tasks_value {
+            tasks.push(parse_task_route(task_value)?);
+        }
+        let config = Self {
+            schema_version: required_i64(object, "schema_version")?,
+            provider: required_string(object, "provider")?,
+            default_provider: required_string(object, "default_provider")?,
+            hardware_target: required_string(object, "hardware_target")?,
+            default_models: required_string_array(object, "default_models")?,
+            optional_models: optional_string_array(object, "optional_models")?,
+            blocked_default_models: optional_string_array(object, "blocked_default_models")?,
+            tasks,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), LlmError> {
+        if self.schema_version != 1 {
+            return Err(LlmError::InvalidConfig(
+                "local LLM routing schema_version must be 1".to_string(),
+            ));
+        }
+        if self.provider != OLLAMA_PROVIDER {
+            return Err(LlmError::InvalidConfig(
+                "local LLM routing provider must be ollama".to_string(),
+            ));
+        }
+        if self.default_provider != DEFAULT_PROVIDER {
+            return Err(LlmError::InvalidConfig(
+                "local LLM routing default_provider must remain none".to_string(),
+            ));
+        }
+        let required_tasks = [
+            "code_repo",
+            "evidence_summary",
+            "fast_triage",
+            "report_draft",
+            "action_explanation",
+            DEFAULT_TASK_NAME,
+        ];
+        for required in required_tasks {
+            if self.tasks.iter().all(|task| task.task_name != required) {
+                return Err(LlmError::InvalidConfig(format!(
+                    "local LLM routing missing required task {required}"
+                )));
+            }
+        }
+        for model in &self.default_models {
+            if self
+                .blocked_default_models
+                .iter()
+                .any(|blocked| blocked == model)
+            {
+                return Err(LlmError::InvalidConfig(format!(
+                    "blocked model {model} cannot be a default pull"
+                )));
+            }
+        }
+        for task in &self.tasks {
+            if task.task_name.trim().is_empty() {
+                return Err(LlmError::InvalidConfig(
+                    "task_name must not be empty".to_string(),
+                ));
+            }
+            if task.model.trim().is_empty() {
+                return Err(LlmError::InvalidConfig(format!(
+                    "task {} model must not be empty",
+                    task.task_name
+                )));
+            }
+            if task.system_instruction.trim().is_empty() {
+                return Err(LlmError::InvalidConfig(format!(
+                    "task {} system_instruction must not be empty",
+                    task.task_name
+                )));
+            }
+            if !task.evidence_required {
+                return Err(LlmError::InvalidConfig(format!(
+                    "task {} must keep evidence_required=true",
+                    task.task_name
+                )));
+            }
+            if !(0.0..=1.0).contains(&task.temperature) {
+                return Err(LlmError::InvalidConfig(format!(
+                    "task {} temperature must be between 0 and 1",
+                    task.task_name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn route_for_task(&self, task_name: &str) -> Option<&LocalLlmTaskRoute> {
+        let wanted = task_name.trim();
+        self.tasks
+            .iter()
+            .find(|task| task.task_name == wanted)
+            .or_else(|| {
+                self.tasks
+                    .iter()
+                    .find(|task| task.task_name == DEFAULT_TASK_NAME)
+            })
+    }
+
+    pub fn default_pull_models(&self) -> Vec<String> {
+        self.default_models.clone()
+    }
+
+    pub fn recommended_models(&self) -> Vec<String> {
+        let mut models = self.default_models.clone();
+        for model in &self.optional_models {
+            if !models.iter().any(|existing| existing == model) {
+                models.push(model.clone());
+            }
+        }
+        models
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequest {
     pub method: String,
@@ -186,6 +350,109 @@ pub struct HttpResponse {
 
 pub trait LlmHttpTransport {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse, LlmError>;
+}
+
+fn parse_task_route(value: &serde_json::Value) -> Result<LocalLlmTaskRoute, LlmError> {
+    let object = value.as_object().ok_or_else(|| {
+        LlmError::InvalidConfig("local LLM task route must be an object".to_string())
+    })?;
+    Ok(LocalLlmTaskRoute {
+        task_name: required_string(object, "task_name")?,
+        model: required_string(object, "model")?,
+        optional_model: optional_string(object, "optional_model")?,
+        purpose: required_string(object, "purpose")?,
+        system_instruction: required_string(object, "system_instruction")?,
+        temperature: required_f64(object, "temperature")?,
+        evidence_required: required_bool(object, "evidence_required")?,
+        max_context_note: required_string(object, "max_context_note")?,
+    })
+}
+
+fn required_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<String, LlmError> {
+    object
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be a non-empty string")))
+}
+
+fn optional_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<String>, LlmError> {
+    match object.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be a string"))),
+    }
+}
+
+fn required_i64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<i64, LlmError> {
+    object
+        .get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be an integer")))
+}
+
+fn required_f64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<f64, LlmError> {
+    object
+        .get(key)
+        .and_then(|value| value.as_f64())
+        .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be a number")))
+}
+
+fn required_bool(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<bool, LlmError> {
+    object
+        .get(key)
+        .and_then(|value| value.as_bool())
+        .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be a boolean")))
+}
+
+fn required_string_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Vec<String>, LlmError> {
+    let values = object
+        .get(key)
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| LlmError::InvalidConfig(format!("{key} must be an array")))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(|value| value.to_string())
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    LlmError::InvalidConfig(format!("{key} values must be non-empty strings"))
+                })
+        })
+        .collect()
+}
+
+fn optional_string_array(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Vec<String>, LlmError> {
+    match object.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(Vec::new()),
+        Some(_) => required_string_array(object, key),
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -566,6 +833,10 @@ mod tests {
         }
     }
 
+    fn routing_json() -> &'static str {
+        include_str!("../../../configs/local-llm-routing.json")
+    }
+
     #[test]
     fn default_config_is_disabled() {
         let config = LlmConfig::default();
@@ -717,5 +988,57 @@ mod tests {
         .expect_err("missing response field should fail");
 
         assert!(matches!(error, LlmError::InvalidProviderResponse(_)));
+    }
+
+    #[test]
+    fn local_routing_config_validates_required_tasks_and_models() {
+        let config = LocalLlmRoutingConfig::from_json_str(routing_json()).expect("routing config");
+
+        assert_eq!(config.default_provider, DEFAULT_PROVIDER);
+        assert_eq!(
+            config.default_pull_models(),
+            vec![
+                "qwen2.5-coder:7b".to_string(),
+                "llama3.1:8b".to_string(),
+                "gemma3:4b".to_string()
+            ]
+        );
+        assert!(config
+            .recommended_models()
+            .contains(&"gemma3:12b".to_string()));
+        assert_eq!(
+            config
+                .route_for_task("code_repo")
+                .expect("code route")
+                .model,
+            "qwen2.5-coder:7b"
+        );
+        assert_eq!(
+            config
+                .route_for_task("unknown_task")
+                .expect("fallback route")
+                .task_name,
+            DEFAULT_TASK_NAME
+        );
+        assert!(config.tasks.iter().all(|task| task.evidence_required));
+    }
+
+    #[test]
+    fn local_routing_rejects_unsafe_defaults_and_missing_evidence_gate() {
+        let unsafe_default = routing_json().replace("\"gemma3:4b\"", "\"qwen2.5-coder:32b\"");
+        assert!(matches!(
+            LocalLlmRoutingConfig::from_json_str(&unsafe_default),
+            Err(LlmError::InvalidConfig(_))
+        ));
+
+        let no_evidence_gate = routing_json().replacen(
+            "\"evidence_required\": true",
+            "\"evidence_required\": false",
+            1,
+        );
+        assert!(matches!(
+            LocalLlmRoutingConfig::from_json_str(&no_evidence_gate),
+            Err(LlmError::InvalidConfig(_))
+        ));
     }
 }
