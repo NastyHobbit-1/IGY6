@@ -1,6 +1,6 @@
 # DIFF-122: UI Smoke Interaction Coverage
 
-Status: Draft
+Status: Locked
 
 ## Type
 
@@ -103,3 +103,35 @@ This DIFF may be marked complete only when:
 - FastAPI removal.
 - Large UI redesign or information architecture changes beyond DIFF-121.
 - Broad accessibility audit beyond selectors and interaction coverage required for this DIFF.
+
+## Completion Notes
+
+- Added `apps/web/scripts/ui-smoke.mjs`, a dependency-free smoke check for the
+  reorganized DIFF-121 UI contract.
+- Added `npm --prefix apps/web run test:ui-smoke`.
+- Added `npm --prefix apps/web test` as an alias for the smoke check.
+- Covered top-level workflow navigation, workflow section anchors, Assistant
+  action labels, Assistant gated action buttons, Advanced panel summaries, raw
+  parameter/approval controls behind Advanced, the Advanced Route Console,
+  manual upload guidance steps/examples, empty/next-step guidance states, and
+  visible local-first/evidence-only/approval-gated safety posture text.
+- Updated README and user guide with the new UI smoke check command.
+- No backend behavior, route usage, dependencies, data models, or migrations
+  changed.
+
+## Verification Results
+
+- Passed: `git status --short`
+- Passed: `git diff --check`
+- Passed: `npm --prefix apps/web run build`
+- Passed: `npm --prefix apps/web run test:ui-smoke`
+- Passed: `npm --prefix apps/web test`
+- Passed: `python3 scripts/rust-route-parity.py --check`
+  - `fastapi=91`
+  - `rust_native=64`
+  - `web_used=45`
+  - `missing_from_rust=30`
+  - `web_requires_fallback=0`
+- Not run: `scripts/rust-cutover.sh --check`; manifest/runtime docs did not
+  change.
+- Not run: Cargo fmt/clippy/test; no Rust files changed.

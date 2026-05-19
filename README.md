@@ -221,9 +221,14 @@ Common checks:
 git status --short
 git diff --check
 npm --prefix apps/web run build
+npm --prefix apps/web run test:ui-smoke
 python3 scripts/rust-route-parity.py --check
 scripts/rust-cutover.sh --check
 ```
+
+`npm --prefix apps/web run test:ui-smoke` checks the reorganized workflow UI
+contract: top-level sections, Assistant action gating controls, Advanced panels,
+manual upload guidance, empty/next-step states, and safety posture text.
 
 Rust checks when backend/Rust files change:
 

@@ -75,3 +75,16 @@ from Assistant input.
 System-changing actions must clearly show approval requirements. Stack
 start/stop/recovery actions require approval and fixed allowlisted runtime
 capability.
+
+## UI Smoke Check
+
+Run the focused UI workflow smoke check with:
+
+```bash
+npm --prefix apps/web run test:ui-smoke
+```
+
+The check verifies the Home, Assistant, Data & Knowledge, Work & Processing,
+Reports, Safety & Audit, and Settings workflow contract. It also checks that
+Assistant action buttons start gated, Advanced panels preserve raw/debug
+controls, and manual upload guidance remains visible.
