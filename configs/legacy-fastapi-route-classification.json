@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-132",
+  "diff": "DIFF-133",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,8 +9,8 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 75,
-    "fastapi_routes_missing_from_rust": 19,
+    "rust_native_routes": 81,
+    "fastapi_routes_missing_from_rust": 13,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
@@ -21,7 +21,7 @@
     "intentional_legacy_fallback": 7,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
-    "unsafe_to_migrate_now": 11
+    "unsafe_to_migrate_now": 5
   },
   "routes": [
     {
@@ -93,20 +93,6 @@
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API provides equivalent detail semantics or the route is formally retired.",
       "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "GET",
-      "path": "/memory/graph/nodes/{node_label}/{node_id}/relationships",
-      "python_module": "services/api/app/graph_memory.py",
-      "python_handler": "get_node_relationships",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Graph relationship reads depend on Neo4j query semantics and label handling that need scoped Rust graph-memory parity tests.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust graph-memory API implements equivalent constrained Neo4j relationship reads with injection-safe labels and tests.",
-      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -205,76 +191,6 @@
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API supports target area/priority validation and audit parity, or the route is formally retired.",
       "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/memory/graph/lineage/sync",
-      "python_module": "services/api/app/graph_memory.py",
-      "python_handler": "sync_lineage_graph",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Graph lineage sync mutates Neo4j relationship memory and requires scoped graph write parity plus external service failure tests.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust graph-memory API safely syncs lineage with constrained Cypher, audit behavior, and failure semantics.",
-      "recommended_future_diff": "DIFF-133"
-    },
-    {
-      "method": "POST",
-      "path": "/memory/graph/schema/ensure",
-      "python_module": "services/api/app/graph_memory.py",
-      "python_handler": "ensure_graph_schema",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Graph schema ensure mutates Neo4j schema and should remain fallback until Rust graph schema parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust graph-memory API implements idempotent schema ensure with equivalent constraints and failure handling.",
-      "recommended_future_diff": "DIFF-133"
-    },
-    {
-      "method": "POST",
-      "path": "/memory/vector/chunks/ensure",
-      "python_module": "services/api/app/vector_memory.py",
-      "python_handler": "ensure_chunk_vector_collection",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Vector collection ensure mutates Qdrant and requires scoped vector-memory client parity and service failure tests.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust vector-memory API implements idempotent Qdrant collection ensure with equivalent config and error shapes.",
-      "recommended_future_diff": "DIFF-133"
-    },
-    {
-      "method": "POST",
-      "path": "/memory/vector/chunks/search",
-      "python_module": "services/api/app/vector_memory.py",
-      "python_handler": "search_chunk_vector_points",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Vector search depends on Qdrant request/response semantics and should move only with scoped vector-memory route parity.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust vector-memory API preserves Qdrant search request validation, filtering, and response shape.",
-      "recommended_future_diff": "DIFF-133"
-    },
-    {
-      "method": "POST",
-      "path": "/memory/vector/chunks/upsert",
-      "python_module": "services/api/app/vector_memory.py",
-      "python_handler": "upsert_chunk_vector_points",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Vector upsert mutates Qdrant semantic memory and needs scoped parity for IDs, payloads, dimensions, and failure behavior.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust vector-memory API validates and upserts equivalent points with audit/lineage behavior where required.",
-      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",

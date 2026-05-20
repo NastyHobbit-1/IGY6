@@ -295,6 +295,7 @@ dependencies = [
  "igy6-llm",
  "igy6-read-only-api",
  "igy6-retrieval-preview",
+ "igy6-vector-memory",
  "postgres",
  "serde_json",
  "sha2",

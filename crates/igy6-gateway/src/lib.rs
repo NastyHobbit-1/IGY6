@@ -20,12 +20,18 @@ use igy6_host_bridge::{allowed_action as host_bridge_allowed_action, redact_outp
 use igy6_llm::{load_local_llm_routing_config, LlmConfig, LlmProvider, StdHttpTransport};
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
+use igy6_vector_memory::{
+    collection_status_request, ensure_collection_request, plan_chunk_vector_point,
+    search_points_request, upsert_points_request, HttpMethod, HttpRequestPlan, QdrantSettings,
+    EMBEDDING_METHOD,
+};
 use postgres::{Client, NoTls};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
+#[rustfmt::skip]
 pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
@@ -77,7 +83,13 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/feedback/{feedback_id}"),
     ("POST", "/feedback"),
     ("GET", "/memory/graph/schema"),
+    ("POST", "/memory/graph/schema/ensure"),
+    ("POST", "/memory/graph/lineage/sync"),
+    ("GET", "/memory/graph/nodes/{node_label}/{node_id}/relationships"),
     ("GET", "/memory/vector/chunks"),
+    ("POST", "/memory/vector/chunks/ensure"),
+    ("POST", "/memory/vector/chunks/search"),
+    ("POST", "/memory/vector/chunks/upsert"),
     ("GET", "/outcomes"),
     ("GET", "/outcomes/{outcome_id}"),
     ("POST", "/outcomes"),
@@ -116,6 +128,7 @@ pub enum GatewayError {
     NotFound(String),
     Conflict(String),
     Forbidden(String),
+    ServiceUnavailable(String),
 }
 
 impl fmt::Display for GatewayError {
@@ -135,11 +148,18 @@ impl fmt::Display for GatewayError {
             Self::NotFound(error) => write!(formatter, "{error}"),
             Self::Conflict(error) => write!(formatter, "{error}"),
             Self::Forbidden(error) => write!(formatter, "{error}"),
+            Self::ServiceUnavailable(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl std::error::Error for GatewayError {}
+
+impl From<igy6_vector_memory::VectorMemoryError> for GatewayError {
+    fn from(error: igy6_vector_memory::VectorMemoryError) -> Self {
+        GatewayError::Validation(error.to_string())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayRequest {
@@ -166,6 +186,28 @@ pub struct FallbackProxyPlan {
     pub request_target: String,
     pub method: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalHttpRequest {
+    method: String,
+    origin: String,
+    path: String,
+    body: Option<String>,
+    headers: Vec<(String, String)>,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalHttpResponse {
+    status_code: u16,
+    body: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Neo4jStatement {
+    statement: String,
+    parameters: Value,
 }
 
 pub fn parse_gateway_request(raw: &str) -> Result<GatewayRequest, GatewayError> {
@@ -294,6 +336,19 @@ pub fn handle_gateway_request_with_db(
             evidence_item_create_response(&request.body, database_url)
         }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
+        ("POST", "/memory/graph/lineage/sync") => {
+            action_route_response(sync_graph_lineage(database_url))
+        }
+        ("POST", "/memory/graph/schema/ensure") => write_route_response(ensure_graph_schema()),
+        ("POST", "/memory/vector/chunks/ensure") => {
+            write_route_response(ensure_vector_chunk_collection())
+        }
+        ("POST", "/memory/vector/chunks/search") => {
+            action_route_response(search_vector_chunks(&request.body))
+        }
+        ("POST", "/memory/vector/chunks/upsert") => {
+            action_route_response(upsert_vector_chunks(database_url))
+        }
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
         ("POST", "/reports") => report_create_response(&request.body, database_url),
         ("POST", "/retrieval/chunks/search") => {
@@ -358,7 +413,9 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", graph_schema_status_json(), false)
         }
         ("GET", _) => {
-            if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
+            if let Some((node_label, node_id)) = graph_relationships_path(&request.path) {
+                action_route_response(get_graph_node_relationships(&node_label, &node_id))
+            } else if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
                 action_route_response(get_retrieval_chunk_trail(&chunk_id, database_url))
             } else if let Some(route) = db_read_route(&request.path) {
                 db_read_response(route, database_url)
@@ -585,6 +642,12 @@ fn db_read_response(route: DbReadRoute, database_url: Option<&str>) -> GatewayRe
             "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
             false,
         ),
+        Err(GatewayError::ServiceUnavailable(message)) => json_response(
+            503,
+            "Service Unavailable",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
+            false,
+        ),
         Err(error) => json_response(
             502,
             "Bad Gateway",
@@ -636,6 +699,12 @@ fn approval_create_response(body: &str, database_url: Option<&str>) -> GatewayRe
             503,
             "Service Unavailable",
             "{\"detail\":\"DATABASE_URL is required for Rust DB route\"}".to_string(),
+            false,
+        ),
+        Err(GatewayError::ServiceUnavailable(message)) => json_response(
+            503,
+            "Service Unavailable",
+            format!("{{\"detail\":\"{}\"}}", escape_json(&message)),
             false,
         ),
         Err(error) => json_response(
@@ -2179,6 +2248,701 @@ fn search_retrieval_chunks(body: &str, database_url: Option<&str>) -> Result<Str
         "hits": hits
     })
     .to_string())
+}
+
+fn ensure_vector_chunk_collection() -> Result<String, GatewayError> {
+    let settings = qdrant_settings_from_env()?;
+    let current = execute_qdrant_plan(collection_status_request(&settings)?)?;
+    if current.status_code == 404 {
+        let created = execute_qdrant_plan(ensure_collection_request(&settings)?)?;
+        if created.status_code >= 400 {
+            return Err(GatewayError::ServiceUnavailable(created.body));
+        }
+        return vector_collection_status_from_qdrant(&settings);
+    }
+    if current.status_code >= 400 {
+        return Err(GatewayError::ServiceUnavailable(current.body));
+    }
+    Ok(vector_collection_status_json_from_body(
+        &settings.collection_name,
+        true,
+        Some(&current.body),
+    ))
+}
+
+fn search_vector_chunks(body: &str) -> Result<String, GatewayError> {
+    let payload = parse_retrieval_search(body)?;
+    let settings = qdrant_settings_from_env()?;
+    let response = execute_qdrant_plan(search_points_request(
+        &settings,
+        &payload.query,
+        payload.limit as usize,
+    )?)?;
+    if is_qdrant_missing_collection(&response, &settings.collection_name) {
+        return Ok(serde_json::json!({
+            "query": payload.query,
+            "collection_name": settings.collection_name,
+            "collection_exists": false,
+            "hits": []
+        })
+        .to_string());
+    }
+    if response.status_code >= 400 {
+        return Err(GatewayError::ServiceUnavailable(response.body));
+    }
+    let value: Value = serde_json::from_str(&response.body)
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let hits = value
+        .get("result")
+        .and_then(Value::as_array)
+        .map(|results| {
+            results
+                .iter()
+                .take(payload.limit as usize)
+                .map(|result| {
+                    let payload = result
+                        .get("payload")
+                        .cloned()
+                        .filter(Value::is_object)
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    serde_json::json!({
+                        "chunk_id": payload.get("chunk_id").and_then(Value::as_str),
+                        "document_id": payload.get("document_id").and_then(Value::as_str),
+                        "score": result.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+                        "payload": payload
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(serde_json::json!({
+        "query": payload.query,
+        "collection_name": settings.collection_name,
+        "collection_exists": true,
+        "hits": hits
+    })
+    .to_string())
+}
+
+fn upsert_vector_chunks(database_url: Option<&str>) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let settings = qdrant_settings_from_env()?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let collection_status = ensure_vector_chunk_collection()?;
+    let collection_exists = serde_json::from_str::<Value>(&collection_status)
+        .ok()
+        .and_then(|value| value.get("exists").and_then(Value::as_bool))
+        .unwrap_or(true);
+    let rows = client
+        .query(
+            "SELECT id, document_id, chunk_index, text_content FROM chunks WHERE embedding_status != 'completed' ORDER BY created_at ASC LIMIT 100",
+            &[],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut points = Vec::new();
+    let mut chunk_ids = Vec::new();
+    for row in &rows {
+        let id: String = row.get(0);
+        let document_id: String = row.get(1);
+        let chunk_index: i32 = row.get(2);
+        let text_content: String = row.get(3);
+        points.push(plan_chunk_vector_point(
+            &id,
+            &document_id,
+            chunk_index.max(0) as usize,
+            &text_content,
+            settings.vector_size,
+        )?);
+        chunk_ids.push(id);
+    }
+    if points.is_empty() {
+        return Ok(serde_json::json!({
+            "chunks_selected": 0,
+            "chunks_upserted": 0,
+            "collection_name": settings.collection_name,
+            "collection_exists": collection_exists
+        })
+        .to_string());
+    }
+    let response = execute_qdrant_plan(upsert_points_request(&settings, &points)?)?;
+    if response.status_code >= 400 {
+        return Err(GatewayError::ServiceUnavailable(response.body));
+    }
+    for chunk_id in &chunk_ids {
+        client
+            .execute(
+                "UPDATE chunks SET embedding_status = 'completed', metadata_json = metadata_json || $1::jsonb, updated_at = now() WHERE id = $2",
+                &[&serde_json::json!({
+                    "embedding_method": EMBEDDING_METHOD,
+                    "vector_collection": settings.collection_name
+                }), chunk_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+    Ok(serde_json::json!({
+        "chunks_selected": chunk_ids.len(),
+        "chunks_upserted": points.len(),
+        "collection_name": settings.collection_name,
+        "collection_exists": true
+    })
+    .to_string())
+}
+
+fn get_graph_node_relationships(node_label: &str, node_id: &str) -> Result<String, GatewayError> {
+    let node_label = validate_graph_node_label(node_label)?;
+    let node_id = validate_route_id(node_id, "node_id")?;
+    let statement = format!(
+        "MATCH (node:{node_label} {{id: $node_id}}) OPTIONAL MATCH (node)-[outgoing]->(out_neighbor) WITH node, collect({{direction: 'outgoing', relationship_type: type(outgoing), neighbor_label: labels(out_neighbor)[0], neighbor_id: out_neighbor.id}}) AS outgoing_relationships OPTIONAL MATCH (in_neighbor)-[incoming]->(node) WITH outgoing_relationships + collect({{direction: 'incoming', relationship_type: type(incoming), neighbor_label: labels(in_neighbor)[0], neighbor_id: in_neighbor.id}}) AS relationships UNWIND relationships AS relationship WITH relationship WHERE relationship.relationship_type IS NOT NULL RETURN relationship LIMIT $limit"
+    );
+    let value = execute_neo4j_statements(vec![Neo4jStatement {
+        statement,
+        parameters: serde_json::json!({"node_id": node_id, "limit": 100}),
+    }])?;
+    let relationships = neo4j_first_result_rows(&value)
+        .into_iter()
+        .filter_map(|row| row.as_array().and_then(|items| items.first()).cloned())
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "node_label": node_label,
+        "node_id": node_id,
+        "relationships": relationships
+    })
+    .to_string())
+}
+
+fn ensure_graph_schema() -> Result<String, GatewayError> {
+    let mut statements = graph_constraint_statements()
+        .iter()
+        .map(|statement| Neo4jStatement {
+            statement: (*statement).to_string(),
+            parameters: serde_json::json!({}),
+        })
+        .collect::<Vec<_>>();
+    statements.push(Neo4jStatement {
+        statement: "SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties RETURN name, type, labelsOrTypes, properties".to_string(),
+        parameters: serde_json::json!({}),
+    });
+    let value = execute_neo4j_statements(statements)?;
+    let constraints = neo4j_result_rows_at(&value, graph_constraint_statements().len())
+        .into_iter()
+        .map(|row| {
+            let items = row.as_array().cloned().unwrap_or_default();
+            serde_json::json!({
+                "name": items.first().cloned().unwrap_or(Value::Null),
+                "type": items.get(1).cloned().unwrap_or(Value::Null),
+                "labelsOrTypes": items.get(2).cloned().unwrap_or(Value::Null),
+                "properties": items.get(3).cloned().unwrap_or(Value::Null)
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({"constraints": constraints}).to_string())
+}
+
+fn sync_graph_lineage(database_url: Option<&str>) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut statements = graph_constraint_statements()
+        .iter()
+        .map(|statement| Neo4jStatement {
+            statement: (*statement).to_string(),
+            parameters: serde_json::json!({}),
+        })
+        .collect::<Vec<_>>();
+    let mut node_count = 0usize;
+    let mut relationship_count = 0usize;
+
+    for source_id in query_ids(&mut client, "SELECT id FROM sources")? {
+        statements.push(merge_node_statement("Source", &source_id));
+        node_count += 1;
+    }
+    for row in client
+        .query("SELECT id, source_id FROM raw_artifacts", &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let artifact_id: String = row.get(0);
+        let source_id: Option<String> = row.get(1);
+        statements.push(merge_node_statement("RawArtifact", &artifact_id));
+        node_count += 1;
+        if let Some(source_id) = source_id {
+            statements.push(merge_relationship_statement(
+                "Source",
+                &source_id,
+                "RawArtifact",
+                &artifact_id,
+                "SOURCE_HAS_ARTIFACT",
+            ));
+            relationship_count += 1;
+        }
+    }
+    for row in client
+        .query("SELECT id, raw_artifact_id FROM normalized_documents", &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let document_id: String = row.get(0);
+        let raw_artifact_id: Option<String> = row.get(1);
+        statements.push(merge_node_statement("Document", &document_id));
+        node_count += 1;
+        if let Some(raw_artifact_id) = raw_artifact_id {
+            statements.push(merge_relationship_statement(
+                "RawArtifact",
+                &raw_artifact_id,
+                "Document",
+                &document_id,
+                "ARTIFACT_HAS_DOCUMENT",
+            ));
+            relationship_count += 1;
+        }
+    }
+    for row in client
+        .query("SELECT id, document_id FROM chunks", &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let chunk_id: String = row.get(0);
+        let document_id: String = row.get(1);
+        statements.push(merge_node_statement("Chunk", &chunk_id));
+        statements.push(merge_relationship_statement(
+            "Document",
+            &document_id,
+            "Chunk",
+            &chunk_id,
+            "DOCUMENT_HAS_CHUNK",
+        ));
+        node_count += 1;
+        relationship_count += 1;
+    }
+    for row in client
+        .query("SELECT id, document_id, chunk_id FROM evidence_items", &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let evidence_id: String = row.get(0);
+        let document_id: Option<String> = row.get(1);
+        let chunk_id: Option<String> = row.get(2);
+        statements.push(merge_node_statement("EvidenceItem", &evidence_id));
+        node_count += 1;
+        if let Some(document_id) = document_id {
+            statements.push(merge_relationship_statement(
+                "Document",
+                &document_id,
+                "EvidenceItem",
+                &evidence_id,
+                "DOCUMENT_HAS_EVIDENCE",
+            ));
+            relationship_count += 1;
+        }
+        if let Some(chunk_id) = chunk_id {
+            statements.push(merge_relationship_statement(
+                "Chunk",
+                &chunk_id,
+                "EvidenceItem",
+                &evidence_id,
+                "CHUNK_HAS_EVIDENCE",
+            ));
+            relationship_count += 1;
+        }
+    }
+    relationship_count += merge_evidence_targets(
+        &mut client,
+        &mut statements,
+        "SELECT id, evidence_ids FROM claims",
+        "Claim",
+        "EVIDENCE_SUPPORTS_CLAIM",
+        &mut node_count,
+    )?;
+    relationship_count += merge_evidence_targets(
+        &mut client,
+        &mut statements,
+        "SELECT id, evidence_ids FROM patterns",
+        "Pattern",
+        "EVIDENCE_SUPPORTS_PATTERN",
+        &mut node_count,
+    )?;
+    relationship_count += merge_evidence_targets(
+        &mut client,
+        &mut statements,
+        "SELECT id, supporting_evidence_ids FROM hypotheses",
+        "Hypothesis",
+        "EVIDENCE_SUPPORTS_HYPOTHESIS",
+        &mut node_count,
+    )?;
+    relationship_count += merge_evidence_targets(
+        &mut client,
+        &mut statements,
+        "SELECT id, evidence_ids FROM predictions",
+        "Prediction",
+        "EVIDENCE_SUPPORTS_PREDICTION",
+        &mut node_count,
+    )?;
+    relationship_count += merge_evidence_targets(
+        &mut client,
+        &mut statements,
+        "SELECT id, evidence_ids FROM recommendations",
+        "Recommendation",
+        "EVIDENCE_SUPPORTS_RECOMMENDATION",
+        &mut node_count,
+    )?;
+    for report_id in query_ids(&mut client, "SELECT id FROM reports")? {
+        statements.push(merge_node_statement("Report", &report_id));
+        node_count += 1;
+    }
+    for row in client
+        .query(
+            "SELECT id, target_type, target_id, evidence_ids FROM outcomes",
+            &[],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let outcome_id: String = row.get(0);
+        let target_type: String = row.get(1);
+        let target_id: String = row.get(2);
+        let evidence_ids: Value = row.get(3);
+        statements.push(merge_node_statement("Outcome", &outcome_id));
+        node_count += 1;
+        for evidence_id in string_values_from_json_array(&evidence_ids) {
+            statements.push(merge_relationship_statement(
+                "EvidenceItem",
+                &evidence_id,
+                "Outcome",
+                &outcome_id,
+                "EVIDENCE_SUPPORTS_OUTCOME",
+            ));
+            relationship_count += 1;
+        }
+        if let Some((label, relationship_type)) = outcome_target_graph(&target_type) {
+            statements.push(merge_relationship_statement(
+                label,
+                &target_id,
+                "Outcome",
+                &outcome_id,
+                relationship_type,
+            ));
+            relationship_count += 1;
+        }
+    }
+    execute_neo4j_statements_batched(statements, 100)?;
+    Ok(serde_json::json!({
+        "nodes": node_count,
+        "relationships": relationship_count
+    })
+    .to_string())
+}
+
+fn qdrant_settings_from_env() -> Result<QdrantSettings, GatewayError> {
+    let base_url = env::var("QDRANT_URL").unwrap_or_else(|_| "http://qdrant:6333".to_string());
+    let collection_name =
+        env::var("QDRANT_CHUNK_COLLECTION").unwrap_or_else(|_| "igy6_chunks".to_string());
+    let vector_size = env::var("QDRANT_CHUNK_VECTOR_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(384);
+    if vector_size < 1 {
+        return Err(GatewayError::Validation(
+            "QDRANT_CHUNK_VECTOR_SIZE must be at least 1.".to_string(),
+        ));
+    }
+    Ok(QdrantSettings {
+        base_url,
+        collection_name,
+        vector_size,
+    })
+}
+
+fn execute_qdrant_plan(plan: HttpRequestPlan) -> Result<ExternalHttpResponse, GatewayError> {
+    let method = match plan.method {
+        HttpMethod::Get => "GET",
+        HttpMethod::Put => "PUT",
+        HttpMethod::Post => "POST",
+    };
+    execute_external_http(ExternalHttpRequest {
+        method: method.to_string(),
+        origin: plan.origin,
+        path: plan.path,
+        body: plan.body,
+        headers: Vec::new(),
+        timeout: Duration::from_secs(plan.timeout_seconds),
+    })
+}
+
+fn vector_collection_status_from_qdrant(settings: &QdrantSettings) -> Result<String, GatewayError> {
+    let current = execute_qdrant_plan(collection_status_request(settings)?)?;
+    if current.status_code == 404 {
+        return Ok(vector_collection_status_json_from_body(
+            &settings.collection_name,
+            false,
+            None,
+        ));
+    }
+    if current.status_code >= 400 {
+        return Err(GatewayError::ServiceUnavailable(current.body));
+    }
+    Ok(vector_collection_status_json_from_body(
+        &settings.collection_name,
+        true,
+        Some(&current.body),
+    ))
+}
+
+fn vector_collection_status_json_from_body(
+    collection_name: &str,
+    exists: bool,
+    detail_body: Option<&str>,
+) -> String {
+    let detail = detail_body
+        .and_then(|body| serde_json::from_str::<Value>(body).ok())
+        .unwrap_or(Value::Null);
+    serde_json::json!({
+        "collection_name": collection_name,
+        "exists": exists,
+        "detail": if exists { detail } else { Value::Null }
+    })
+    .to_string()
+}
+
+fn is_qdrant_missing_collection(response: &ExternalHttpResponse, collection_name: &str) -> bool {
+    if response.status_code != 404 {
+        return false;
+    }
+    let body = response.body.to_lowercase();
+    let collection_name = collection_name.to_lowercase();
+    body.contains(&collection_name)
+        && body.contains("collection")
+        && (body.contains("not found") || body.contains("doesn't exist"))
+}
+
+fn execute_neo4j_statements(statements: Vec<Neo4jStatement>) -> Result<Value, GatewayError> {
+    execute_neo4j_statements_batched(statements, usize::MAX)
+}
+
+fn execute_neo4j_statements_batched(
+    statements: Vec<Neo4jStatement>,
+    batch_size: usize,
+) -> Result<Value, GatewayError> {
+    let mut last_response = serde_json::json!({"results": [], "errors": []});
+    for batch in statements.chunks(batch_size.max(1)) {
+        let body = serde_json::json!({
+            "statements": batch.iter().map(|statement| {
+                serde_json::json!({
+                    "statement": statement.statement,
+                    "parameters": statement.parameters,
+                    "resultDataContents": ["row"]
+                })
+            }).collect::<Vec<_>>()
+        })
+        .to_string();
+        let response = execute_external_http(ExternalHttpRequest {
+            method: "POST".to_string(),
+            origin: neo4j_http_origin()?,
+            path: "/db/neo4j/tx/commit".to_string(),
+            body: Some(body),
+            headers: vec![("Authorization".to_string(), neo4j_basic_auth_header())],
+            timeout: Duration::from_secs(15),
+        })?;
+        if response.status_code >= 400 {
+            return Err(GatewayError::ServiceUnavailable(response.body));
+        }
+        let value: Value = serde_json::from_str(&response.body)
+            .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+        let errors = value
+            .get("errors")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !errors.is_empty() {
+            return Err(GatewayError::ServiceUnavailable(
+                Value::Array(errors).to_string(),
+            ));
+        }
+        last_response = value;
+    }
+    Ok(last_response)
+}
+
+fn neo4j_http_origin() -> Result<String, GatewayError> {
+    if let Ok(origin) = env::var("NEO4J_HTTP_URL") {
+        return normalize_http_origin_for_service(&origin);
+    }
+    let bolt_uri = env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://neo4j:7687".to_string());
+    let Some((host, _)) = host_port_from_url(&bolt_uri) else {
+        return Err(GatewayError::Validation(
+            "NEO4J_URI must include host and port.".to_string(),
+        ));
+    };
+    let port = env::var("NEO4J_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(7474);
+    normalize_http_origin_for_service(&format!("http://{host}:{port}"))
+}
+
+fn neo4j_basic_auth_header() -> String {
+    let user = env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
+    let password =
+        env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "change-me-local-only".to_string());
+    format!(
+        "Basic {}",
+        base64_encode(format!("{user}:{password}").as_bytes())
+    )
+}
+
+fn neo4j_first_result_rows(value: &Value) -> Vec<Value> {
+    neo4j_result_rows_at(value, 0)
+}
+
+fn neo4j_result_rows_at(value: &Value, index: usize) -> Vec<Value> {
+    value
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|results| results.get(index))
+        .and_then(|result| result.get("data"))
+        .and_then(Value::as_array)
+        .map(|data| {
+            data.iter()
+                .filter_map(|record| record.get("row").cloned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn graph_constraint_statements() -> &'static [&'static str] {
+    &[
+        "CREATE CONSTRAINT source_id_unique IF NOT EXISTS FOR (node:Source) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT raw_artifact_id_unique IF NOT EXISTS FOR (node:RawArtifact) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (node:Document) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (node:Chunk) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT evidence_item_id_unique IF NOT EXISTS FOR (node:EvidenceItem) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT claim_id_unique IF NOT EXISTS FOR (node:Claim) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT pattern_id_unique IF NOT EXISTS FOR (node:Pattern) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT hypothesis_id_unique IF NOT EXISTS FOR (node:Hypothesis) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT prediction_id_unique IF NOT EXISTS FOR (node:Prediction) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT recommendation_id_unique IF NOT EXISTS FOR (node:Recommendation) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT outcome_id_unique IF NOT EXISTS FOR (node:Outcome) REQUIRE node.id IS UNIQUE",
+        "CREATE CONSTRAINT report_id_unique IF NOT EXISTS FOR (node:Report) REQUIRE node.id IS UNIQUE",
+    ]
+}
+
+fn validate_graph_node_label(label: &str) -> Result<String, GatewayError> {
+    if graph_node_labels().contains(&label) {
+        Ok(label.to_string())
+    } else {
+        Err(GatewayError::Validation(
+            "Unsupported graph node label".to_string(),
+        ))
+    }
+}
+
+fn graph_node_labels() -> &'static [&'static str] {
+    &[
+        "Source",
+        "RawArtifact",
+        "Document",
+        "Chunk",
+        "EvidenceItem",
+        "Claim",
+        "Pattern",
+        "Hypothesis",
+        "Prediction",
+        "Recommendation",
+        "Outcome",
+        "Report",
+    ]
+}
+
+fn query_ids(client: &mut Client, sql: &str) -> Result<Vec<String>, GatewayError> {
+    client
+        .query(sql, &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect()
+        })
+}
+
+fn merge_node_statement(label: &str, node_id: &str) -> Neo4jStatement {
+    Neo4jStatement {
+        statement: format!("MERGE (:{label} {{id: $id}})"),
+        parameters: serde_json::json!({"id": node_id}),
+    }
+}
+
+fn merge_relationship_statement(
+    left_label: &str,
+    left_id: &str,
+    right_label: &str,
+    right_id: &str,
+    relationship_type: &str,
+) -> Neo4jStatement {
+    Neo4jStatement {
+        statement: format!(
+            "MATCH (left:{left_label} {{id: $left_id}}) MATCH (right:{right_label} {{id: $right_id}}) MERGE (left)-[:{relationship_type}]->(right)"
+        ),
+        parameters: serde_json::json!({
+            "left_id": left_id,
+            "right_id": right_id
+        }),
+    }
+}
+
+fn merge_evidence_targets(
+    client: &mut Client,
+    statements: &mut Vec<Neo4jStatement>,
+    sql: &str,
+    target_label: &str,
+    relationship_type: &str,
+    node_count: &mut usize,
+) -> Result<usize, GatewayError> {
+    let mut relationships = 0usize;
+    for row in client
+        .query(sql, &[])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let target_id: String = row.get(0);
+        let evidence_ids: Value = row.get(1);
+        statements.push(merge_node_statement(target_label, &target_id));
+        *node_count += 1;
+        for evidence_id in string_values_from_json_array(&evidence_ids) {
+            statements.push(merge_relationship_statement(
+                "EvidenceItem",
+                &evidence_id,
+                target_label,
+                &target_id,
+                relationship_type,
+            ));
+            relationships += 1;
+        }
+    }
+    Ok(relationships)
+}
+
+fn outcome_target_graph(target_type: &str) -> Option<(&'static str, &'static str)> {
+    match target_type {
+        "pattern" => Some(("Pattern", "PATTERN_HAS_OUTCOME")),
+        "hypothesis" => Some(("Hypothesis", "HYPOTHESIS_HAS_OUTCOME")),
+        "prediction" => Some(("Prediction", "PREDICTION_HAS_OUTCOME")),
+        "recommendation" => Some(("Recommendation", "RECOMMENDATION_HAS_OUTCOME")),
+        "report" => Some(("Report", "REPORT_HAS_OUTCOME")),
+        _ => None,
+    }
+}
+
+fn string_values_from_json_array(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn insert_pattern_with_audit(
@@ -5921,6 +6685,19 @@ fn retrieval_chunk_trail_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/retrieval/chunks/", "/trail")
 }
 
+fn graph_relationships_path(path: &str) -> Option<(String, String)> {
+    let stripped = path.strip_prefix("/memory/graph/nodes/")?;
+    let stripped = stripped.strip_suffix("/relationships")?;
+    let (label, node_id) = stripped.split_once('/')?;
+    if label.is_empty() || node_id.is_empty() || node_id.contains('/') {
+        return None;
+    }
+    Some((
+        percent_decode_path_segment(label),
+        percent_decode_path_segment(node_id),
+    ))
+}
+
 fn dynamic_post_id_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     let id = path.strip_prefix(prefix)?.strip_suffix(suffix)?;
     if id.is_empty() || id.contains('/') {
@@ -6961,6 +7738,157 @@ pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &Gateway
     request
 }
 
+fn execute_external_http(
+    request: ExternalHttpRequest,
+) -> Result<ExternalHttpResponse, GatewayError> {
+    let (host, port) = host_port_from_url(&request.origin).ok_or_else(|| {
+        GatewayError::Validation(format!(
+            "External service origin is invalid: {}",
+            redact_url(&request.origin)
+        ))
+    })?;
+    let mut addrs = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let addr = addrs.next().ok_or_else(|| {
+        GatewayError::ServiceUnavailable(format!("No address resolved for {host}:{port}"))
+    })?;
+    let mut stream = TcpStream::connect_timeout(&addr, request.timeout)
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    stream
+        .set_read_timeout(Some(request.timeout))
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(request.timeout))
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let body = request.body.unwrap_or_default();
+    let mut rendered = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: application/json\r\n",
+        request.method, request.path, host
+    );
+    let mut has_content_type = false;
+    for (name, value) in request.headers {
+        if name.eq_ignore_ascii_case("host")
+            || name.eq_ignore_ascii_case("connection")
+            || name.eq_ignore_ascii_case("content-length")
+        {
+            continue;
+        }
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        rendered.push_str(&name);
+        rendered.push_str(": ");
+        rendered.push_str(&value);
+        rendered.push_str("\r\n");
+    }
+    if !body.is_empty() {
+        if !has_content_type {
+            rendered.push_str("Content-Type: application/json\r\n");
+        }
+        rendered.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    rendered.push_str("\r\n");
+    rendered.push_str(&body);
+    stream
+        .write_all(rendered.as_bytes())
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    parse_external_http_response(&response)
+}
+
+fn parse_external_http_response(raw: &str) -> Result<ExternalHttpResponse, GatewayError> {
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((raw, ""));
+    let status_line = head
+        .lines()
+        .next()
+        .ok_or_else(|| GatewayError::ServiceUnavailable("Empty HTTP response".to_string()))?;
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| GatewayError::ServiceUnavailable("Malformed HTTP response".to_string()))?;
+    Ok(ExternalHttpResponse {
+        status_code,
+        body: decode_chunked_http_body_if_needed(head, body),
+    })
+}
+
+fn decode_chunked_http_body_if_needed(head: &str, body: &str) -> String {
+    if !head.lines().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("transfer-encoding")
+                && value.trim().eq_ignore_ascii_case("chunked")
+        })
+    }) {
+        return body.to_string();
+    }
+    let mut decoded = String::new();
+    let mut rest = body;
+    loop {
+        let Some((size_line, after_size)) = rest.split_once("\r\n") else {
+            return body.to_string();
+        };
+        let Ok(size) = usize::from_str_radix(size_line.trim(), 16) else {
+            return body.to_string();
+        };
+        if size == 0 {
+            return decoded;
+        }
+        if after_size.len() < size {
+            return body.to_string();
+        }
+        decoded.push_str(&after_size[..size]);
+        rest = after_size.get(size + 2..).unwrap_or("");
+    }
+}
+
+fn normalize_http_origin_for_service(origin: &str) -> Result<String, GatewayError> {
+    let trimmed = origin.trim().trim_end_matches('/');
+    let rest = trimmed.strip_prefix("http://").ok_or_else(|| {
+        GatewayError::Validation("Service URL must use local http:// origin.".to_string())
+    })?;
+    if rest.is_empty()
+        || rest.contains('/')
+        || rest.contains('\\')
+        || rest.contains("..")
+        || rest.contains('@')
+    {
+        return Err(GatewayError::Validation(
+            "Service URL must be an http://host:port origin without credentials or path."
+                .to_string(),
+        ));
+    }
+    Ok(format!("http://{rest}"))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::new();
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = *chunk.get(1).unwrap_or(&0);
+        let third = *chunk.get(2).unwrap_or(&0);
+        let combined = ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
+        encoded.push(TABLE[((combined >> 18) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((combined >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(TABLE[((combined >> 6) & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(TABLE[(combined & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+    encoded
+}
+
 pub fn help_text() -> &'static str {
     "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
 }
@@ -7775,6 +8703,83 @@ mod tests {
             assert!(!response.proxied_to_fallback, "{path}");
             assert!(response.body.contains(expected), "{path}");
         }
+    }
+
+    #[test]
+    fn diff133_routes_are_rust_native_and_validate_without_fallback() {
+        let unsupported_graph_label = handle_gateway_request_with_db(
+            &request(
+                "GET",
+                "/memory/graph/nodes/BadLabel/node-1/relationships",
+                "",
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(unsupported_graph_label.status_code, 422);
+        assert!(!unsupported_graph_label.proxied_to_fallback);
+
+        let graph_lineage_without_db = handle_gateway_request_with_db(
+            &request("POST", "/memory/graph/lineage/sync", ""),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(graph_lineage_without_db.status_code, 503);
+        assert!(!graph_lineage_without_db.proxied_to_fallback);
+        assert!(graph_lineage_without_db.body.contains("DATABASE_URL"));
+
+        let vector_search_invalid_limit = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/memory/vector/chunks/search",
+                r#"{"query":"alpha","limit":99}"#,
+            ),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(vector_search_invalid_limit.status_code, 422);
+        assert!(!vector_search_invalid_limit.proxied_to_fallback);
+
+        let vector_upsert_without_db = handle_gateway_request_with_db(
+            &request("POST", "/memory/vector/chunks/upsert", ""),
+            None,
+            DEFAULT_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(vector_upsert_without_db.status_code, 503);
+        assert!(!vector_upsert_without_db.proxied_to_fallback);
+        assert!(vector_upsert_without_db.body.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn diff133_service_request_helpers_are_bounded_and_safe() {
+        let settings = QdrantSettings {
+            base_url: "http://qdrant:6333".to_string(),
+            collection_name: "igy6_chunks".to_string(),
+            vector_size: 8,
+        };
+        let search_plan = search_points_request(&settings, "alpha beta", 5).expect("search plan");
+        assert_eq!(search_plan.origin, "http://qdrant:6333");
+        assert_eq!(search_plan.path, "/collections/igy6_chunks/points/search");
+        assert_eq!(search_plan.timeout_seconds, 10);
+        assert!(search_plan
+            .body
+            .expect("body")
+            .contains("\"with_vector\":false"));
+
+        assert_eq!(base64_encode(b"neo4j:secret"), "bmVvNGo6c2VjcmV0");
+        assert!(validate_graph_node_label("Chunk").is_ok());
+        assert!(validate_graph_node_label("Chunk) MATCH (n)").is_err());
+
+        let parsed = parse_external_http_response(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 15\r\n\r\ncollection lost",
+        )
+        .expect("http response");
+        assert_eq!(parsed.status_code, 404);
+        assert_eq!(parsed.body, "collection lost");
     }
 
     #[test]
@@ -8746,7 +9751,16 @@ mod tests {
             ("GET", "/feedback/{feedback_id}"),
             ("POST", "/feedback"),
             ("GET", "/memory/graph/schema"),
+            ("POST", "/memory/graph/schema/ensure"),
+            ("POST", "/memory/graph/lineage/sync"),
+            (
+                "GET",
+                "/memory/graph/nodes/{node_label}/{node_id}/relationships",
+            ),
             ("GET", "/memory/vector/chunks"),
+            ("POST", "/memory/vector/chunks/ensure"),
+            ("POST", "/memory/vector/chunks/search"),
+            ("POST", "/memory/vector/chunks/upsert"),
             ("GET", "/outcomes"),
             ("GET", "/outcomes/{outcome_id}"),
             ("POST", "/outcomes"),

@@ -22,14 +22,15 @@ Rust gateway service: api
     |   previews, DIFF-115 settings verify/apply, DIFF-116 work-item
     |   creation, DIFF-117 manual upload collection creation, DIFF-118
     |   agent action request/execution routes, DIFF-120 dynamic web
-    |   control routes, and DIFF-132 active medium-risk route parity
+    |   control routes, DIFF-132 active medium-risk route parity, and
+    |   DIFF-133 graph/vector memory route parity
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
 FastAPI is still required for classified non-web routes. No web-used route
-requires FastAPI fallback after DIFF-132, and DIFF-132 records the current
+requires FastAPI fallback after DIFF-133, and DIFF-133 records the current
 non-web fallback posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
@@ -65,6 +66,12 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/settings/env/apply` | Rust-native settings apply with safe `.env` backup/write and audit event |
 | GET | `/memory/vector/chunks` | Rust-native read-only status |
 | GET | `/memory/graph/schema` | Rust-native read-only status |
+| POST | `/memory/graph/schema/ensure` | Rust-native Neo4j schema ensure via bounded service call |
+| POST | `/memory/graph/lineage/sync` | Rust-native Neo4j lineage sync via bounded service calls |
+| GET | `/memory/graph/nodes/{node_label}/{node_id}/relationships` | Rust-native Neo4j relationship read with label allowlist |
+| POST | `/memory/vector/chunks/ensure` | Rust-native Qdrant collection ensure via bounded service call |
+| POST | `/memory/vector/chunks/search` | Rust-native Qdrant chunk vector search |
+| POST | `/memory/vector/chunks/upsert` | Rust-native Qdrant chunk vector upsert with DB status update |
 | GET | `/agent/capabilities` | Rust-native |
 | POST | `/agent/actions/` | Rust-native fixed action request/audit route |
 | POST | `/agent/actions/{action_name}/execute` | Rust-native fixed action execution with approval, audit, and host-bridge safety gates |
@@ -138,13 +145,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -181,6 +188,24 @@ from Rust, and Rust-only cannot be claimed.
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
 | `unsafe_to_migrate_now` | 11 |
+
+## DIFF-133 Graph/Vector Memory Route Parity
+
+DIFF-133 migrates the six graph/vector memory fallback routes to Rust-native
+gateway handlers. Graph routes use allowlisted labels and bounded Neo4j
+transactional HTTP calls for relationship reads, schema ensure, and lineage
+sync. Vector routes use bounded Qdrant HTTP calls plus deterministic local
+hash embeddings for collection ensure, search, and chunk upsert. FastAPI
+remains required for the 13 classified routes still missing from Rust, and
+Rust-only cannot be claimed.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 7 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 5 |
 
 ## Web-Used Route Matrix
 
@@ -296,13 +321,13 @@ human-readable inventory of the active route families and gateway behavior.
 | POST | `/improvements` | Proxied to FastAPI |
 | GET | `/improvements/{improvement_item_id}` | Proxied to FastAPI |
 | GET | `/memory/graph/schema` | Rust-native read-only status |
-| POST | `/memory/graph/schema/ensure` | Proxied to FastAPI |
-| POST | `/memory/graph/lineage/sync` | Proxied to FastAPI |
-| GET | `/memory/graph/nodes/{node_label}/{node_id}/relationships` | Proxied to FastAPI |
+| POST | `/memory/graph/schema/ensure` | Rust-native Neo4j schema ensure via bounded service call |
+| POST | `/memory/graph/lineage/sync` | Rust-native Neo4j lineage sync via bounded service calls |
+| GET | `/memory/graph/nodes/{node_label}/{node_id}/relationships` | Rust-native Neo4j relationship read with label allowlist |
 | GET | `/memory/vector/chunks` | Rust-native read-only status |
-| POST | `/memory/vector/chunks/ensure` | Proxied to FastAPI |
-| POST | `/memory/vector/chunks/upsert` | Proxied to FastAPI |
-| POST | `/memory/vector/chunks/search` | Proxied to FastAPI |
+| POST | `/memory/vector/chunks/ensure` | Rust-native Qdrant collection ensure via bounded service call |
+| POST | `/memory/vector/chunks/upsert` | Rust-native Qdrant chunk vector upsert with DB status update |
+| POST | `/memory/vector/chunks/search` | Rust-native Qdrant chunk vector search |
 | GET | `/outcomes` | Rust-native DB read |
 | POST | `/outcomes` | Rust-native DB write with audit events |
 | GET | `/outcomes/{outcome_id}` | Rust-native DB read |
@@ -389,8 +414,9 @@ DIFF-120 adds Rust-native dynamic web controls for pattern review, approval
 decision, report render, and work-item dispatch. DIFF-132 adds Rust-native
 handlers for the active medium-risk route bucket: analysis creation, evidence
 document/chunk/item writes, source permission creation, report/work-item status
-transitions, and retrieval trail/search hydration. FastAPI fallback remains
-required for the 19 classified routes still missing from Rust.
+transitions, and retrieval trail/search hydration. DIFF-133 adds Rust-native
+graph/vector memory parity with bounded Neo4j and Qdrant service calls. FastAPI
+fallback remains required for the 13 classified routes still missing from Rust.
 
 ## Manifest Finding
 
@@ -443,8 +469,8 @@ deliberately retired:
 16. DIFF-132: migrate the active medium-risk route bucket for analysis,
    evidence, source permission, report/work-item status, and retrieval
    trail/search parity.
-17. DIFF-133: migrate graph/vector memory parity routes only after scoped
-   Neo4j/Qdrant safety and failure tests are defined.
+17. DIFF-133: migrate graph/vector memory parity routes with scoped
+   Neo4j/Qdrant safety and failure tests.
 18. DIFF-134 through DIFF-137: resolve report work-item, artifact/collection
    ingestion, experiments/improvements, and duplicate root fallback buckets.
 19. Final retirement DIFF: remove or disable `legacy-api` only after route
