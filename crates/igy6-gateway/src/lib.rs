@@ -12,9 +12,12 @@ use igy6_agent_api::{
     ACTION_REGISTRY,
 };
 use igy6_artifacts::ArtifactStore;
-use igy6_evidence_answer::{answer_with_optional_llm, deterministic_fallback_for_llm_config_error};
+use igy6_evidence_answer::{
+    answer_with_optional_llm, answer_with_optional_llm_for_task,
+    deterministic_fallback_for_llm_config_error,
+};
 use igy6_host_bridge::{allowed_action as host_bridge_allowed_action, redact_output};
-use igy6_llm::{LlmConfig, StdHttpTransport};
+use igy6_llm::{load_local_llm_routing_config, LlmConfig, LlmProvider, StdHttpTransport};
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
 use postgres::{Client, NoTls};
@@ -6096,6 +6099,9 @@ fn evidence_answer_json(body: &str) -> String {
     let message = extract_json_string(body, "message")
         .or_else(|| extract_json_string(body, "query"))
         .unwrap_or_default();
+    let task_name = extract_json_string(body, "task_name")
+        .or_else(|| extract_json_string(body, "task"))
+        .unwrap_or_else(|| igy6_llm::DEFAULT_TASK_NAME.to_string());
     let retrieval_context = build_hydrated_chunk_search_result(
         &message,
         "chunks",
@@ -6104,6 +6110,20 @@ fn evidence_answer_json(body: &str) -> String {
         5,
     );
     let answer = match LlmConfig::from_env() {
+        Ok(config) if config.provider == LlmProvider::Ollama => {
+            match load_local_llm_routing_config() {
+                Ok(routing_config) => answer_with_optional_llm_for_task(
+                    retrieval_context,
+                    &config,
+                    &routing_config,
+                    &task_name,
+                    &StdHttpTransport,
+                ),
+                Err(error) => {
+                    deterministic_fallback_for_llm_config_error(retrieval_context, &error)
+                }
+            }
+        }
         Ok(config) => answer_with_optional_llm(retrieval_context, &config, &StdHttpTransport),
         Err(error) => deterministic_fallback_for_llm_config_error(retrieval_context, &error),
     };

@@ -368,9 +368,10 @@
         "DIFF-128 wires optional local LLM generation into evidence answer generation behind evidence-required checks and deterministic fallback.",
         "DIFF-129 adds user-facing Assistant and Settings status for local LLM provider config, answer mode, examples, and Advanced diagnostics without exposing secrets.",
         "DIFF-130 adds configs/local-llm-routing.json for task-based local Ollama model routing plus scripts/ollama-local-setup.sh for check-only-by-default local setup.",
+        "DIFF-131 connects the local LLM routing config to Rust evidence-answer generation so requested task names select route-specific model, system instruction, temperature, and evidence-required behavior.",
         "LLM_PROVIDER=none means no model calls.",
-        "No automatic Ollama install, automatic model pull, real Ollama call during tests, external model call, LLM action execution, broad retrieval rewrite, or Rust-only claim is added by DIFF-130.",
-        "Future local LLM answers must remain evidence-grounded, timeout-bound, and citation-oriented, with deterministic evidence fallback and insufficient-evidence behavior when evidence is absent."
+        "No automatic Ollama install, automatic model pull, real Ollama call during tests, external model call, LLM action execution, broad retrieval rewrite, or Rust-only claim is added by DIFF-130 or DIFF-131.",
+        "Local LLM answers must remain evidence-grounded, timeout-bound, and citation-oriented, with deterministic evidence fallback and insufficient-evidence behavior when evidence is absent."
       ]
     }
   },

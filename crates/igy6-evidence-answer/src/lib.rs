@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use igy6_llm::{
     generate, redact_sensitive_text, LlmConfig, LlmError, LlmGenerateRequest, LlmHttpTransport,
+    LocalLlmRoutingConfig, SelectedLocalLlmRoute,
 };
 use igy6_retrieval_preview::HydratedChunkSearchResult;
 
@@ -202,6 +203,31 @@ pub fn answer_with_optional_llm<T: LlmHttpTransport>(
     config: &LlmConfig,
     transport: &T,
 ) -> EvidenceGroundedAnswer {
+    answer_with_optional_llm_routed(retrieval_context, config, None, transport)
+}
+
+pub fn answer_with_optional_llm_for_task<T: LlmHttpTransport>(
+    retrieval_context: HydratedChunkSearchResult,
+    config: &LlmConfig,
+    routing_config: &LocalLlmRoutingConfig,
+    task_name: &str,
+    transport: &T,
+) -> EvidenceGroundedAnswer {
+    let selected_route = match routing_config.select_route(task_name) {
+        Ok(route) => route,
+        Err(error) => {
+            return deterministic_fallback_for_llm_config_error(retrieval_context, &error)
+        }
+    };
+    answer_with_optional_llm_routed(retrieval_context, config, Some(selected_route), transport)
+}
+
+fn answer_with_optional_llm_routed<T: LlmHttpTransport>(
+    retrieval_context: HydratedChunkSearchResult,
+    config: &LlmConfig,
+    selected_route: Option<SelectedLocalLlmRoute>,
+    transport: &T,
+) -> EvidenceGroundedAnswer {
     let deterministic_answer = build_evidence_answer_packet(retrieval_context);
     if deterministic_answer.facts.is_empty() {
         return EvidenceGroundedAnswer {
@@ -217,13 +243,21 @@ pub fn answer_with_optional_llm<T: LlmHttpTransport>(
         };
     }
 
+    let generation_config = selected_route
+        .as_ref()
+        .map(|route| config.with_selected_route(route))
+        .unwrap_or_else(|| config.clone());
     let prompt = build_llm_prompt(&deterministic_answer, config.max_evidence_bytes);
     let prompt_evidence_bytes = prompt.len();
     match generate(
-        config,
+        &generation_config,
         &LlmGenerateRequest {
             prompt,
             evidence_bytes: prompt_evidence_bytes,
+            system_instruction: selected_route
+                .as_ref()
+                .map(|route| route.system_instruction.clone()),
+            temperature: selected_route.as_ref().map(|route| route.temperature),
         },
         transport,
     ) {
@@ -240,14 +274,14 @@ pub fn answer_with_optional_llm<T: LlmHttpTransport>(
         },
         Err(LlmError::ProviderDisabled) => deterministic_fallback(
             deterministic_answer,
-            config.status().provider,
+            generation_config.status().provider,
             "disabled",
             None,
             prompt_evidence_bytes,
         ),
         Err(error) => deterministic_fallback(
             deterministic_answer,
-            config.status().provider,
+            generation_config.status().provider,
             "llm_unavailable",
             Some(redact_sensitive_text(&error.to_string())),
             prompt_evidence_bytes,
@@ -385,7 +419,8 @@ pub fn excerpt(value: &str, max_length: usize) -> String {
 mod tests {
     use super::*;
     use igy6_llm::{
-        HttpRequest, HttpResponse, LlmError, LlmHttpTransport, LlmProvider, OLLAMA_PROVIDER,
+        HttpRequest, HttpResponse, LlmError, LlmHttpTransport, LlmProvider, LocalLlmRoutingConfig,
+        OLLAMA_PROVIDER,
     };
     use igy6_retrieval_preview::{
         HydratedChunkSearchHit, HydratedChunkSearchResult, RetrievalChunk, RetrievalDocument,
@@ -439,6 +474,13 @@ mod tests {
             evidence_required: true,
             max_evidence_bytes: 4096,
         }
+    }
+
+    fn routing_config() -> LocalLlmRoutingConfig {
+        LocalLlmRoutingConfig::from_json_str(include_str!(
+            "../../../configs/local-llm-routing.json"
+        ))
+        .expect("routing config")
     }
 
     fn context(with_evidence: bool) -> HydratedChunkSearchResult {
@@ -612,6 +654,51 @@ mod tests {
         let body = requests[0].body.as_ref().expect("prompt body expected");
         assert!(body.contains("evidence-1"));
         assert!(body.contains("Do not execute actions"));
+    }
+
+    #[test]
+    fn optional_llm_for_task_uses_routing_model_system_and_temperature() {
+        let transport = FakeTransport::ok(
+            "{\"response\":\"The code route cites [evidence-1].\",\"done\":true}",
+        );
+        let mut config = ollama_config();
+        config.model = None;
+
+        let answer = answer_with_optional_llm_for_task(
+            context(true),
+            &config,
+            &routing_config(),
+            "code_repo",
+            &transport,
+        );
+
+        assert_eq!(answer.answer_status, "evidence_grounded_llm");
+        let requests = transport.requests.borrow();
+        let body = requests[0].body.as_ref().expect("prompt body expected");
+        assert!(body.contains("\"model\":\"qwen2.5-coder:7b\""));
+        assert!(body.contains("local code assistant"));
+        assert!(body.contains("\"temperature\":0.2"));
+    }
+
+    #[test]
+    fn optional_llm_for_unknown_task_uses_chat_default_route() {
+        let transport =
+            FakeTransport::ok("{\"response\":\"Default chat cites [evidence-1].\",\"done\":true}");
+        let mut config = ollama_config();
+        config.model = None;
+
+        let answer = answer_with_optional_llm_for_task(
+            context(true),
+            &config,
+            &routing_config(),
+            "unknown_task",
+            &transport,
+        );
+
+        assert_eq!(answer.answer_status, "evidence_grounded_llm");
+        let requests = transport.requests.borrow();
+        let body = requests[0].body.as_ref().expect("prompt body expected");
+        assert!(body.contains("\"model\":\"llama3.1:8b\""));
     }
 
     #[test]

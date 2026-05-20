@@ -131,6 +131,12 @@ Seasoned coders:
   `configs/local-llm-routing.json`. The setup helper is check-only by default,
   pulls only the approved default models when explicitly requested, and can
   safely write local `.env` Ollama keys after creating a backup.
+- DIFF-131 connects the routing config to Rust evidence-answer generation. When
+  local Ollama generation is enabled, Rust loads and validates the routing file,
+  selects the requested task route, and sends the route model, system
+  instruction, and temperature to the local provider. Unknown tasks use
+  `chat_default`; disabled, unavailable, invalid, timed-out, or insufficient
+  evidence paths still use deterministic fallback.
 
 ## Task Routing
 
@@ -150,6 +156,10 @@ purpose, and context note. All routes require evidence.
 code, logs, scripts, and repository summaries while staying practical for an RTX
 3060 12GB class machine. `llama3.1:8b` is the default general evidence model.
 `gemma3:4b` is the fast/lightweight route. `gemma3:12b` is optional and heavier.
+
+Rust evidence-answer requests may include `task_name` or `task`. Supported
+values are the route names above. If the value is missing or unknown, Rust uses
+`chat_default`. `LLM_PROVIDER=none` still means no model call.
 
 ## Ollama Setup Commands
 
@@ -197,7 +207,7 @@ Return to deterministic mode:
 LLM_PROVIDER=none
 ```
 
-## Not Implemented In DIFF-126 Through DIFF-130
+## Not Implemented In DIFF-126 Through DIFF-131
 
 These DIFFs do not add external model providers, LLM action execution, broad
 retrieval rewrites, mandatory Ollama startup, or Rust-only operation.

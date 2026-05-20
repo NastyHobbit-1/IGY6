@@ -1,7 +1,9 @@
 use std::env;
 use std::fmt;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
 
 pub const DEFAULT_PROVIDER: &str = "none";
@@ -10,6 +12,7 @@ pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://host.docker.internal:11434";
 pub const DEFAULT_TIMEOUT_SECONDS: u64 = 60;
 pub const DEFAULT_MAX_EVIDENCE_BYTES: usize = 32 * 1024;
 pub const DEFAULT_TASK_NAME: &str = "chat_default";
+pub const LOCAL_LLM_ROUTING_CONFIG_PATH: &str = "configs/local-llm-routing.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfig {
@@ -83,11 +86,6 @@ impl LlmConfig {
             LlmProvider::Disabled => Ok(()),
             LlmProvider::Ollama => {
                 parse_local_http_base_url(&self.base_url)?;
-                if self.model.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err(LlmError::InvalidConfig(
-                        "OLLAMA_MODEL is required when LLM_PROVIDER=ollama".to_string(),
-                    ));
-                }
                 Ok(())
             }
         }
@@ -112,7 +110,7 @@ impl LlmConfig {
                 base_url: redact_url(&self.base_url),
                 evidence_required: self.evidence_required,
                 timeout_seconds: self.timeout.as_secs(),
-                message: "Local Ollama provider configured but not wired into Assistant generation"
+                message: "Local Ollama provider configured; evidence-answer generation uses task routing when enabled"
                     .to_string(),
             },
         }
@@ -156,10 +154,12 @@ pub enum LlmStatusState {
     Unavailable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LlmGenerateRequest {
     pub prompt: String,
     pub evidence_bytes: usize,
+    pub system_instruction: Option<String>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +196,15 @@ pub struct LocalLlmTaskRoute {
 }
 
 impl LocalLlmRoutingConfig {
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self, LlmError> {
+        let content = fs::read_to_string(path.as_ref()).map_err(|error| {
+            LlmError::InvalidConfig(format!(
+                "local LLM routing config could not be read: {error}"
+            ))
+        })?;
+        Self::from_json_str(&content)
+    }
+
     pub fn from_json_str(content: &str) -> Result<Self, LlmError> {
         let value: serde_json::Value = serde_json::from_str(content).map_err(|error| {
             LlmError::InvalidConfig(format!("local LLM routing JSON is invalid: {error}"))
@@ -319,6 +328,19 @@ impl LocalLlmRoutingConfig {
             })
     }
 
+    pub fn select_route(&self, task_name: &str) -> Result<SelectedLocalLlmRoute, LlmError> {
+        let route = self.route_for_task(task_name).ok_or_else(|| {
+            LlmError::InvalidConfig("local LLM routing missing chat_default route".to_string())
+        })?;
+        Ok(SelectedLocalLlmRoute {
+            task_name: route.task_name.clone(),
+            model: route.model.clone(),
+            system_instruction: route.system_instruction.clone(),
+            temperature: route.temperature,
+            evidence_required: route.evidence_required,
+        })
+    }
+
     pub fn default_pull_models(&self) -> Vec<String> {
         self.default_models.clone()
     }
@@ -332,6 +354,28 @@ impl LocalLlmRoutingConfig {
         }
         models
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectedLocalLlmRoute {
+    pub task_name: String,
+    pub model: String,
+    pub system_instruction: String,
+    pub temperature: f64,
+    pub evidence_required: bool,
+}
+
+impl LlmConfig {
+    pub fn with_selected_route(&self, route: &SelectedLocalLlmRoute) -> Self {
+        let mut routed = self.clone();
+        routed.model = Some(route.model.clone());
+        routed.evidence_required = route.evidence_required;
+        routed
+    }
+}
+
+pub fn load_local_llm_routing_config() -> Result<LocalLlmRoutingConfig, LlmError> {
+    LocalLlmRoutingConfig::from_path(LOCAL_LLM_ROUTING_CONFIG_PATH)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -520,12 +564,23 @@ pub fn generate<T: LlmHttpTransport>(
         .model
         .as_deref()
         .ok_or_else(|| LlmError::InvalidConfig("OLLAMA_MODEL is required".to_string()))?;
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "prompt": request.prompt,
         "stream": false
-    })
-    .to_string();
+    });
+    if let Some(system_instruction) = request.system_instruction.as_deref() {
+        body["system"] = serde_json::Value::String(system_instruction.to_string());
+    }
+    if let Some(temperature) = request.temperature {
+        if !(0.0..=1.0).contains(&temperature) {
+            return Err(LlmError::InvalidRequest(
+                "temperature must be between 0 and 1".to_string(),
+            ));
+        }
+        body["options"] = serde_json::json!({ "temperature": temperature });
+    }
+    let body = body.to_string();
 
     let response = transport.send(&HttpRequest {
         method: "POST".to_string(),
@@ -888,6 +943,8 @@ mod tests {
             &LlmGenerateRequest {
                 prompt: "Use citation [1] only.".to_string(),
                 evidence_bytes: 42,
+                system_instruction: None,
+                temperature: None,
             },
             &transport,
         )
@@ -914,6 +971,37 @@ mod tests {
     }
 
     #[test]
+    fn generate_sends_selected_route_system_instruction_and_temperature() {
+        let transport = FakeTransport::new(HttpResponse {
+            status_code: 200,
+            body: "{\"response\":\"Routed answer [evidence-1]\",\"done\":true}".to_string(),
+        });
+        let routing = LocalLlmRoutingConfig::from_json_str(routing_json()).expect("routing config");
+        let selected = routing.select_route("code_repo").expect("selected route");
+        let config = ollama_config().with_selected_route(&selected);
+
+        let response = generate(
+            &config,
+            &LlmGenerateRequest {
+                prompt: "Use citation [evidence-1].".to_string(),
+                evidence_bytes: 28,
+                system_instruction: Some(selected.system_instruction.clone()),
+                temperature: Some(selected.temperature),
+            },
+            &transport,
+        )
+        .expect("generate should pass");
+
+        assert_eq!(response.model, "qwen2.5-coder:7b");
+        let requests = transport.requests.borrow();
+        let body = requests[0].body.as_ref().expect("body expected");
+        let value: serde_json::Value = serde_json::from_str(body).expect("request JSON");
+        assert_eq!(value["model"], "qwen2.5-coder:7b");
+        assert_eq!(value["system"], selected.system_instruction);
+        assert_eq!(value["options"]["temperature"], selected.temperature);
+    }
+
+    #[test]
     fn generate_fails_closed_without_evidence_when_required() {
         let transport = FakeTransport::new(HttpResponse {
             status_code: 200,
@@ -924,6 +1012,8 @@ mod tests {
             &LlmGenerateRequest {
                 prompt: "No evidence.".to_string(),
                 evidence_bytes: 0,
+                system_instruction: None,
+                temperature: None,
             },
             &transport,
         )
@@ -946,6 +1036,8 @@ mod tests {
                 &LlmGenerateRequest {
                     prompt: "test".to_string(),
                     evidence_bytes: 1,
+                    system_instruction: None,
+                    temperature: None,
                 },
                 &transport,
             )
@@ -958,6 +1050,8 @@ mod tests {
             &LlmGenerateRequest {
                 prompt: "test".to_string(),
                 evidence_bytes: 257,
+                system_instruction: None,
+                temperature: None,
             },
             &transport,
         )
@@ -982,6 +1076,8 @@ mod tests {
             &LlmGenerateRequest {
                 prompt: "test".to_string(),
                 evidence_bytes: 1,
+                system_instruction: None,
+                temperature: None,
             },
             &transport,
         )
@@ -1021,6 +1117,19 @@ mod tests {
             DEFAULT_TASK_NAME
         );
         assert!(config.tasks.iter().all(|task| task.evidence_required));
+    }
+
+    #[test]
+    fn local_routing_selects_chat_default_for_unknown_tasks() {
+        let config = LocalLlmRoutingConfig::from_json_str(routing_json()).expect("routing config");
+
+        let selected = config
+            .select_route("unexpected_task")
+            .expect("fallback route");
+
+        assert_eq!(selected.task_name, DEFAULT_TASK_NAME);
+        assert_eq!(selected.model, "llama3.1:8b");
+        assert!(selected.evidence_required);
     }
 
     #[test]
