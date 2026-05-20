@@ -35,6 +35,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/agent/actions/{action_name}/execute"),
     ("GET", "/analysis/hypotheses"),
     ("GET", "/analysis/hypotheses/{hypothesis_id}"),
+    ("POST", "/analysis/hypotheses"),
     ("GET", "/analysis/patterns"),
     ("GET", "/analysis/patterns/{pattern_id}"),
     ("POST", "/analysis/patterns"),
@@ -42,8 +43,10 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/analysis/patterns/detect-baseline"),
     ("GET", "/analysis/predictions"),
     ("GET", "/analysis/predictions/{prediction_id}"),
+    ("POST", "/analysis/predictions"),
     ("GET", "/analysis/recommendations"),
     ("GET", "/analysis/recommendations/{recommendation_id}"),
+    ("POST", "/analysis/recommendations"),
     ("POST", "/agent/intent"),
     ("POST", "/chat/retrieval-preview"),
     ("POST", "/chat/evidence-answer"),
@@ -61,8 +64,11 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/collection-runs/manual-upload"),
     ("GET", "/evidence/documents"),
     ("GET", "/evidence/documents/{document_id}"),
+    ("POST", "/evidence/documents"),
+    ("POST", "/evidence/documents/{document_id}/chunks"),
     ("GET", "/evidence/items"),
     ("GET", "/evidence/items/{evidence_item_id}"),
+    ("POST", "/evidence/items"),
     ("GET", "/evidence/chunks"),
     ("GET", "/evidence/chunks/{chunk_id}"),
     ("GET", "/evidence/claims"),
@@ -79,6 +85,9 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/reports/{report_id}"),
     ("POST", "/reports"),
     ("POST", "/reports/{report_id}/render"),
+    ("POST", "/reports/{report_id}/status"),
+    ("GET", "/retrieval/chunks/{chunk_id}/trail"),
+    ("POST", "/retrieval/chunks/search"),
     ("GET", "/settings/env"),
     ("POST", "/settings/env/apply"),
     ("POST", "/settings/env/verify"),
@@ -86,11 +95,13 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/sources/{source_id}"),
     ("GET", "/sources/{source_id}/permissions"),
     ("POST", "/sources"),
+    ("POST", "/sources/{source_id}/permissions"),
     ("GET", "/work-items"),
     ("GET", "/work-items/{work_item_id}"),
     ("POST", "/work-items"),
     ("POST", "/work-items/"),
     ("POST", "/work-items/{work_item_id}/dispatch"),
+    ("POST", "/work-items/{work_item_id}/status"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,9 +268,18 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
+        ("POST", "/analysis/hypotheses") => {
+            hypothesis_create_response(&request.body, database_url)
+        }
         ("POST", "/analysis/patterns") => pattern_create_response(&request.body, database_url),
         ("POST", "/analysis/patterns/detect-baseline") => {
             baseline_patterns_response(&request.body, database_url)
+        }
+        ("POST", "/analysis/predictions") => {
+            prediction_create_response(&request.body, database_url)
+        }
+        ("POST", "/analysis/recommendations") => {
+            recommendation_create_response(&request.body, database_url)
         }
         ("POST", "/collection-runs/dry-run") => {
             collection_dry_run_response(&request.body, database_url)
@@ -267,9 +287,18 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/collection-runs/manual-upload") => {
             manual_upload_response(&request.body, database_url)
         }
+        ("POST", "/evidence/documents") => {
+            evidence_document_create_response(&request.body, database_url)
+        }
+        ("POST", "/evidence/items") => {
+            evidence_item_create_response(&request.body, database_url)
+        }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/outcomes") => outcome_create_response(&request.body, database_url),
         ("POST", "/reports") => report_create_response(&request.body, database_url),
+        ("POST", "/retrieval/chunks/search") => {
+            retrieval_chunk_search_response(&request.body, database_url)
+        }
         ("POST", "/sources") => source_create_response(&request.body, database_url),
         ("POST", "/work-items") | ("POST", "/work-items/") => {
             work_item_create_response(&request.body, database_url)
@@ -288,8 +317,32 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(decide_approval(&approval_id, &request.body, database_url))
             } else if let Some(report_id) = report_render_path(&request.path) {
                 action_route_response(render_report(&report_id, &request.body, database_url))
+            } else if let Some(report_id) = report_status_path(&request.path) {
+                action_route_response(update_report_status(
+                    &report_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(document_id) = evidence_document_chunks_path(&request.path) {
+                write_route_response(generate_document_chunks(
+                    &document_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(source_id) = source_permission_create_path(&request.path) {
+                write_route_response(create_source_permission(
+                    &source_id,
+                    &request.body,
+                    database_url,
+                ))
             } else if let Some(work_item_id) = work_item_dispatch_path(&request.path) {
                 action_route_response(dispatch_work_item(
+                    &work_item_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(work_item_id) = work_item_status_path(&request.path) {
+                action_route_response(update_work_item_status(
                     &work_item_id,
                     &request.body,
                     database_url,
@@ -305,7 +358,9 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", graph_schema_status_json(), false)
         }
         ("GET", _) => {
-            if let Some(route) = db_read_route(&request.path) {
+            if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
+                action_route_response(get_retrieval_chunk_trail(&chunk_id, database_url))
+            } else if let Some(route) = db_read_route(&request.path) {
                 db_read_response(route, database_url)
             } else {
                 fallback_or_error(request, fallback_origin)
@@ -644,6 +699,30 @@ fn outcome_create_response(body: &str, database_url: Option<&str>) -> GatewayRes
 
 fn source_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_source(body, database_url))
+}
+
+fn hypothesis_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_hypothesis(body, database_url))
+}
+
+fn prediction_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_prediction(body, database_url))
+}
+
+fn recommendation_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_recommendation(body, database_url))
+}
+
+fn evidence_document_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_evidence_document(body, database_url))
+}
+
+fn evidence_item_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_evidence_item(body, database_url))
+}
+
+fn retrieval_chunk_search_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    action_route_response(search_retrieval_chunks(body, database_url))
 }
 
 fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -1735,6 +1814,68 @@ fn render_report(
     Ok(response_body)
 }
 
+fn update_report_status(
+    report_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let report_id = validate_route_id(report_id, "report_id")?;
+    let payload = parse_report_status(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT status, artifact_path FROM reports WHERE id = $1",
+            &[&report_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Report not found".to_string()));
+    };
+    let previous_status: String = row.get(0);
+    let previous_artifact_path: Option<String> = row.get(1);
+    transaction
+        .execute(
+            "UPDATE reports SET status = $2, artifact_path = COALESCE($3, artifact_path), updated_at = now() WHERE id = $1",
+            &[&report_id, &payload.status, &payload.artifact_path],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let new_artifact_path = payload
+        .artifact_path
+        .as_ref()
+        .or(previous_artifact_path.as_ref());
+    let details_json = serde_json::json!({
+        "previous_status": previous_status,
+        "new_status": payload.status,
+        "previous_artifact_path": previous_artifact_path,
+        "new_artifact_path": new_artifact_path
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'report.status_updated', $2, 'report', $3, NULL, $4::jsonb)",
+            &[&payload.actor_id, &payload.status, &report_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t",
+            &[&report_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn dispatch_work_item(
     work_item_id: &str,
     body: &str,
@@ -1836,6 +1977,208 @@ fn dispatch_work_item(
         escape_json(&task_id),
         escape_json(&work_item.status)
     ))
+}
+
+fn update_work_item_status(
+    work_item_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let work_item_id = validate_route_id(work_item_id, "work_item_id")?;
+    let payload = parse_work_item_status(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT status, payload_json FROM work_items WHERE id = $1",
+            &[&work_item_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Work item not found".to_string()));
+    };
+    let previous_status: String = row.get(0);
+    let payload_json: Value = row.get(1);
+    require_valid_work_item_status_transition(&previous_status, &payload.status, &payload_json)?;
+    transaction
+        .execute(
+            "UPDATE work_items SET status = $2, error_message = $3, updated_at = now() WHERE id = $1",
+            &[&work_item_id, &payload.status, &payload.error_message],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "previous_status": previous_status,
+        "new_status": payload.status,
+        "error_message": payload.error_message
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.status_updated', $2, 'work_item', $3, NULL, $4::jsonb)",
+            &[&payload.actor_id, &payload.status, &work_item_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items WHERE id = $1) t",
+            &[&work_item_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn require_valid_work_item_status_transition(
+    previous_status: &str,
+    new_status: &str,
+    payload_json: &Value,
+) -> Result<(), GatewayError> {
+    if previous_status == new_status {
+        return Ok(());
+    }
+    let allowed = match previous_status {
+        "pending_intent_verification" => matches!(new_status, "queued" | "canceled"),
+        "queued" => matches!(new_status, "running" | "canceled"),
+        "running" => matches!(new_status, "completed" | "failed" | "canceled"),
+        "completed" | "failed" | "canceled" => false,
+        _ => false,
+    };
+    if !allowed {
+        return Err(GatewayError::Conflict(format!(
+            "Invalid work item status transition from {previous_status} to {new_status}"
+        )));
+    }
+    if new_status == "queued" && !has_intent_verification(payload_json) {
+        return Err(GatewayError::Conflict(
+            "Work item requires recorded intent verification before queueing".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn get_retrieval_chunk_trail(
+    chunk_id: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let chunk_id = validate_route_id(chunk_id, "chunk_id")?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    retrieval_chunk_trail_json(&mut client, &chunk_id)
+}
+
+fn retrieval_chunk_trail_json(client: &mut Client, chunk_id: &str) -> Result<String, GatewayError> {
+    let Some(row) = client
+        .query_opt("SELECT document_id FROM chunks WHERE id = $1", &[&chunk_id])
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Chunk not found".to_string()));
+    };
+    let document_id: String = row.get(0);
+    let Some(document_row) = client
+        .query_opt(
+            "SELECT raw_artifact_id, source_id FROM normalized_documents WHERE id = $1",
+            &[&document_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::Conflict(
+            "Chunk document not found".to_string(),
+        ));
+    };
+    let raw_artifact_id: Option<String> = document_row.get(0);
+    let document_source_id: Option<String> = document_row.get(1);
+    let raw_source_id = if let Some(raw_artifact_id) = &raw_artifact_id {
+        let Some(raw_row) = client
+            .query_opt(
+                "SELECT source_id FROM raw_artifacts WHERE id = $1",
+                &[raw_artifact_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?
+        else {
+            return Err(GatewayError::Conflict(
+                "Document raw artifact not found".to_string(),
+            ));
+        };
+        raw_row.get::<_, Option<String>>(0)
+    } else {
+        None
+    };
+    let source_id = document_source_id.or(raw_source_id);
+    if let Some(source_id) = &source_id {
+        let source_exists = client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+                &[source_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !source_exists {
+            return Err(GatewayError::Conflict("Trail source not found".to_string()));
+        }
+    }
+    client
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT (SELECT row_to_json(c) FROM (SELECT id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json, created_at, updated_at FROM chunks WHERE id = $1) c) AS chunk, (SELECT row_to_json(d) FROM (SELECT id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json, created_at, updated_at FROM normalized_documents WHERE id = $2) d) AS document, (SELECT row_to_json(s) FROM (SELECT id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json, created_at, updated_at FROM sources WHERE id = $3) s) AS source, (SELECT row_to_json(r) FROM (SELECT id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json, created_at, updated_at FROM raw_artifacts WHERE id = $4) r) AS raw_artifact, COALESCE((SELECT json_agg(row_to_json(e)) FROM (SELECT id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json, created_at, updated_at FROM evidence_items WHERE chunk_id = $1 OR (chunk_id IS NULL AND document_id = $2) ORDER BY created_at DESC, id ASC) e), '[]'::json) AS evidence_items) t",
+            &[&chunk_id, &document_id, &source_id, &raw_artifact_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn search_retrieval_chunks(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_retrieval_search(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let query_like = format!("%{}%", payload.query);
+    let rows = client
+        .query(
+            "SELECT c.id FROM chunks c JOIN normalized_documents d ON d.id = c.document_id LEFT JOIN sources s ON s.id = d.source_id WHERE c.text_content ILIKE $1 AND COALESCE(s.enabled, true) = true ORDER BY c.created_at DESC LIMIT $2",
+            &[&query_like, &(payload.limit as i64)],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut hits = Vec::new();
+    for row in rows {
+        let chunk_id: String = row.get(0);
+        let trail_text = retrieval_chunk_trail_json(&mut client, &chunk_id)?;
+        let trail: Value = serde_json::from_str(&trail_text)
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        hits.push(serde_json::json!({
+            "score": 1.0,
+            "qdrant_payload": {
+                "chunk_id": chunk_id,
+                "retrieval_mode": "rust_db_text_search"
+            },
+            "chunk": trail.get("chunk").cloned().unwrap_or(Value::Null),
+            "document": trail.get("document").cloned().unwrap_or(Value::Null),
+            "source": trail.get("source").cloned().unwrap_or(Value::Null),
+            "raw_artifact": trail.get("raw_artifact").cloned().unwrap_or(Value::Null),
+            "evidence_items": trail.get("evidence_items").cloned().unwrap_or_else(|| serde_json::json!([]))
+        }));
+    }
+    Ok(serde_json::json!({
+        "query": payload.query,
+        "collection_name": env::var("QDRANT_CHUNK_COLLECTION").unwrap_or_else(|_| "igy6_chunks".to_string()),
+        "collection_exists": true,
+        "hits": hits
+    })
+    .to_string())
 }
 
 fn insert_pattern_with_audit(
@@ -2248,6 +2591,502 @@ fn create_source(body: &str, database_url: Option<&str>) -> Result<String, Gatew
     Ok(response_body)
 }
 
+fn create_source_permission(
+    source_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let source_id = validate_route_id(source_id, "source_id")?;
+    let object = parse_json_object(body, "Source permission request body")?;
+    let payload = parse_source_permission_create(&object)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source_exists = transaction
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+            &[&source_id],
+        )
+        .map(|row| row.get::<_, bool>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if !source_exists {
+        return Err(GatewayError::NotFound("Source not found".to_string()));
+    }
+    let permission_id = generated_record_id("permission");
+    let allowed_operations_json = Value::Array(
+        payload
+            .allowed_operations
+            .iter()
+            .map(|operation| Value::String(operation.clone()))
+            .collect(),
+    );
+    transaction
+        .execute(
+            "INSERT INTO source_permissions (id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7)",
+            &[
+                &permission_id,
+                &source_id,
+                &payload.scope_json,
+                &allowed_operations_json,
+                &payload.external_model_policy,
+                &payload.approval_required,
+                &payload.created_by_actor_id,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "permission_id": permission_id,
+        "allowed_operations": payload.allowed_operations,
+        "approval_required": payload.approval_required,
+        "external_model_policy": payload.external_model_policy
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'source_permission.created', 'recorded', 'source', $2, NULL, $3::jsonb)",
+            &[&payload.created_by_actor_id, &source_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE id = $1) t",
+            &[&permission_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_hypothesis(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_hypothesis_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    validate_evidence_ids(&mut transaction, &payload.supporting_evidence_ids)?;
+    let hypothesis_id = generated_record_id("hypothesis");
+    let evidence_ids_json = json_string_values(&payload.supporting_evidence_ids);
+    transaction
+        .execute(
+            "INSERT INTO hypotheses (id, hypothesis_text, status, supporting_evidence_ids, missing_evidence_json, confidence, metadata_json) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb)",
+            &[
+                &hypothesis_id,
+                &payload.hypothesis_text,
+                &payload.status,
+                &evidence_ids_json,
+                &payload.missing_evidence_json,
+                &payload.confidence,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_analysis_created_audit(
+        &mut transaction,
+        &payload.actor_id,
+        "hypothesis",
+        &hypothesis_id,
+        &payload.supporting_evidence_ids,
+    )?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, hypothesis_text, status, supporting_evidence_ids, missing_evidence_json, confidence, metadata_json, created_at, updated_at FROM hypotheses WHERE id = $1) t",
+            &[&hypothesis_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_prediction(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_prediction_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    validate_evidence_ids(&mut transaction, &payload.evidence_ids)?;
+    let prediction_id = generated_record_id("prediction");
+    let evidence_ids_json = json_string_values(&payload.evidence_ids);
+    transaction
+        .execute(
+            "INSERT INTO predictions (id, prediction_text, expected_result, disproof_condition, status, evidence_ids, confidence, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)",
+            &[
+                &prediction_id,
+                &payload.prediction_text,
+                &payload.expected_result,
+                &payload.disproof_condition,
+                &payload.status,
+                &evidence_ids_json,
+                &payload.confidence,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_analysis_created_audit(
+        &mut transaction,
+        &payload.actor_id,
+        "prediction",
+        &prediction_id,
+        &payload.evidence_ids,
+    )?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, prediction_text, expected_result, disproof_condition, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM predictions WHERE id = $1) t",
+            &[&prediction_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_recommendation(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_recommendation_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    validate_evidence_ids(&mut transaction, &payload.evidence_ids)?;
+    let recommendation_id = generated_record_id("recommendation");
+    let evidence_ids_json = json_string_values(&payload.evidence_ids);
+    transaction
+        .execute(
+            "INSERT INTO recommendations (id, recommendation_text, risk_level, approval_required, expected_result, status, evidence_ids, confidence, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb)",
+            &[
+                &recommendation_id,
+                &payload.recommendation_text,
+                &payload.risk_level,
+                &payload.approval_required,
+                &payload.expected_result,
+                &payload.status,
+                &evidence_ids_json,
+                &payload.confidence,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_analysis_created_audit(
+        &mut transaction,
+        &payload.actor_id,
+        "recommendation",
+        &recommendation_id,
+        &payload.evidence_ids,
+    )?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, recommendation_text, risk_level, approval_required, expected_result, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM recommendations WHERE id = $1) t",
+            &[&recommendation_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn insert_analysis_created_audit(
+    transaction: &mut postgres::Transaction<'_>,
+    actor_id: &str,
+    resource_type: &str,
+    resource_id: &str,
+    evidence_ids: &[String],
+) -> Result<(), GatewayError> {
+    let details_json = serde_json::json!({ "evidence_ids": evidence_ids });
+    let event_type = format!("analysis.{resource_type}.created");
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, 'recorded', $3, $4, NULL, $5::jsonb)",
+            &[&actor_id, &event_type, &resource_type, &resource_id, &details_json],
+        )
+        .map(|_| ())
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn create_evidence_document(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_evidence_document_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, source_id, content_hash, storage_path FROM raw_artifacts WHERE id = $1",
+            &[&payload.raw_artifact_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Raw artifact not found".to_string()));
+    };
+    let raw_artifact_id: String = row.get(0);
+    let raw_source_id: Option<String> = row.get(1);
+    let content_hash: String = row.get(2);
+    let storage_path: String = row.get(3);
+    if payload
+        .source_id
+        .as_ref()
+        .is_some_and(|source_id| Some(source_id) != raw_source_id.as_ref())
+    {
+        return Err(GatewayError::Conflict(
+            "Raw artifact does not belong to the source".to_string(),
+        ));
+    }
+    if let Some(source_id) = &raw_source_id {
+        let source_exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+                &[source_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !source_exists {
+            return Err(GatewayError::Conflict(
+                "Raw artifact source not found".to_string(),
+            ));
+        }
+    }
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let artifact_bytes = store
+        .read_by_hash(&content_hash)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let text_content = String::from_utf8(artifact_bytes)
+        .map_err(|_| GatewayError::Validation("Artifact is not UTF-8 text".to_string()))?;
+    let document_id = generated_record_id("document");
+    let metadata_json = merge_metadata(
+        &payload.metadata_json,
+        serde_json::json!({
+            "raw_content_hash": content_hash,
+            "raw_storage_path": storage_path
+        }),
+    );
+    transaction
+        .execute(
+            "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)",
+            &[
+                &document_id,
+                &raw_artifact_id,
+                &raw_source_id,
+                &payload.title,
+                &payload.document_type,
+                &payload.language,
+                &text_content,
+                &payload.sensitivity,
+                &metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "source_id": raw_source_id,
+        "raw_artifact_id": raw_artifact_id,
+        "document_type": payload.document_type,
+        "sensitivity": payload.sensitivity
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'normalized_document.created', 'recorded', 'normalized_document', $2, NULL, $3::jsonb)",
+            &[&payload.created_by_actor_id, &document_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json, created_at, updated_at FROM normalized_documents WHERE id = $1) t",
+            &[&document_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn generate_document_chunks(
+    document_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let document_id = validate_route_id(document_id, "document_id")?;
+    let payload = parse_chunk_generation(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, source_id, text_content FROM normalized_documents WHERE id = $1",
+            &[&document_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Document not found".to_string()));
+    };
+    let source_id: Option<String> = row.get(1);
+    let text_content: String = row.get(2);
+    let existing_chunk = transaction
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM chunks WHERE document_id = $1)",
+            &[&document_id],
+        )
+        .map(|row| row.get::<_, bool>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if existing_chunk {
+        return Err(GatewayError::Conflict(
+            "Document chunks already exist".to_string(),
+        ));
+    }
+    let text_chunks = split_text_chunks(&text_content, payload.chunk_size as usize);
+    if text_chunks.is_empty() {
+        return Err(GatewayError::Validation(
+            "Document text is empty".to_string(),
+        ));
+    }
+    for (index, text) in text_chunks.iter().enumerate() {
+        let chunk_id = generated_record_id("chunk");
+        let evidence_item_id = generated_record_id("evidence");
+        let location_json = serde_json::json!({
+            "char_start": index * payload.chunk_size as usize,
+            "char_end": index * payload.chunk_size as usize + text.len()
+        });
+        let chunk_metadata = serde_json::json!({
+            "generated_by": "DIFF-030",
+            "chunk_size": payload.chunk_size
+        });
+        let evidence_metadata = serde_json::json!({
+            "generated_by": "DIFF-030",
+            "chunk_index": index
+        });
+        transaction
+            .execute(
+                "INSERT INTO chunks (id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json) VALUES ($1, $2, $3, $4, $5::jsonb, 'not_started', $6::jsonb)",
+                &[&chunk_id, &document_id, &(index as i32), text, &location_json, &chunk_metadata],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        transaction
+            .execute(
+                "INSERT INTO evidence_items (id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json) VALUES ($1, $2, $3, $4, 'document_chunk', $5, NULL, NULL, $6::jsonb)",
+                &[&evidence_item_id, &source_id, &document_id, &chunk_id, text, &evidence_metadata],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+    let details_json = serde_json::json!({
+        "source_id": source_id,
+        "chunk_count": text_chunks.len(),
+        "evidence_count": text_chunks.len()
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'document_chunks.generated', 'recorded', 'normalized_document', $2, NULL, $3::jsonb)",
+            &[&payload.created_by_actor_id, &document_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json, created_at, updated_at FROM chunks WHERE document_id = $1 ORDER BY chunk_index ASC) t), '[]')",
+            &[&document_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_evidence_item(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_evidence_item_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    validate_evidence_links(&mut transaction, &payload)?;
+    let evidence_item_id = generated_record_id("evidence");
+    transaction
+        .execute(
+            "INSERT INTO evidence_items (id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8, $9::jsonb)",
+            &[
+                &evidence_item_id,
+                &payload.source_id,
+                &payload.document_id,
+                &payload.chunk_id,
+                &payload.evidence_type,
+                &payload.statement,
+                &payload.observed_at,
+                &payload.confidence,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "source_id": payload.source_id,
+        "document_id": payload.document_id,
+        "chunk_id": payload.chunk_id,
+        "evidence_type": payload.evidence_type
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'evidence_item.created', 'recorded', 'evidence_item', $2, NULL, $3::jsonb)",
+            &[&payload.created_by_actor_id, &evidence_item_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json, created_at, updated_at FROM evidence_items WHERE id = $1) t",
+            &[&evidence_item_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn create_feedback(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_feedback_create(body)?;
     let database_url = database_url
@@ -2558,6 +3397,67 @@ struct SourcePermissionCreatePayload {
     created_by_actor_id: String,
 }
 
+struct HypothesisCreatePayload {
+    hypothesis_text: String,
+    supporting_evidence_ids: Vec<String>,
+    missing_evidence_json: Value,
+    confidence: Option<i32>,
+    status: String,
+    actor_id: String,
+    metadata_json: Value,
+}
+
+struct PredictionCreatePayload {
+    prediction_text: String,
+    expected_result: String,
+    disproof_condition: Option<String>,
+    evidence_ids: Vec<String>,
+    confidence: Option<i32>,
+    status: String,
+    actor_id: String,
+    metadata_json: Value,
+}
+
+struct RecommendationCreatePayload {
+    recommendation_text: String,
+    risk_level: String,
+    approval_required: bool,
+    expected_result: Option<String>,
+    evidence_ids: Vec<String>,
+    confidence: Option<i32>,
+    status: String,
+    actor_id: String,
+    metadata_json: Value,
+}
+
+struct EvidenceDocumentCreatePayload {
+    raw_artifact_id: String,
+    source_id: Option<String>,
+    title: Option<String>,
+    document_type: String,
+    language: Option<String>,
+    sensitivity: String,
+    metadata_json: Value,
+    created_by_actor_id: String,
+}
+
+struct ChunkGenerationPayload {
+    chunk_size: i32,
+    created_by_actor_id: String,
+}
+
+struct EvidenceItemCreatePayload {
+    source_id: Option<String>,
+    document_id: Option<String>,
+    chunk_id: Option<String>,
+    evidence_type: String,
+    statement: String,
+    observed_at: Option<String>,
+    confidence: Option<i32>,
+    metadata_json: Value,
+    created_by_actor_id: String,
+}
+
 struct ReportCreatePayload {
     title: String,
     report_type: String,
@@ -2572,11 +3472,23 @@ struct ReportRenderPayload {
     notes: Option<String>,
 }
 
+struct ReportStatusPayload {
+    status: String,
+    actor_id: String,
+    artifact_path: Option<String>,
+}
+
 struct WorkItemCreatePayload {
     work_type: String,
     requested_by_actor_id: String,
     intent: Value,
     payload_json: Value,
+}
+
+struct WorkItemStatusPayload {
+    status: String,
+    actor_id: String,
+    error_message: Option<String>,
 }
 
 struct WorkItemDispatchPayload {
@@ -2608,6 +3520,11 @@ struct ApprovalDecisionPayload {
 struct BaselinePatternDetectPayload {
     actor_id: String,
     recurrence_threshold: i32,
+}
+
+struct RetrievalSearchPayload {
+    query: String,
+    limit: i32,
 }
 
 struct CollectionDryRunPayload {
@@ -2923,6 +3840,149 @@ fn parse_source_permission_create(
         external_model_policy,
         approval_required,
         created_by_actor_id,
+    })
+}
+
+fn parse_hypothesis_create(body: &str) -> Result<HypothesisCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Hypothesis request body")?;
+    Ok(HypothesisCreatePayload {
+        hypothesis_text: required_text_field(&object, "hypothesis_text")?,
+        supporting_evidence_ids: required_string_array_field(&object, "supporting_evidence_ids")?,
+        missing_evidence_json: optional_object_field(&object, "missing_evidence_json")?,
+        confidence: optional_i32_field(&object, "confidence", 0, 100)?,
+        status: optional_string_field_with_max(&object, "status", "candidate", 64)?,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+    })
+}
+
+fn parse_prediction_create(body: &str) -> Result<PredictionCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Prediction request body")?;
+    Ok(PredictionCreatePayload {
+        prediction_text: required_text_field(&object, "prediction_text")?,
+        expected_result: required_text_field(&object, "expected_result")?,
+        disproof_condition: optional_nullable_string_field(&object, "disproof_condition")?,
+        evidence_ids: required_string_array_field(&object, "evidence_ids")?,
+        confidence: optional_i32_field(&object, "confidence", 0, 100)?,
+        status: optional_string_field_with_max(&object, "status", "open", 64)?,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+    })
+}
+
+fn parse_recommendation_create(body: &str) -> Result<RecommendationCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Recommendation request body")?;
+    Ok(RecommendationCreatePayload {
+        recommendation_text: required_text_field(&object, "recommendation_text")?,
+        risk_level: optional_string_field_with_max(&object, "risk_level", "unknown", 64)?,
+        approval_required: optional_bool_field(&object, "approval_required", true)?,
+        expected_result: optional_nullable_string_field(&object, "expected_result")?,
+        evidence_ids: required_string_array_field(&object, "evidence_ids")?,
+        confidence: optional_i32_field(&object, "confidence", 0, 100)?,
+        status: optional_string_field_with_max(&object, "status", "proposed", 64)?,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+    })
+}
+
+fn parse_evidence_document_create(
+    body: &str,
+) -> Result<EvidenceDocumentCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Document request body")?;
+    Ok(EvidenceDocumentCreatePayload {
+        raw_artifact_id: required_string_field(&object, "raw_artifact_id", 128)?,
+        source_id: optional_nullable_string_field_with_max(&object, "source_id", 128)?,
+        title: optional_nullable_string_field_with_max(&object, "title", 255)?,
+        document_type: optional_string_field_with_max(&object, "document_type", "text", 64)?,
+        language: optional_nullable_string_field_with_max(&object, "language", 32)?,
+        sensitivity: optional_string_field_with_max(&object, "sensitivity", "internal", 64)?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+        created_by_actor_id: optional_string_field_with_max(
+            &object,
+            "created_by_actor_id",
+            "local-owner",
+            128,
+        )?,
+    })
+}
+
+fn parse_chunk_generation(body: &str) -> Result<ChunkGenerationPayload, GatewayError> {
+    let object = parse_json_object(body, "Chunk generation request body")?;
+    let chunk_size = optional_i32_field_with_default(&object, "chunk_size", 1000, 100, 5000)?;
+    Ok(ChunkGenerationPayload {
+        chunk_size,
+        created_by_actor_id: optional_string_field_with_max(
+            &object,
+            "created_by_actor_id",
+            "local-owner",
+            128,
+        )?,
+    })
+}
+
+fn parse_evidence_item_create(body: &str) -> Result<EvidenceItemCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Evidence item request body")?;
+    let source_id = optional_nullable_string_field_with_max(&object, "source_id", 128)?;
+    let document_id = optional_nullable_string_field_with_max(&object, "document_id", 128)?;
+    let chunk_id = optional_nullable_string_field_with_max(&object, "chunk_id", 128)?;
+    if source_id.is_none() && document_id.is_none() && chunk_id.is_none() {
+        return Err(GatewayError::Validation(
+            "At least one evidence link must be provided".to_string(),
+        ));
+    }
+    Ok(EvidenceItemCreatePayload {
+        source_id,
+        document_id,
+        chunk_id,
+        evidence_type: required_string_field(&object, "evidence_type", 64)?,
+        statement: required_text_field(&object, "statement")?,
+        observed_at: optional_nullable_string_field(&object, "observed_at")?,
+        confidence: optional_i32_field(&object, "confidence", 0, 100)?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+        created_by_actor_id: optional_string_field_with_max(
+            &object,
+            "created_by_actor_id",
+            "local-owner",
+            128,
+        )?,
+    })
+}
+
+fn parse_report_status(body: &str) -> Result<ReportStatusPayload, GatewayError> {
+    let object = parse_json_object(body, "Report status request body")?;
+    let status = required_string_field(&object, "status", 64)?;
+    if !is_report_status(&status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown report status: {status}"
+        )));
+    }
+    Ok(ReportStatusPayload {
+        status,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        artifact_path: optional_nullable_string_field(&object, "artifact_path")?,
+    })
+}
+
+fn parse_work_item_status(body: &str) -> Result<WorkItemStatusPayload, GatewayError> {
+    let object = parse_json_object(body, "Work item status request body")?;
+    let status = required_string_field(&object, "status", 64)?;
+    if !is_work_item_status(&status) {
+        return Err(GatewayError::Validation(
+            "Unknown work item status".to_string(),
+        ));
+    }
+    Ok(WorkItemStatusPayload {
+        status,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        error_message: optional_nullable_string_field(&object, "error_message")?,
+    })
+}
+
+fn parse_retrieval_search(body: &str) -> Result<RetrievalSearchPayload, GatewayError> {
+    let object = parse_json_object(body, "Retrieval search request body")?;
+    Ok(RetrievalSearchPayload {
+        query: required_text_field(&object, "query")?,
+        limit: optional_i32_field_with_default(&object, "limit", 10, 1, 50)?,
     })
 }
 
@@ -4352,6 +5412,113 @@ fn json_value_string_array(value: Value, field_name: &str) -> Result<Vec<String>
     Ok(strings)
 }
 
+fn json_string_values(values: &[String]) -> Value {
+    Value::Array(
+        values
+            .iter()
+            .map(|value| Value::String(value.clone()))
+            .collect(),
+    )
+}
+
+fn merge_metadata(base: &Value, patch: Value) -> Value {
+    let mut object = base.as_object().cloned().unwrap_or_default();
+    if let Some(patch_object) = patch.as_object() {
+        for (key, value) in patch_object {
+            object.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(object)
+}
+
+fn split_text_chunks(text: &str, chunk_size: usize) -> Vec<String> {
+    if chunk_size == 0 {
+        return Vec::new();
+    }
+    let chars = text.chars().collect::<Vec<_>>();
+    chars
+        .chunks(chunk_size)
+        .filter(|chunk| !chunk.is_empty())
+        .map(|chunk| chunk.iter().collect::<String>())
+        .collect()
+}
+
+fn validate_evidence_links(
+    transaction: &mut postgres::Transaction<'_>,
+    payload: &EvidenceItemCreatePayload,
+) -> Result<(), GatewayError> {
+    if let Some(source_id) = &payload.source_id {
+        let exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+                &[source_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !exists {
+            return Err(GatewayError::NotFound("Source not found".to_string()));
+        }
+    }
+    if let Some(document_id) = &payload.document_id {
+        let Some(row) = transaction
+            .query_opt(
+                "SELECT source_id FROM normalized_documents WHERE id = $1",
+                &[document_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?
+        else {
+            return Err(GatewayError::NotFound("Document not found".to_string()));
+        };
+        let document_source_id: Option<String> = row.get(0);
+        if payload
+            .source_id
+            .as_ref()
+            .is_some_and(|source_id| Some(source_id) != document_source_id.as_ref())
+        {
+            return Err(GatewayError::Conflict(
+                "Document does not belong to the source".to_string(),
+            ));
+        }
+    }
+    if let Some(chunk_id) = &payload.chunk_id {
+        let Some(row) = transaction
+            .query_opt(
+                "SELECT c.document_id, d.source_id FROM chunks c LEFT JOIN normalized_documents d ON d.id = c.document_id WHERE c.id = $1",
+                &[chunk_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?
+        else {
+            return Err(GatewayError::NotFound("Chunk not found".to_string()));
+        };
+        let chunk_document_id: String = row.get(0);
+        let chunk_source_id: Option<String> = row.get(1);
+        if chunk_source_id.is_none() {
+            return Err(GatewayError::Conflict(
+                "Chunk document not found".to_string(),
+            ));
+        }
+        if payload
+            .document_id
+            .as_ref()
+            .is_some_and(|document_id| document_id != &chunk_document_id)
+        {
+            return Err(GatewayError::Conflict(
+                "Chunk does not belong to the document".to_string(),
+            ));
+        }
+        if payload
+            .source_id
+            .as_ref()
+            .is_some_and(|source_id| Some(source_id) != chunk_source_id.as_ref())
+        {
+            return Err(GatewayError::Conflict(
+                "Chunk does not belong to the source".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn permission_allows(allowed_operations: &[String], allowed: &[&str]) -> bool {
     allowed_operations
         .iter()
@@ -4730,8 +5897,28 @@ fn report_render_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/reports/", "/render")
 }
 
+fn report_status_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/reports/", "/status")
+}
+
+fn evidence_document_chunks_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/evidence/documents/", "/chunks")
+}
+
+fn source_permission_create_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/sources/", "/permissions")
+}
+
 fn work_item_dispatch_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/work-items/", "/dispatch")
+}
+
+fn work_item_status_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/work-items/", "/status")
+}
+
+fn retrieval_chunk_trail_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/retrieval/chunks/", "/trail")
 }
 
 fn dynamic_post_id_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
@@ -5454,6 +6641,16 @@ fn optional_i32_field(
     }
 }
 
+fn optional_i32_field_with_default(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: i32,
+    min: i32,
+    max: i32,
+) -> Result<i32, GatewayError> {
+    Ok(optional_i32_field(object, key, min, max)?.unwrap_or(default))
+}
+
 fn optional_object_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -5562,6 +6759,13 @@ fn is_supported_work_item_type(value: &str) -> bool {
             | "document_chunking"
             | "chunk_vector_upsert"
             | "report_generation"
+    )
+}
+
+fn is_work_item_status(value: &str) -> bool {
+    matches!(
+        value,
+        "pending_intent_verification" | "queued" | "running" | "completed" | "failed" | "canceled"
     )
 }
 
@@ -7368,6 +8572,145 @@ mod tests {
     }
 
     #[test]
+    fn diff132_routes_are_rust_native_and_require_database_url_after_validation() {
+        for (method, path, body) in [
+            ("GET", "/retrieval/chunks/chunk-1/trail", ""),
+            (
+                "POST",
+                "/analysis/hypotheses",
+                r#"{"hypothesis_text":"Signal may recur","supporting_evidence_ids":["evidence-1"]}"#,
+            ),
+            (
+                "POST",
+                "/analysis/predictions",
+                r#"{"prediction_text":"It will recur","expected_result":"recurs","evidence_ids":["evidence-1"]}"#,
+            ),
+            (
+                "POST",
+                "/analysis/recommendations",
+                r#"{"recommendation_text":"Review it","evidence_ids":["evidence-1"]}"#,
+            ),
+            (
+                "POST",
+                "/evidence/documents",
+                r#"{"raw_artifact_id":"artifact-1"}"#,
+            ),
+            ("POST", "/evidence/documents/doc-1/chunks", "{}"),
+            (
+                "POST",
+                "/evidence/items",
+                r#"{"source_id":"source-1","evidence_type":"note","statement":"Recorded fact"}"#,
+            ),
+            ("POST", "/reports/report-1/status", r#"{"status":"ready"}"#),
+            (
+                "POST",
+                "/retrieval/chunks/search",
+                r#"{"query":"router","limit":5}"#,
+            ),
+            (
+                "POST",
+                "/sources/source-1/permissions",
+                r#"{"allowed_operations":["read"],"external_model_policy":"blocked"}"#,
+            ),
+            (
+                "POST",
+                "/work-items/work-1/status",
+                r#"{"status":"running"}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request(method, path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{method} {path}");
+            assert!(!response.proxied_to_fallback, "{method} {path}");
+            assert!(response.body.contains("DATABASE_URL"), "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn diff132_validation_rejects_invalid_requests_without_fallback() {
+        for (path, body) in [
+            ("/analysis/hypotheses", "{}"),
+            (
+                "/analysis/hypotheses",
+                r#"{"hypothesis_text":"x","supporting_evidence_ids":[]}"#,
+            ),
+            (
+                "/analysis/predictions",
+                r#"{"prediction_text":"x","expected_result":"","evidence_ids":["e1"]}"#,
+            ),
+            (
+                "/analysis/recommendations",
+                r#"{"recommendation_text":"x","evidence_ids":[""]}"#,
+            ),
+            ("/evidence/documents", "{}"),
+            ("/evidence/documents/doc-1/chunks", r#"{"chunk_size":99}"#),
+            (
+                "/evidence/items",
+                r#"{"evidence_type":"note","statement":"x"}"#,
+            ),
+            ("/reports/report-1/status", r#"{"status":"published"}"#),
+            ("/retrieval/chunks/search", r#"{"query":"","limit":5}"#),
+            ("/retrieval/chunks/search", r#"{"query":"x","limit":51}"#),
+            (
+                "/sources/source-1/permissions",
+                r#"{"allowed_operations":["write"]}"#,
+            ),
+            ("/work-items/work-1/status", r#"{"status":"bogus"}"#),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{path} {body}");
+            assert!(!response.proxied_to_fallback, "{path} {body}");
+        }
+    }
+
+    #[test]
+    fn diff132_status_transition_checks_are_deterministic() {
+        let payload = serde_json::json!({
+            "intent_verification": {"recorded_by": "test"}
+        });
+        assert!(require_valid_work_item_status_transition("queued", "running", &payload).is_ok());
+        assert!(
+            require_valid_work_item_status_transition("completed", "running", &payload).is_err()
+        );
+        assert!(require_valid_work_item_status_transition(
+            "pending_intent_verification",
+            "queued",
+            &serde_json::json!({})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn diff132_audit_payload_shapes_are_deterministic() {
+        let evidence_ids = vec!["evidence-1".to_string()];
+        let details = serde_json::json!({ "evidence_ids": evidence_ids });
+        assert_eq!(details["evidence_ids"][0], "evidence-1");
+
+        let report_status =
+            parse_report_status(r#"{"status":"ready","actor_id":"owner"}"#).expect("report status");
+        assert_eq!(report_status.status, "ready");
+        assert_eq!(report_status.actor_id, "owner");
+
+        let permission = parse_json_object(
+            r#"{"allowed_operations":["read"],"external_model_policy":"blocked"}"#,
+            "permission",
+        )
+        .and_then(|object| parse_source_permission_create(&object))
+        .expect("permission");
+        assert_eq!(permission.allowed_operations, vec!["read"]);
+        assert!(permission.approval_required);
+    }
+
+    #[test]
     fn rust_native_route_registry_covers_db_read_batch() {
         for expected in [
             ("GET", "/sources"),
@@ -7421,6 +8764,17 @@ mod tests {
             ("POST", "/collection-runs/manual-upload"),
             ("POST", "/work-items"),
             ("POST", "/work-items/"),
+            ("GET", "/retrieval/chunks/{chunk_id}/trail"),
+            ("POST", "/analysis/hypotheses"),
+            ("POST", "/analysis/predictions"),
+            ("POST", "/analysis/recommendations"),
+            ("POST", "/evidence/documents"),
+            ("POST", "/evidence/documents/{document_id}/chunks"),
+            ("POST", "/evidence/items"),
+            ("POST", "/reports/{report_id}/status"),
+            ("POST", "/retrieval/chunks/search"),
+            ("POST", "/sources/{source_id}/permissions"),
+            ("POST", "/work-items/{work_item_id}/status"),
         ] {
             assert!(RUST_NATIVE_ROUTES.contains(&expected), "{expected:?}");
         }

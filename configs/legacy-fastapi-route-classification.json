@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-120",
+  "diff": "DIFF-132",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,15 +9,15 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 64,
-    "fastapi_routes_missing_from_rust": 30,
+    "rust_native_routes": 75,
+    "fastapi_routes_missing_from_rust": 19,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
   "fastapi_fallback_required": true,
   "rust_only_claim_allowed": false,
   "classification_counts": {
-    "active_parity_required": 11,
+    "active_parity_required": 0,
     "intentional_legacy_fallback": 7,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
@@ -36,7 +36,7 @@
       "used_by_scripts_tests_docs": false,
       "migration_risk": "low",
       "retirement_condition": "Confirm no local workflow depends on the FastAPI root identity response, then retire or ignore during FastAPI removal.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-137"
     },
     {
       "method": "GET",
@@ -50,7 +50,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust self-improvement API provides equivalent experiment list/detail/create/status semantics and audit behavior, or the product retires this HTTP surface.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "GET",
@@ -64,7 +64,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust self-improvement API provides equivalent experiment detail semantics or the route is formally retired.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "GET",
@@ -78,7 +78,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API provides list/create/detail semantics with audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "GET",
@@ -92,7 +92,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API provides equivalent detail semantics or the route is formally retired.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "GET",
@@ -106,63 +106,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust graph-memory API implements equivalent constrained Neo4j relationship reads with injection-safe labels and tests.",
-      "recommended_future_diff": "DIFF-122"
-    },
-    {
-      "method": "GET",
-      "path": "/retrieval/chunks/{chunk_id}/trail",
-      "python_module": "services/api/app/retrieval.py",
-      "python_handler": "get_chunk_retrieval_trail",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Evidence trail inspection is core product behavior and should become Rust-native after DB read/write parity is stable.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust retrieval API returns equivalent chunk, document, artifact, evidence, source, and claim trail data.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/analysis/hypotheses",
-      "python_module": "services/api/app/analysis.py",
-      "python_handler": "create_hypothesis",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Hypothesis creation is intended product behavior and must eventually use Rust validation and audit semantics.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust analysis API supports hypothesis creation with evidence validation and audit parity.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/analysis/predictions",
-      "python_module": "services/api/app/analysis.py",
-      "python_handler": "create_prediction",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Prediction creation is intended product behavior and must preserve evidence validation and audit semantics.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust analysis API supports prediction creation with evidence validation and audit parity.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/analysis/recommendations",
-      "python_module": "services/api/app/analysis.py",
-      "python_handler": "create_recommendation",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Recommendation creation is intended product behavior and must preserve approval-required metadata and audit semantics.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust analysis API supports recommendation creation with validation and audit parity.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -176,7 +120,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust artifact API validates source/run references, storage path safety, content hashes, and audit semantics.",
-      "recommended_future_diff": "DIFF-124"
+      "recommended_future_diff": "DIFF-135"
     },
     {
       "method": "POST",
@@ -190,7 +134,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust collection API defines whether generic run creation is retained, replaced by typed routes, or retired.",
-      "recommended_future_diff": "DIFF-124"
+      "recommended_future_diff": "DIFF-135"
     },
     {
       "method": "POST",
@@ -204,7 +148,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust local-project collection route is scoped, read-only by default, permissioned, audited, and tested against traversal/runtime data risks.",
-      "recommended_future_diff": "DIFF-124"
+      "recommended_future_diff": "DIFF-135"
     },
     {
       "method": "POST",
@@ -218,49 +162,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust ingest route preserves artifact safety, normalization metadata, evidence writes, work-item/audit behavior, and failure recovery.",
-      "recommended_future_diff": "DIFF-124"
-    },
-    {
-      "method": "POST",
-      "path": "/evidence/documents",
-      "python_module": "services/api/app/evidence.py",
-      "python_handler": "create_document",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Normalized document creation is core evidence-ledger behavior and should become Rust-native with immutable evidence semantics.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust evidence API supports document creation with collection/artifact validation and audit parity.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/evidence/documents/{document_id}/chunks",
-      "python_module": "services/api/app/evidence.py",
-      "python_handler": "generate_document_chunks",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Chunk generation is core evidence-ledger behavior and should become Rust-native with deterministic chunking parity.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust evidence API generates equivalent chunks with deterministic IDs/order and audit or lineage behavior as required.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/evidence/items",
-      "python_module": "services/api/app/evidence.py",
-      "python_handler": "create_evidence_item",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Evidence item creation is core product behavior and must preserve immutable ledger semantics.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust evidence API supports evidence item creation with source/document validation and audit parity.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-135"
     },
     {
       "method": "POST",
@@ -274,7 +176,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust self-improvement API supports experiment creation and audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "POST",
@@ -288,7 +190,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust self-improvement API preserves experiment status values, metadata update behavior, and audit parity.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "POST",
@@ -302,7 +204,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API supports target area/priority validation and audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-136"
     },
     {
       "method": "POST",
@@ -316,7 +218,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust graph-memory API safely syncs lineage with constrained Cypher, audit behavior, and failure semantics.",
-      "recommended_future_diff": "DIFF-122"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -330,7 +232,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust graph-memory API implements idempotent schema ensure with equivalent constraints and failure handling.",
-      "recommended_future_diff": "DIFF-122"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -344,7 +246,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust vector-memory API implements idempotent Qdrant collection ensure with equivalent config and error shapes.",
-      "recommended_future_diff": "DIFF-122"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -358,7 +260,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust vector-memory API preserves Qdrant search request validation, filtering, and response shape.",
-      "recommended_future_diff": "DIFF-122"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -372,21 +274,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust vector-memory API validates and upserts equivalent points with audit/lineage behavior where required.",
-      "recommended_future_diff": "DIFF-122"
-    },
-    {
-      "method": "POST",
-      "path": "/reports/{report_id}/status",
-      "python_module": "services/api/app/reports.py",
-      "python_handler": "update_report_status",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Report status transitions are part of report lifecycle behavior and should become Rust-native with deterministic transition validation.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust reports API preserves report status validation, transitions, and audit behavior.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-133"
     },
     {
       "method": "POST",
@@ -400,49 +288,7 @@
       "used_by_scripts_tests_docs": true,
       "migration_risk": "high",
       "retirement_condition": "Rust reports/work-items API creates equivalent work items with intent verification, audit, and dispatch-safe behavior.",
-      "recommended_future_diff": "DIFF-123"
-    },
-    {
-      "method": "POST",
-      "path": "/retrieval/chunks/search",
-      "python_module": "services/api/app/retrieval.py",
-      "python_handler": "search_retrieval_chunks",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Hydrated retrieval search is core evidence-backed chat behavior and should become Rust-native once vector/DB hydration parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust retrieval API returns equivalent hydrated chunk search results without relying on FastAPI fallback.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/sources/{source_id}/permissions",
-      "python_module": "services/api/app/sources.py",
-      "python_handler": "create_source_permission",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Source permission creation is core policy behavior and should become Rust-native with approval-default and audit parity.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust sources API creates permissions with equivalent validation, safety defaults, and audit behavior.",
-      "recommended_future_diff": "DIFF-121"
-    },
-    {
-      "method": "POST",
-      "path": "/work-items/{work_item_id}/status",
-      "python_module": "services/api/app/work_items.py",
-      "python_handler": "update_work_item_status",
-      "rust_status": "missing_from_rust",
-      "classification": "active_parity_required",
-      "reason": "Work-item status transitions are intended product behavior and should become Rust-native with deterministic transition validation.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust work-items API preserves allowed statuses, transition behavior, and audit parity.",
-      "recommended_future_diff": "DIFF-121"
+      "recommended_future_diff": "DIFF-134"
     }
   ]
 }
