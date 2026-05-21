@@ -11,7 +11,7 @@ use igy6_agent_api::{
     action_definition, classify_agent_intent, AgentActionDefinition, AgentIntentRequest,
     ACTION_REGISTRY,
 };
-use igy6_artifacts::ArtifactStore;
+use igy6_artifacts::{ArtifactStore, StoredArtifact};
 use igy6_evidence_answer::{
     answer_with_optional_llm, answer_with_optional_llm_for_task,
     deterministic_fallback_for_llm_config_error,
@@ -62,12 +62,16 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/approvals/{approval_id}/decision"),
     ("GET", "/artifacts"),
     ("GET", "/artifacts/{artifact_id}"),
+    ("POST", "/artifacts"),
     ("GET", "/audit-events"),
     ("GET", "/audit-events/{audit_event_id}"),
     ("GET", "/collection-runs"),
     ("GET", "/collection-runs/{collection_run_id}"),
+    ("POST", "/collection-runs"),
     ("POST", "/collection-runs/dry-run"),
+    ("POST", "/collection-runs/local-project"),
     ("POST", "/collection-runs/manual-upload"),
+    ("POST", "/collection-runs/manual-upload/ingest"),
     ("GET", "/evidence/documents"),
     ("GET", "/evidence/documents/{document_id}"),
     ("POST", "/evidence/documents"),
@@ -311,6 +315,7 @@ pub fn handle_gateway_request_with_db(
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
+        ("POST", "/artifacts") => raw_artifact_create_response(&request.body, database_url),
         ("POST", "/analysis/hypotheses") => {
             hypothesis_create_response(&request.body, database_url)
         }
@@ -324,11 +329,18 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/analysis/recommendations") => {
             recommendation_create_response(&request.body, database_url)
         }
+        ("POST", "/collection-runs") => collection_run_create_response(&request.body, database_url),
         ("POST", "/collection-runs/dry-run") => {
             collection_dry_run_response(&request.body, database_url)
         }
+        ("POST", "/collection-runs/local-project") => {
+            local_project_collection_response(&request.body, database_url)
+        }
         ("POST", "/collection-runs/manual-upload") => {
             manual_upload_response(&request.body, database_url)
+        }
+        ("POST", "/collection-runs/manual-upload/ingest") => {
+            manual_upload_ingest_response(&request.body, database_url)
         }
         ("POST", "/evidence/documents") => {
             evidence_document_create_response(&request.body, database_url)
@@ -777,6 +789,14 @@ fn source_create_response(body: &str, database_url: Option<&str>) -> GatewayResp
     write_route_response(create_source(body, database_url))
 }
 
+fn raw_artifact_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_raw_artifact(body, database_url))
+}
+
+fn collection_run_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_collection_run(body, database_url))
+}
+
 fn hypothesis_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_hypothesis(body, database_url))
 }
@@ -823,6 +843,14 @@ fn collection_dry_run_response(body: &str, database_url: Option<&str>) -> Gatewa
 
 fn manual_upload_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_manual_upload_collection(body, database_url))
+}
+
+fn manual_upload_ingest_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(ingest_manual_upload_collection(body, database_url))
+}
+
+fn local_project_collection_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_local_project_collection(body, database_url))
 }
 
 fn agent_action_request_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -1036,6 +1064,125 @@ fn detect_baseline_patterns(
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(format!("[{}]", responses.join(",")))
+}
+
+fn create_raw_artifact(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_raw_artifact_create(body)?;
+    let content = decode_base64(&payload.content_base64)?;
+    if content.len() > i32::MAX as usize {
+        return Err(GatewayError::Validation(
+            "Artifact content is too large".to_string(),
+        ));
+    }
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if let Some(source_id) = &payload.source_id {
+        require_source_exists(&mut transaction, source_id)?;
+    }
+    if let Some(collection_run_id) = &payload.collection_run_id {
+        let run_source_id = load_collection_run_source_id(&mut transaction, collection_run_id)?;
+        if payload
+            .source_id
+            .as_ref()
+            .is_some_and(|source_id| Some(source_id) != run_source_id.as_ref())
+        {
+            return Err(GatewayError::Conflict(
+                "Collection run does not belong to the source".to_string(),
+            ));
+        }
+    }
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let stored = store
+        .write_bytes(&content)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let artifact_id = generated_record_id("artifact");
+    transaction
+        .execute(
+            "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::jsonb)",
+            &[
+                &artifact_id,
+                &payload.source_id,
+                &payload.collection_run_id,
+                &stored.content_hash,
+                &stored.storage_path,
+                &payload.mime_type,
+                &(stored.size_bytes as i32),
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_raw_artifact_created_audit(
+        &mut transaction,
+        &payload.requested_by_actor_id,
+        &artifact_id,
+        payload.source_id.as_deref(),
+        payload.collection_run_id.as_deref(),
+        &stored.content_hash,
+        &stored.storage_path,
+        stored.size_bytes,
+        stored.existed,
+    )?;
+    let response_body = raw_artifact_response_json(&mut transaction, &artifact_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_collection_run(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_collection_run_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if let Some(source_id) = &payload.source_id {
+        require_source_exists(&mut transaction, source_id)?;
+    }
+    let collection_run_id = generated_record_id("collection");
+    let status = if payload.dry_run {
+        "dry_run_requested"
+    } else {
+        "created"
+    };
+    transaction
+        .execute(
+            "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, $3, $4, $5, $6::jsonb, NULL)",
+            &[
+                &collection_run_id,
+                &payload.source_id,
+                &status,
+                &payload.dry_run,
+                &payload.requested_by_actor_id,
+                &payload.summary_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_collection_run_created_audit(
+        &mut transaction,
+        &payload.requested_by_actor_id,
+        &collection_run_id,
+        payload.source_id.as_deref(),
+        payload.dry_run,
+        status,
+    )?;
+    let response_body = collection_run_response_json(&mut transaction, &collection_run_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
 }
 
 fn create_collection_dry_run(
@@ -1319,6 +1466,367 @@ fn create_manual_upload_collection(
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn ingest_manual_upload_collection(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_manual_upload_ingest(body)?;
+    let upload = payload.upload;
+    let content = decode_base64(&upload.content_base64)?;
+    require_supported_text_mime_type(upload.mime_type.as_deref())?;
+    require_utf8_text_content(&content)?;
+    if content.len() > i32::MAX as usize {
+        return Err(GatewayError::Validation(
+            "Manual upload content is too large".to_string(),
+        ));
+    }
+    let text_content = String::from_utf8(content.clone()).map_err(|_| {
+        GatewayError::Validation(
+            "Manual upload normalization currently supports UTF-8 text artifacts only".to_string(),
+        )
+    })?;
+
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source = load_source_for_collection(&mut transaction, &upload.source_id)?;
+    if !source.enabled {
+        return Err(GatewayError::Conflict("Source is disabled".to_string()));
+    }
+    if source.source_type != "manual_upload" {
+        return Err(GatewayError::Conflict(
+            "Source is not a manual_upload source".to_string(),
+        ));
+    }
+    let permission =
+        load_permission_for_collection(&mut transaction, &upload.source_permission_id)?;
+    if permission.source_id != source.id {
+        return Err(GatewayError::Conflict(
+            "Source permission does not belong to the source".to_string(),
+        ));
+    }
+    if !permission_allows(&permission.allowed_operations, &["collect", "read"]) {
+        return Err(GatewayError::Forbidden(
+            "Source permission does not allow manual upload ingestion".to_string(),
+        ));
+    }
+    let approval_id = require_collection_approval(
+        &mut transaction,
+        upload.approval_id.as_deref(),
+        &source,
+        &permission,
+        "manual_upload_collection",
+    )?;
+
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let stored = store
+        .write_bytes(&content)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let collection_run_id = generated_record_id("collection");
+    let mut summary_json = serde_json::json!({
+        "mode": "manual_upload_ingest",
+        "source_permission_id": permission.id,
+        "filename": upload.filename,
+        "content_hash": stored.content_hash,
+        "storage_path": stored.storage_path,
+        "size_bytes": stored.size_bytes,
+        "content_already_existed": stored.existed,
+        "normalization_input_type": "utf_8_text",
+        "chunk_size": payload.chunk_size,
+        "approval_id": approval_id,
+        "external_model_calls": false,
+        "embedding_method": EMBEDDING_METHOD
+    });
+    transaction
+        .execute(
+            "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'ingesting', false, $3, $4::jsonb, NULL)",
+            &[&collection_run_id, &source.id, &upload.requested_by_actor_id, &summary_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_collection_run_created_audit(
+        &mut transaction,
+        &upload.requested_by_actor_id,
+        &collection_run_id,
+        Some(&source.id),
+        false,
+        "ingesting",
+    )?;
+    let artifact_metadata = merge_metadata(
+        &manual_upload_artifact_metadata(
+            &upload.metadata_json,
+            upload.filename.as_deref(),
+            &permission.id,
+            approval_id.as_deref(),
+        ),
+        serde_json::json!({"ingested_by": "DIFF-081"}),
+    );
+    let artifact_result = get_or_create_raw_artifact_for_ingest(
+        &mut transaction,
+        &source.id,
+        &collection_run_id,
+        &stored.content_hash,
+        &stored.storage_path,
+        stored.size_bytes,
+        upload.mime_type.as_deref(),
+        &artifact_metadata,
+        &upload.requested_by_actor_id,
+        stored.existed,
+    )?;
+    let title = upload
+        .filename
+        .as_deref()
+        .unwrap_or(artifact_result.id.as_str())
+        .to_string();
+    let document_result = get_or_create_normalized_document_for_ingest(
+        &mut transaction,
+        &artifact_result,
+        &source,
+        &text_content,
+        &title,
+        &upload.requested_by_actor_id,
+    )?;
+    let (chunk_ids, evidence_item_ids, chunks_reused) =
+        get_or_create_chunks_and_evidence_for_ingest(
+            &mut transaction,
+            &document_result.id,
+            source.id.as_str(),
+            document_result.raw_artifact_id.as_str(),
+            &document_result.text_content,
+            payload.chunk_size,
+            &upload.requested_by_actor_id,
+        )?;
+    summary_json = merge_metadata(
+        &summary_json,
+        serde_json::json!({
+            "raw_artifact_id": artifact_result.id,
+            "raw_artifact_reused": artifact_result.reused,
+            "document_id": document_result.id,
+            "document_reused": document_result.reused,
+            "chunk_ids": chunk_ids,
+            "chunks_reused": chunks_reused,
+            "evidence_item_ids": evidence_item_ids
+        }),
+    );
+    transaction
+        .execute(
+            "UPDATE collection_runs SET summary_json = $1::jsonb, updated_at = now() WHERE id = $2",
+            &[&summary_json, &collection_run_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+
+    let vector_result = match upsert_specific_chunks(&mut client, &chunk_ids) {
+        Ok(result) => result,
+        Err(error) => {
+            mark_manual_upload_ingest_vector_failed(
+                &mut client,
+                &collection_run_id,
+                &upload.requested_by_actor_id,
+                &error.to_string(),
+            )?;
+            return Err(error);
+        }
+    };
+    let final_summary = merge_metadata(
+        &summary_json,
+        serde_json::json!({
+            "vector_collection": vector_result.collection_name,
+            "vector_collection_exists": vector_result.collection_exists,
+            "vector_upsert_completed": true,
+            "chunks_upserted": vector_result.chunks_upserted
+        }),
+    );
+    client
+        .execute(
+            "UPDATE collection_runs SET status = 'completed', summary_json = $1::jsonb, updated_at = now() WHERE id = $2",
+            &[&final_summary, &collection_run_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let completed_details = serde_json::json!({
+        "source_id": source.id,
+        "raw_artifact_id": artifact_result.id,
+        "document_id": document_result.id,
+        "chunk_count": chunk_ids.len(),
+        "evidence_count": evidence_item_ids.len(),
+        "vector_collection": vector_result.collection_name,
+        "chunks_upserted": vector_result.chunks_upserted,
+        "generated_by": "DIFF-081"
+    });
+    client
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'manual_upload_ingest.completed', 'completed', 'collection_run', $2, $2, $3::jsonb)",
+            &[&upload.requested_by_actor_id, &collection_run_id, &completed_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let collection_run_json = collection_run_response_json_client(&mut client, &collection_run_id)?;
+    Ok(serde_json::json!({
+        "collection_run": serde_json::from_str::<Value>(&collection_run_json).unwrap_or(Value::Null),
+        "raw_artifact_id": artifact_result.id,
+        "raw_artifact_reused": artifact_result.reused,
+        "document_id": document_result.id,
+        "document_reused": document_result.reused,
+        "chunk_ids": chunk_ids,
+        "chunks_reused": chunks_reused,
+        "evidence_item_ids": evidence_item_ids,
+        "vector_upsert": {
+            "collection_name": vector_result.collection_name,
+            "collection_exists": vector_result.collection_exists,
+            "chunks_upserted": vector_result.chunks_upserted
+        }
+    })
+    .to_string())
+}
+
+fn create_local_project_collection(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_local_project_collection(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let source = load_source_for_collection(&mut transaction, &payload.source_id)?;
+    if !source.enabled {
+        return Err(GatewayError::Conflict("Source is disabled".to_string()));
+    }
+    if source.source_type != "local_project" {
+        return Err(GatewayError::Conflict(
+            "Source is not a local_project source".to_string(),
+        ));
+    }
+    let permission =
+        load_permission_for_collection(&mut transaction, &payload.source_permission_id)?;
+    if permission.source_id != source.id {
+        return Err(GatewayError::Conflict(
+            "Source permission does not belong to the source".to_string(),
+        ));
+    }
+    if !permission_allows(&permission.allowed_operations, &["collect", "read"]) {
+        return Err(GatewayError::Forbidden(
+            "Source permission does not allow local project collection".to_string(),
+        ));
+    }
+    let approval_id = require_collection_approval(
+        &mut transaction,
+        payload.approval_id.as_deref(),
+        &source,
+        &permission,
+        "local_project_collection",
+    )?;
+    let collected_files = collect_local_project_files(&source, &permission)
+        .map_err(|error| GatewayError::Validation(error.to_string()))?;
+    let collection_run_id = generated_record_id("collection");
+    let raw_artifact_ids = collected_files
+        .files
+        .iter()
+        .map(|_| generated_record_id("artifact"))
+        .collect::<Vec<_>>();
+    let work_item_id = generated_record_id("work");
+    let summary_json = serde_json::json!({
+        "mode": "local_project_collection",
+        "source_permission_id": permission.id,
+        "total_files": collected_files.total_files,
+        "collected_files": collected_files.files.len(),
+        "skipped_files": collected_files.skipped_files,
+        "would_normalize": true,
+        "normalization_input_type": "utf_8_text",
+        "normalization_note": "Worker normalization currently supports UTF-8 text artifacts only.",
+        "approval_id": approval_id,
+        "normalization_work_item_created": true,
+        "normalization_work_item_id": work_item_id,
+        "raw_artifact_ids": raw_artifact_ids
+    });
+    transaction
+        .execute(
+            "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'completed', false, $3, $4::jsonb, NULL)",
+            &[&collection_run_id, &source.id, &payload.requested_by_actor_id, &summary_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_collection_run_created_audit(
+        &mut transaction,
+        &payload.requested_by_actor_id,
+        &collection_run_id,
+        Some(&source.id),
+        false,
+        "completed",
+    )?;
+    for (index, collected_file) in collected_files.files.iter().enumerate() {
+        let artifact_id = &raw_artifact_ids[index];
+        let metadata_json = serde_json::json!({
+            "source_permission_id": permission.id,
+            "approval_id": approval_id,
+            "source_path": collected_file.source_path,
+            "relative_path": collected_file.relative_path,
+            "content_already_existed": collected_file.stored.existed
+        });
+        transaction
+            .execute(
+                "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, NULL, $6::integer, $7::jsonb)",
+                &[
+                    artifact_id,
+                    &source.id,
+                    &collection_run_id,
+                    &collected_file.stored.content_hash,
+                    &collected_file.stored.storage_path,
+                    &(collected_file.stored.size_bytes as i32),
+                    &metadata_json,
+                ],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        insert_raw_artifact_created_audit(
+            &mut transaction,
+            &payload.requested_by_actor_id,
+            artifact_id,
+            Some(&source.id),
+            Some(&collection_run_id),
+            &collected_file.stored.content_hash,
+            &collected_file.stored.storage_path,
+            collected_file.stored.size_bytes,
+            collected_file.stored.existed,
+        )?;
+    }
+    let work_payload = collection_normalization_work_payload(
+        &collection_run_id,
+        &source,
+        &permission.id,
+        &raw_artifact_ids,
+        "local_project_collection",
+    );
+    transaction
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'collection_normalization', 'queued', $2, $3::jsonb, NULL)",
+            &[&work_item_id, &payload.requested_by_actor_id, &work_payload],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_work_item_created_audit_for_collection(
+        &mut transaction,
+        &payload.requested_by_actor_id,
+        &work_item_id,
+        &collection_run_id,
+        &raw_artifact_ids,
+    )?;
+    let response_body = collection_run_response_json(&mut transaction, &collection_run_id)?;
     transaction
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -4237,6 +4745,22 @@ struct SourcePermissionCreatePayload {
     created_by_actor_id: String,
 }
 
+struct RawArtifactCreatePayload {
+    source_id: Option<String>,
+    collection_run_id: Option<String>,
+    content_base64: String,
+    mime_type: Option<String>,
+    metadata_json: Value,
+    requested_by_actor_id: String,
+}
+
+struct CollectionRunCreatePayload {
+    source_id: Option<String>,
+    requested_by_actor_id: String,
+    summary_json: Value,
+    dry_run: bool,
+}
+
 struct HypothesisCreatePayload {
     hypothesis_text: String,
     supporting_evidence_ids: Vec<String>,
@@ -4379,6 +4903,13 @@ struct CollectionDryRunPayload {
     notes: Value,
 }
 
+struct LocalProjectCollectionPayload {
+    source_id: String,
+    source_permission_id: String,
+    approval_id: Option<String>,
+    requested_by_actor_id: String,
+}
+
 struct ManualUploadCollectionPayload {
     source_id: String,
     source_permission_id: String,
@@ -4388,6 +4919,11 @@ struct ManualUploadCollectionPayload {
     mime_type: Option<String>,
     metadata_json: Value,
     requested_by_actor_id: String,
+}
+
+struct ManualUploadIngestPayload {
+    upload: ManualUploadCollectionPayload,
+    chunk_size: i32,
 }
 
 struct AgentActionRequestPayload {
@@ -4435,6 +4971,39 @@ struct CollectionPermission {
     allowed_operations: Vec<String>,
     external_model_policy: String,
     approval_required: bool,
+}
+
+struct RawArtifactIngestRecord {
+    id: String,
+    collection_run_id: Option<String>,
+    content_hash: String,
+    storage_path: String,
+    reused: bool,
+}
+
+struct NormalizedDocumentIngestRecord {
+    id: String,
+    raw_artifact_id: String,
+    text_content: String,
+    reused: bool,
+}
+
+struct CollectedLocalProjectFile {
+    source_path: String,
+    relative_path: String,
+    stored: StoredArtifact,
+}
+
+struct LocalProjectCollectionResult {
+    total_files: usize,
+    skipped_files: Vec<Value>,
+    files: Vec<CollectedLocalProjectFile>,
+}
+
+struct VectorUpsertSummary {
+    collection_name: String,
+    collection_exists: bool,
+    chunks_upserted: usize,
 }
 
 struct ReportRenderRecord {
@@ -4698,6 +5267,41 @@ fn parse_hypothesis_create(body: &str) -> Result<HypothesisCreatePayload, Gatewa
         status: optional_string_field_with_max(&object, "status", "candidate", 64)?,
         actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
         metadata_json: optional_object_field(&object, "metadata_json")?,
+    })
+}
+
+fn parse_raw_artifact_create(body: &str) -> Result<RawArtifactCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Raw artifact request body")?;
+    let source_id = optional_nullable_string_field_with_max(&object, "source_id", 36)?;
+    let collection_run_id =
+        optional_nullable_string_field_with_max(&object, "collection_run_id", 36)?;
+    let content_base64 = required_text_field(&object, "content_base64")?;
+    let mime_type = optional_nullable_string_field_with_max(&object, "mime_type", 255)?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    Ok(RawArtifactCreatePayload {
+        source_id,
+        collection_run_id,
+        content_base64,
+        mime_type,
+        metadata_json,
+        requested_by_actor_id,
+    })
+}
+
+fn parse_collection_run_create(body: &str) -> Result<CollectionRunCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Collection run request body")?;
+    let source_id = optional_nullable_string_field_with_max(&object, "source_id", 36)?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let summary_json = optional_object_field(&object, "summary_json")?;
+    let dry_run = optional_bool_field(&object, "dry_run", true)?;
+    Ok(CollectionRunCreatePayload {
+        source_id,
+        requested_by_actor_id,
+        summary_json,
+        dry_run,
     })
 }
 
@@ -5022,6 +5626,23 @@ fn parse_collection_dry_run(body: &str) -> Result<CollectionDryRunPayload, Gatew
     })
 }
 
+fn parse_local_project_collection(
+    body: &str,
+) -> Result<LocalProjectCollectionPayload, GatewayError> {
+    let object = parse_json_object(body, "Local project collection request body")?;
+    let source_id = required_string_field(&object, "source_id", 36)?;
+    let source_permission_id = required_string_field(&object, "source_permission_id", 36)?;
+    let approval_id = optional_nullable_string_field_with_max(&object, "approval_id", 36)?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    Ok(LocalProjectCollectionPayload {
+        source_id,
+        source_permission_id,
+        approval_id,
+        requested_by_actor_id,
+    })
+}
+
 fn parse_manual_upload_collection(
     body: &str,
 ) -> Result<ManualUploadCollectionPayload, GatewayError> {
@@ -5048,6 +5669,13 @@ fn parse_manual_upload_collection(
         metadata_json,
         requested_by_actor_id,
     })
+}
+
+fn parse_manual_upload_ingest(body: &str) -> Result<ManualUploadIngestPayload, GatewayError> {
+    let object = parse_json_object(body, "Manual upload ingest request body")?;
+    let upload = parse_manual_upload_collection(body)?;
+    let chunk_size = optional_i32_field_with_default(&object, "chunk_size", 1000, 100, 5000)?;
+    Ok(ManualUploadIngestPayload { upload, chunk_size })
 }
 
 fn parse_agent_action_request(body: &str) -> Result<AgentActionRequestPayload, GatewayError> {
@@ -6301,6 +6929,462 @@ fn split_text_chunks(text: &str, chunk_size: usize) -> Vec<String> {
         .collect()
 }
 
+fn require_source_exists(
+    transaction: &mut postgres::Transaction<'_>,
+    source_id: &str,
+) -> Result<(), GatewayError> {
+    let exists = transaction
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM sources WHERE id = $1)",
+            &[&source_id],
+        )
+        .map(|row| row.get::<_, bool>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if exists {
+        Ok(())
+    } else {
+        Err(GatewayError::NotFound("Source not found".to_string()))
+    }
+}
+
+fn load_collection_run_source_id(
+    transaction: &mut postgres::Transaction<'_>,
+    collection_run_id: &str,
+) -> Result<Option<String>, GatewayError> {
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT source_id FROM collection_runs WHERE id = $1",
+            &[&collection_run_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound(
+            "Collection run not found".to_string(),
+        ));
+    };
+    Ok(row.get(0))
+}
+
+fn raw_artifact_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    artifact_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json, created_at, updated_at FROM raw_artifacts WHERE id = $1) t",
+            &[&artifact_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn collection_run_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    collection_run_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs WHERE id = $1) t",
+            &[&collection_run_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn collection_run_response_json_client(
+    client: &mut Client,
+    collection_run_id: &str,
+) -> Result<String, GatewayError> {
+    client
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message, created_at, updated_at FROM collection_runs WHERE id = $1) t",
+            &[&collection_run_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn insert_collection_run_created_audit(
+    transaction: &mut postgres::Transaction<'_>,
+    actor_id: &str,
+    collection_run_id: &str,
+    source_id: Option<&str>,
+    dry_run: bool,
+    status: &str,
+) -> Result<(), GatewayError> {
+    let details_json = serde_json::json!({
+        "source_id": source_id,
+        "dry_run": dry_run,
+        "status": status
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'collection_run.created', 'recorded', 'collection_run', $2, NULL, $3::jsonb)",
+            &[&actor_id, &collection_run_id, &details_json],
+        )
+        .map(|_| ())
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_raw_artifact_created_audit(
+    transaction: &mut postgres::Transaction<'_>,
+    actor_id: &str,
+    artifact_id: &str,
+    source_id: Option<&str>,
+    collection_run_id: Option<&str>,
+    content_hash: &str,
+    storage_path: &str,
+    size_bytes: u64,
+    content_already_existed: bool,
+) -> Result<(), GatewayError> {
+    let details_json = serde_json::json!({
+        "source_id": source_id,
+        "collection_run_id": collection_run_id,
+        "content_hash": content_hash,
+        "storage_path": storage_path,
+        "size_bytes": size_bytes,
+        "content_already_existed": content_already_existed
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'raw_artifact.created', 'recorded', 'raw_artifact', $2, NULL, $3::jsonb)",
+            &[&actor_id, &artifact_id, &details_json],
+        )
+        .map(|_| ())
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn insert_work_item_created_audit_for_collection(
+    transaction: &mut postgres::Transaction<'_>,
+    actor_id: &str,
+    work_item_id: &str,
+    collection_run_id: &str,
+    raw_artifact_ids: &[String],
+) -> Result<(), GatewayError> {
+    let details_json = serde_json::json!({
+        "work_type": "collection_normalization",
+        "collection_run_id": collection_run_id,
+        "raw_artifact_ids": raw_artifact_ids,
+        "scaffold_only": false,
+        "executes_normalization": true
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'queued', 'work_item', $2, $3, $4::jsonb)",
+            &[&actor_id, &work_item_id, &collection_run_id, &details_json],
+        )
+        .map(|_| ())
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn get_or_create_raw_artifact_for_ingest(
+    transaction: &mut postgres::Transaction<'_>,
+    source_id: &str,
+    collection_run_id: &str,
+    content_hash: &str,
+    storage_path: &str,
+    size_bytes: u64,
+    mime_type: Option<&str>,
+    metadata_json: &Value,
+    actor_id: &str,
+    content_already_existed: bool,
+) -> Result<RawArtifactIngestRecord, GatewayError> {
+    let mime_type = mime_type.map(str::to_string);
+    if let Some(row) = transaction
+        .query_opt(
+            "SELECT id, collection_run_id, content_hash, storage_path FROM raw_artifacts WHERE source_id = $1 AND content_hash = $2 ORDER BY created_at ASC LIMIT 1",
+            &[&source_id, &content_hash],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        return Ok(RawArtifactIngestRecord {
+            id: row.get(0),
+            collection_run_id: row.get(1),
+            content_hash: row.get(2),
+            storage_path: row.get(3),
+            reused: true,
+        });
+    }
+    let artifact_id = generated_record_id("artifact");
+    transaction
+        .execute(
+            "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::jsonb)",
+            &[
+                &artifact_id,
+                &source_id,
+                &collection_run_id,
+                &content_hash,
+                &storage_path,
+                &mime_type,
+                &(size_bytes as i32),
+                &metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_raw_artifact_created_audit(
+        transaction,
+        actor_id,
+        &artifact_id,
+        Some(source_id),
+        Some(collection_run_id),
+        content_hash,
+        storage_path,
+        size_bytes,
+        content_already_existed,
+    )?;
+    Ok(RawArtifactIngestRecord {
+        id: artifact_id,
+        collection_run_id: Some(collection_run_id.to_string()),
+        content_hash: content_hash.to_string(),
+        storage_path: storage_path.to_string(),
+        reused: false,
+    })
+}
+
+fn get_or_create_normalized_document_for_ingest(
+    transaction: &mut postgres::Transaction<'_>,
+    artifact: &RawArtifactIngestRecord,
+    source: &CollectionSource,
+    text_content: &str,
+    title: &str,
+    actor_id: &str,
+) -> Result<NormalizedDocumentIngestRecord, GatewayError> {
+    if let Some(row) = transaction
+        .query_opt(
+            "SELECT id, raw_artifact_id, text_content FROM normalized_documents WHERE raw_artifact_id = $1 ORDER BY created_at ASC LIMIT 1",
+            &[&artifact.id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        return Ok(NormalizedDocumentIngestRecord {
+            id: row.get(0),
+            raw_artifact_id: row.get(1),
+            text_content: row.get(2),
+            reused: true,
+        });
+    }
+    let document_id = generated_record_id("document");
+    let metadata_json = serde_json::json!({
+        "generated_by": "DIFF-081",
+        "raw_content_hash": artifact.content_hash,
+        "raw_storage_path": artifact.storage_path
+    });
+    transaction
+        .execute(
+            "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json) VALUES ($1, $2, $3, $4, 'text', NULL, $5, $6, $7::jsonb)",
+            &[
+                &document_id,
+                &artifact.id,
+                &source.id,
+                &title,
+                &text_content,
+                &source.sensitivity,
+                &metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "source_id": source.id,
+        "raw_artifact_id": artifact.id,
+        "generated_by": "DIFF-081"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'normalized_document.created', 'recorded', 'normalized_document', $2, $3, $4::jsonb)",
+            &[&actor_id, &document_id, &artifact.collection_run_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(NormalizedDocumentIngestRecord {
+        id: document_id,
+        raw_artifact_id: artifact.id.clone(),
+        text_content: text_content.to_string(),
+        reused: false,
+    })
+}
+
+fn get_or_create_chunks_and_evidence_for_ingest(
+    transaction: &mut postgres::Transaction<'_>,
+    document_id: &str,
+    source_id: &str,
+    raw_artifact_id: &str,
+    text_content: &str,
+    chunk_size: i32,
+    actor_id: &str,
+) -> Result<(Vec<String>, Vec<String>, bool), GatewayError> {
+    let existing_chunks = transaction
+        .query(
+            "SELECT id FROM chunks WHERE document_id = $1 ORDER BY chunk_index ASC",
+            &[&document_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if !existing_chunks.is_empty() {
+        let chunk_ids = existing_chunks
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>();
+        let mut evidence_item_ids = Vec::new();
+        for chunk_id in &chunk_ids {
+            for row in transaction
+                .query(
+                    "SELECT id FROM evidence_items WHERE chunk_id = $1 ORDER BY created_at ASC",
+                    &[chunk_id],
+                )
+                .map_err(|error| GatewayError::Database(error.to_string()))?
+            {
+                evidence_item_ids.push(row.get(0));
+            }
+        }
+        return Ok((chunk_ids, evidence_item_ids, true));
+    }
+    let text_chunks = split_text_chunks(text_content, chunk_size as usize);
+    if text_chunks.is_empty() {
+        return Err(GatewayError::Validation(
+            "Document text is empty".to_string(),
+        ));
+    }
+    let mut chunk_ids = Vec::new();
+    let mut evidence_item_ids = Vec::new();
+    for (index, text) in text_chunks.iter().enumerate() {
+        let chunk_id = generated_record_id("chunk");
+        let evidence_item_id = generated_record_id("evidence");
+        let location_json = serde_json::json!({
+            "char_start": index * chunk_size as usize,
+            "char_end": index * chunk_size as usize + text.len()
+        });
+        let chunk_metadata = serde_json::json!({
+            "generated_by": "DIFF-081",
+            "chunk_size": chunk_size
+        });
+        let evidence_metadata = serde_json::json!({
+            "generated_by": "DIFF-081",
+            "chunk_index": index
+        });
+        transaction
+            .execute(
+                "INSERT INTO chunks (id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json) VALUES ($1, $2, $3, $4, $5::jsonb, 'not_started', $6::jsonb)",
+                &[&chunk_id, &document_id, &(index as i32), text, &location_json, &chunk_metadata],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        transaction
+            .execute(
+                "INSERT INTO evidence_items (id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json) VALUES ($1, $2, $3, $4, 'document_chunk', $5, NULL, NULL, $6::jsonb)",
+                &[&evidence_item_id, &source_id, &document_id, &chunk_id, text, &evidence_metadata],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        chunk_ids.push(chunk_id);
+        evidence_item_ids.push(evidence_item_id);
+    }
+    let details_json = serde_json::json!({
+        "source_id": source_id,
+        "chunk_count": chunk_ids.len(),
+        "evidence_count": evidence_item_ids.len(),
+        "generated_by": "DIFF-081"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'document_chunks.generated', 'recorded', 'normalized_document', $2, $3, $4::jsonb)",
+            &[&actor_id, &document_id, &raw_artifact_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok((chunk_ids, evidence_item_ids, false))
+}
+
+fn upsert_specific_chunks(
+    client: &mut Client,
+    chunk_ids: &[String],
+) -> Result<VectorUpsertSummary, GatewayError> {
+    let settings = qdrant_settings_from_env()?;
+    let collection_status = ensure_vector_chunk_collection()?;
+    let collection_exists = serde_json::from_str::<Value>(&collection_status)
+        .ok()
+        .and_then(|value| value.get("exists").and_then(Value::as_bool))
+        .unwrap_or(true);
+    if chunk_ids.is_empty() {
+        return Ok(VectorUpsertSummary {
+            collection_name: settings.collection_name,
+            collection_exists,
+            chunks_upserted: 0,
+        });
+    }
+    let mut points = Vec::new();
+    for chunk_id in chunk_ids {
+        let row = client
+            .query_one(
+                "SELECT id, document_id, chunk_index, text_content FROM chunks WHERE id = $1",
+                &[chunk_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        let id: String = row.get(0);
+        let document_id: String = row.get(1);
+        let chunk_index: i32 = row.get(2);
+        let text_content: String = row.get(3);
+        points.push(plan_chunk_vector_point(
+            &id,
+            &document_id,
+            chunk_index.max(0) as usize,
+            &text_content,
+            settings.vector_size,
+        )?);
+    }
+    let response = execute_qdrant_plan(upsert_points_request(&settings, &points)?)?;
+    if response.status_code >= 400 {
+        return Err(GatewayError::ServiceUnavailable(response.body));
+    }
+    for chunk_id in chunk_ids {
+        client
+            .execute(
+                "UPDATE chunks SET embedding_status = 'completed', metadata_json = metadata_json || $1::jsonb, updated_at = now() WHERE id = $2",
+                &[&serde_json::json!({
+                    "embedding_method": EMBEDDING_METHOD,
+                    "vector_collection": settings.collection_name
+                }), chunk_id],
+            )
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    }
+    Ok(VectorUpsertSummary {
+        collection_name: settings.collection_name,
+        collection_exists,
+        chunks_upserted: points.len(),
+    })
+}
+
+fn mark_manual_upload_ingest_vector_failed(
+    client: &mut Client,
+    collection_run_id: &str,
+    actor_id: &str,
+    error_message: &str,
+) -> Result<(), GatewayError> {
+    let settings = qdrant_settings_from_env().ok();
+    let vector_collection = settings
+        .as_ref()
+        .map(|settings| settings.collection_name.as_str())
+        .unwrap_or("igy6_chunks");
+    let patch = serde_json::json!({
+        "vector_collection": vector_collection,
+        "vector_upsert_completed": false,
+        "vector_error": error_message
+    });
+    client
+        .execute(
+            "UPDATE collection_runs SET status = 'vector_upsert_failed', error_message = $1, summary_json = summary_json || $2::jsonb, updated_at = now() WHERE id = $3",
+            &[&error_message, &patch, &collection_run_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "vector_collection": vector_collection,
+        "error_message": error_message
+    });
+    client
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'manual_upload_ingest.vector_failed', 'failed', 'collection_run', $2, $2, $3::jsonb)",
+            &[&actor_id, &collection_run_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(())
+}
+
 fn validate_evidence_links(
     transaction: &mut postgres::Transaction<'_>,
     payload: &EvidenceItemCreatePayload,
@@ -6531,6 +7615,42 @@ fn collection_dry_run_summary(
     })
 }
 
+fn collection_normalization_work_payload(
+    collection_run_id: &str,
+    source: &CollectionSource,
+    permission_id: &str,
+    raw_artifact_ids: &[String],
+    collection_mode: &str,
+) -> Value {
+    serde_json::json!({
+        "collection_run_id": collection_run_id,
+        "source_id": source.id,
+        "source_permission_id": permission_id,
+        "raw_artifact_ids": raw_artifact_ids,
+        "artifact_count": raw_artifact_ids.len(),
+        "collection_mode": collection_mode,
+        "scaffold_only": false,
+        "executes_normalization": true,
+        "worker_task_name": "collection.normalize_collection_run",
+        "normalization_input_type": "utf_8_text",
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": format!("Queue normalization for {collection_mode}"),
+            "interpretation": "Create a queued worker item to normalize collected UTF-8 text artifacts.",
+            "proposed_work_type": "collection_normalization",
+            "sources_likely_used": [source.id.clone()],
+            "expected_output": "Normalized document records for the collected raw artifacts.",
+            "safety_requirements": [
+                "Use only stored local artifacts linked to this collection run.",
+                "Do not perform external model calls or system-changing actions."
+            ],
+            "assumptions": ["Collected artifacts are UTF-8 text artifacts supported by the current worker."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 collection enqueue governance"
+        }
+    })
+}
+
 fn artifact_data_root() -> PathBuf {
     if let Ok(artifact_store_path) = env::var("ARTIFACT_STORE_PATH") {
         let path = PathBuf::from(artifact_store_path);
@@ -6555,6 +7675,204 @@ fn artifact_data_root() -> PathBuf {
         }
     }
     PathBuf::from("/workspace/storage")
+}
+
+fn collect_local_project_files(
+    source: &CollectionSource,
+    permission: &CollectionPermission,
+) -> Result<LocalProjectCollectionResult, GatewayError> {
+    let source_location = source.location.as_deref().ok_or_else(|| {
+        GatewayError::Validation("local_project source requires a location".to_string())
+    })?;
+    let source_root = fs::canonicalize(Path::new(source_location)).map_err(|_| {
+        GatewayError::Validation(
+            "local_project source location must be an existing directory".to_string(),
+        )
+    })?;
+    if !source_root.is_dir() {
+        return Err(GatewayError::Validation(
+            "local_project source location must be an existing directory".to_string(),
+        ));
+    }
+    let scoped_paths = scoped_local_project_paths(&source_root, &permission.scope_json)?;
+    let max_files = json_usize_with_default(&permission.scope_json, "max_files", 100)?;
+    let max_file_bytes =
+        json_usize_with_default(&permission.scope_json, "max_file_bytes", 1_000_000)?;
+    if max_files < 1 {
+        return Err(GatewayError::Validation(
+            "max_files must be at least 1".to_string(),
+        ));
+    }
+    if max_file_bytes < 1 {
+        return Err(GatewayError::Validation(
+            "max_file_bytes must be at least 1".to_string(),
+        ));
+    }
+    let mut candidates = Vec::new();
+    for scoped_path in scoped_paths {
+        candidates.extend(local_project_candidate_files(&scoped_path)?);
+    }
+    candidates.sort();
+    candidates.dedup();
+    let store = ArtifactStore::new(artifact_data_root())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let mut files = Vec::new();
+    let mut skipped_files = Vec::new();
+    for candidate in &candidates {
+        if files.len() >= max_files {
+            skipped_files.push(serde_json::json!({
+                "path": candidate.to_string_lossy(),
+                "reason": "max_files_reached"
+            }));
+            continue;
+        }
+        let resolved = fs::canonicalize(candidate)
+            .map_err(|error| GatewayError::Validation(error.to_string()))?;
+        if !resolved.starts_with(&source_root) {
+            skipped_files.push(serde_json::json!({
+                "path": resolved.to_string_lossy(),
+                "reason": "escaped_source_location"
+            }));
+            continue;
+        }
+        let metadata =
+            fs::metadata(&resolved).map_err(|error| GatewayError::Validation(error.to_string()))?;
+        let size_bytes = metadata.len() as usize;
+        if size_bytes > max_file_bytes {
+            skipped_files.push(serde_json::json!({
+                "path": resolved.to_string_lossy(),
+                "reason": "max_file_bytes_exceeded",
+                "size_bytes": size_bytes
+            }));
+            continue;
+        }
+        let content =
+            fs::read(&resolved).map_err(|error| GatewayError::Validation(error.to_string()))?;
+        let stored = store
+            .write_bytes(&content)
+            .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+        let relative_path = resolved
+            .strip_prefix(&source_root)
+            .map_err(|_| GatewayError::Validation("file escapes source location".to_string()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        files.push(CollectedLocalProjectFile {
+            source_path: resolved.to_string_lossy().to_string(),
+            relative_path,
+            stored,
+        });
+    }
+    Ok(LocalProjectCollectionResult {
+        total_files: candidates.len(),
+        skipped_files,
+        files,
+    })
+}
+
+fn scoped_local_project_paths(
+    source_root: &Path,
+    scope: &Value,
+) -> Result<Vec<PathBuf>, GatewayError> {
+    let Some(paths) = scope.get("paths").and_then(Value::as_array) else {
+        return Err(GatewayError::Validation(
+            "local_project collection requires permission scope paths".to_string(),
+        ));
+    };
+    if paths.is_empty() {
+        return Err(GatewayError::Validation(
+            "local_project collection requires permission scope paths".to_string(),
+        ));
+    }
+    let mut resolved_paths = Vec::new();
+    for raw_path in paths {
+        let Some(raw_path) = raw_path.as_str().filter(|value| !value.trim().is_empty()) else {
+            return Err(GatewayError::Validation(
+                "permission scope paths must be non-empty strings".to_string(),
+            ));
+        };
+        let raw_path = Path::new(raw_path);
+        if raw_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        }) {
+            return Err(GatewayError::Validation(
+                "permission scope path escapes the source location".to_string(),
+            ));
+        }
+        let candidate = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            source_root.join(raw_path)
+        };
+        let resolved = fs::canonicalize(&candidate).map_err(|_| {
+            GatewayError::Validation("permission scope path does not exist".to_string())
+        })?;
+        if !resolved.starts_with(source_root) {
+            return Err(GatewayError::Validation(
+                "permission scope path escapes the source location".to_string(),
+            ));
+        }
+        resolved_paths.push(resolved);
+    }
+    Ok(resolved_paths)
+}
+
+fn local_project_candidate_files(path: &Path) -> Result<Vec<PathBuf>, GatewayError> {
+    if fs::symlink_metadata(path)
+        .map_err(|error| GatewayError::Validation(error.to_string()))?
+        .file_type()
+        .is_symlink()
+    {
+        return Ok(Vec::new());
+    }
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    if !path.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in
+            fs::read_dir(&current).map_err(|error| GatewayError::Validation(error.to_string()))?
+        {
+            let entry = entry.map_err(|error| GatewayError::Validation(error.to_string()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| GatewayError::Validation(error.to_string()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let entry_path = entry.path();
+            if file_type.is_dir() {
+                stack.push(entry_path);
+            } else if file_type.is_file() {
+                files.push(entry_path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn json_usize_with_default(
+    value: &Value,
+    key: &str,
+    default: usize,
+) -> Result<usize, GatewayError> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| GatewayError::Validation(format!("{key} must be a positive integer"))),
+        Some(_) => Err(GatewayError::Validation(format!(
+            "{key} must be a positive integer"
+        ))),
+    }
 }
 
 fn decode_base64(value: &str) -> Result<Vec<u8>, GatewayError> {
@@ -8624,11 +9942,11 @@ mod tests {
 
     #[test]
     fn unsupported_routes_plan_fastapi_fallback() {
-        let request = request("POST", "/collection-runs/manual-upload/ingest", "{}");
+        let request = request("POST", "/unimplemented-route", "{}");
         let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
         assert_eq!(plan.host, "legacy-api");
         assert_eq!(plan.port, 8000);
-        assert_eq!(plan.request_target, "/collection-runs/manual-upload/ingest");
+        assert_eq!(plan.request_target, "/unimplemented-route");
 
         let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
         assert_eq!(response.status_code, 502);
@@ -9394,6 +10712,33 @@ mod tests {
     }
 
     #[test]
+    fn diff135_routes_are_rust_native_and_require_database_url_after_validation() {
+        let manual_upload_ingest_body = valid_manual_upload_body_with_chunk_size();
+        for (path, body) in [
+            ("/artifacts", r#"{"content_base64":"aGVsbG8K"}"#),
+            ("/collection-runs", "{}"),
+            (
+                "/collection-runs/local-project",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1"}"#,
+            ),
+            (
+                "/collection-runs/manual-upload/ingest",
+                manual_upload_ingest_body.as_str(),
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
     fn manual_upload_is_rust_native_and_requires_database_url_after_validation() {
         let response = handle_gateway_request_with_db(
             &request(
@@ -9442,6 +10787,59 @@ mod tests {
             );
             assert_eq!(response.status_code, 422, "{body}");
             assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn diff135_validation_rejects_invalid_requests_without_fallback() {
+        for (path, body) in [
+            ("/artifacts", "{}"),
+            ("/artifacts", r#"{"content_base64":[]}"#),
+            ("/artifacts", r#"{"content_base64":"not base64"}"#),
+            (
+                "/artifacts",
+                r#"{"content_base64":"aGVsbG8K","metadata_json":[]}"#,
+            ),
+            (
+                "/collection-runs",
+                r#"{"requested_by_actor_id":"","summary_json":{}}"#,
+            ),
+            ("/collection-runs", r#"{"summary_json":[]}"#),
+            ("/collection-runs", r#"{"dry_run":"yes"}"#),
+            ("/collection-runs/local-project", "{}"),
+            (
+                "/collection-runs/local-project",
+                r#"{"source_id":"","source_permission_id":"permission-1"}"#,
+            ),
+            (
+                "/collection-runs/local-project",
+                r#"{"source_id":"source-1","source_permission_id":""}"#,
+            ),
+            (
+                "/collection-runs/local-project",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1","requested_by_actor_id":""}"#,
+            ),
+            (
+                "/collection-runs/manual-upload/ingest",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","chunk_size":99}"#,
+            ),
+            (
+                "/collection-runs/manual-upload/ingest",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","chunk_size":5001}"#,
+            ),
+            (
+                "/collection-runs/manual-upload/ingest",
+                r#"{"source_id":"source-1","source_permission_id":"permission-1","content_base64":"aGVsbG8K","filename":"../x.txt"}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{path} {body}");
+            assert!(!response.proxied_to_fallback, "{path} {body}");
         }
     }
 
@@ -10120,5 +11518,12 @@ mod tests {
             "requested_by_actor_id": "local-owner"
         })
         .to_string()
+    }
+
+    fn valid_manual_upload_body_with_chunk_size() -> String {
+        let mut value: Value =
+            serde_json::from_str(&valid_manual_upload_body()).expect("manual upload json");
+        value["chunk_size"] = serde_json::json!(1000);
+        value.to_string()
     }
 }

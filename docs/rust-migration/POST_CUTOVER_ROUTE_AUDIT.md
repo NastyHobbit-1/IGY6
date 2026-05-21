@@ -23,15 +23,16 @@ Rust gateway service: api
     |   creation, DIFF-117 manual upload collection creation, DIFF-118
     |   agent action request/execution routes, DIFF-120 dynamic web
     |   control routes, DIFF-132 active medium-risk route parity,
-    |   DIFF-133 graph/vector memory route parity, and DIFF-134 report
-    |   work-item route parity
+    |   DIFF-133 graph/vector memory route parity, DIFF-134 report
+    |   work-item route parity, and DIFF-135 artifact/collection
+    |   ingestion route parity
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
 FastAPI is still required for classified non-web routes. No web-used route
-requires FastAPI fallback after DIFF-134, and DIFF-134 records the current
+requires FastAPI fallback after DIFF-135, and DIFF-135 records the current
 non-web fallback posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
@@ -99,12 +100,16 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/approvals/{approval_id}/decision` | Rust-native pending-only approval decision with audit event |
 | GET | `/artifacts` | Rust-native DB read |
 | GET | `/artifacts/{artifact_id}` | Rust-native DB read |
+| POST | `/artifacts` | Rust-native DB/artifact write with source/run validation and audit event |
 | GET | `/audit-events` | Rust-native DB read |
 | GET | `/audit-events/{audit_event_id}` | Rust-native DB read |
 | GET | `/collection-runs` | Rust-native DB read |
 | GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
+| POST | `/collection-runs` | Rust-native DB write with collection_run.created audit event |
 | POST | `/collection-runs/dry-run` | Rust-native DB write with source/permission validation and audit events |
+| POST | `/collection-runs/local-project` | Rust-native scoped local-project collection with permission, approval, artifact, work-item, and audit records |
 | POST | `/collection-runs/manual-upload` | Rust-native DB/artifact write with source permission, approval, and audit events |
+| POST | `/collection-runs/manual-upload/ingest` | Rust-native bounded manual text ingest with artifact/document/chunk/evidence/vector and audit behavior |
 | GET | `/evidence/documents` | Rust-native DB read |
 | POST | `/evidence/documents` | Rust-native DB write with artifact/source validation and audit event |
 | GET | `/evidence/documents/{document_id}` | Rust-native DB read |
@@ -147,13 +152,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -225,6 +230,26 @@ does not remove FastAPI fallback for the remaining classified routes.
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
 | `unsafe_to_migrate_now` | 4 |
+
+## DIFF-135 Artifact And Collection Ingestion Route Parity
+
+DIFF-135 migrates the four artifact and collection ingestion fallback routes to
+Rust-native gateway handlers. The route batch covers raw artifact creation,
+generic collection-run creation, scoped local-project collection, and bounded
+manual text ingest. The Rust handlers preserve content-addressed artifact
+storage, source/run validation, permission checks, approval checks, audit
+events, bounded local-project path traversal resistance, manual-upload UTF-8
+text limits, and Qdrant vector upsert behavior for manual ingest. FastAPI
+fallback remains required for experiments, improvements, and root-route
+resolution.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 7 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 0 |
 
 ## Web-Used Route Matrix
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-134",
+  "diff": "DIFF-135",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,8 +9,8 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 82,
-    "fastapi_routes_missing_from_rust": 12,
+    "rust_native_routes": 86,
+    "fastapi_routes_missing_from_rust": 8,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
@@ -21,7 +21,7 @@
     "intentional_legacy_fallback": 7,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
-    "unsafe_to_migrate_now": 4
+    "unsafe_to_migrate_now": 0
   },
   "routes": [
     {
@@ -93,62 +93,6 @@
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API provides equivalent detail semantics or the route is formally retired.",
       "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/artifacts",
-      "python_module": "services/api/app/artifacts.py",
-      "python_handler": "create_raw_artifact",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Artifact metadata writes are adjacent to artifact storage safety and should not move without a scoped artifact parity DIFF.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust artifact API validates source/run references, storage path safety, content hashes, and audit semantics.",
-      "recommended_future_diff": "DIFF-135"
-    },
-    {
-      "method": "POST",
-      "path": "/collection-runs",
-      "python_module": "services/api/app/collection_runs.py",
-      "python_handler": "create_collection_run",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Generic collection-run creation overlaps collector scheduling semantics and should remain fallback until source/permission behavior is explicitly scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust collection API defines whether generic run creation is retained, replaced by typed routes, or retired.",
-      "recommended_future_diff": "DIFF-135"
-    },
-    {
-      "method": "POST",
-      "path": "/collection-runs/local-project",
-      "python_module": "services/api/app/collection_runs.py",
-      "python_handler": "create_local_project_collection",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Local project collection can touch scoped filesystem inputs and must preserve permission, approval, artifact, and audit behavior before Rust migration.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust local-project collection route is scoped, read-only by default, permissioned, audited, and tested against traversal/runtime data risks.",
-      "recommended_future_diff": "DIFF-135"
-    },
-    {
-      "method": "POST",
-      "path": "/collection-runs/manual-upload/ingest",
-      "python_module": "services/api/app/collection_runs.py",
-      "python_handler": "ingest_manual_upload_collection",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Manual upload ingest performs downstream normalization/evidence behavior beyond DIFF-117 upload creation and needs a focused ingestion parity DIFF.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust ingest route preserves artifact safety, normalization metadata, evidence writes, work-item/audit behavior, and failure recovery.",
-      "recommended_future_diff": "DIFF-135"
     },
     {
       "method": "POST",

@@ -1,6 +1,6 @@
 # DIFF-135: Artifact And Collection Ingestion Route Parity
 
-Status: Active
+Status: Locked
 
 ## Type
 
@@ -114,6 +114,50 @@ changes and the script is available.
 - FastAPI fallback remains required for later DIFF buckets unless route parity
   and classification state prove otherwise in a later DIFF.
 - Rust-only operation is not claimed.
+
+## Completion Notes
+
+- Migrated exactly the four DIFF-135 artifact and collection ingestion routes
+  into the Rust gateway:
+  - `POST /artifacts`
+  - `POST /collection-runs`
+  - `POST /collection-runs/local-project`
+  - `POST /collection-runs/manual-upload/ingest`
+- Preserved FastAPI fallback for remaining unsupported routes. DIFF-135 does
+  not claim Rust-only operation.
+- Preserved bounded content-addressed artifact storage behavior through the
+  Rust artifact store and existing data-root boundary checks.
+- Preserved source existence/type checks, source permission checks, approval
+  checks, collection run writes, raw artifact writes, normalization/evidence
+  metadata writes, work-item creation where applicable, vector failure
+  handling, and audit-event insertion for the migrated route surfaces.
+- Updated route classification, cutover manifest, and rust-migration route
+  audit docs to reflect `86` Rust-native routes, `8` FastAPI routes still
+  missing from Rust, and `0` web-used routes requiring FastAPI fallback.
+- Left experiments/improvements, duplicate root route resolution, fallback
+  removal, and Rust-only readiness for later DIFF scopes.
+
+## Verification Results
+
+- `git status --short` checked DIFF-135 scoped files; Cargo-generated
+  `target/` remains untracked and is not part of the DIFF.
+- `git diff --check` passed.
+- `python3 -m json.tool configs/rust-cutover-manifest.json` passed.
+- `python3 -m json.tool configs/legacy-fastapi-route-classification.json`
+  passed.
+- `cargo fmt --all --check` passed.
+- `cargo clippy --workspace --all-targets` passed.
+- `cargo test -p igy6-gateway` passed, including DIFF-135 route-native and
+  validation coverage.
+- `cargo test --workspace` passed.
+- `python3 scripts/rust-route-parity.py --check` passed:
+  `fastapi=91 rust_native=86 web_used=45 missing_from_rust=8
+  web_requires_fallback=0`.
+- `scripts/rust-cutover.sh --check` passed.
+- `docker compose -f infra/docker-compose.yml --env-file .env.example config`
+  passed.
+- `npm --prefix apps/web run build` was not run because DIFF-135 did not
+  change web contracts, UI workflow behavior, or status text.
 
 ## Out Of Scope Follow-Up
 

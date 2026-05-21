@@ -1,11 +1,11 @@
-# DIFF-134 Non-Web FastAPI Route Classification
+# DIFF-135 Non-Web FastAPI Route Classification
 
 Date: 2026-05-20
 
 ## Summary
 
-DIFF-134 migrates the report work-item FastAPI fallback route to Rust-native
-gateway handling. The 12 routes still missing from Rust are
+DIFF-135 migrates the artifact and collection ingestion FastAPI fallback routes
+to Rust-native gateway handling. The 8 routes still missing from Rust are
 classified below. The web route guard remains at
 `web_routes_requiring_fallback=0`, so Rust is primary for web-used traffic, but
 the repository is not Rust-only.
@@ -28,6 +28,14 @@ DIFF-134 migrated this report/work-item route to Rust-native handling:
 
 - `POST /reports/{report_id}/work-item`
 
+DIFF-135 migrated these artifact and collection ingestion routes to Rust-native
+handling:
+
+- `POST /artifacts`
+- `POST /collection-runs`
+- `POST /collection-runs/local-project`
+- `POST /collection-runs/manual-upload/ingest`
+
 ## Counts
 
 | Bucket | Count | Meaning |
@@ -36,7 +44,7 @@ DIFF-134 migrated this report/work-item route to Rust-native handling:
 | `intentional_legacy_fallback` | 7 | Temporarily retained Python route with a documented retirement condition. |
 | `retireable_unused` | 0 | No missing route is currently proven safe to remove solely as unused. |
 | `duplicate_or_superseded` | 1 | Functionally covered by Rust health/status surfaces or otherwise superseded. |
-| `unsafe_to_migrate_now` | 4 | High-risk route needing a dedicated parity DIFF before Rust migration. |
+| `unsafe_to_migrate_now` | 0 | No currently classified missing route remains in the high-risk artifact/collection bucket. |
 
 ## Classification Matrix
 
@@ -47,10 +55,6 @@ DIFF-134 migrated this report/work-item route to Rust-native handling:
 | GET | `/experiments/{experiment_run_id}` | `services/api/app/experiments.py::get_experiment_run` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | GET | `/improvements` | `services/api/app/improvements.py::list_improvement_items` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | GET | `/improvements/{improvement_item_id}` | `services/api/app/improvements.py::get_improvement_item` | `intentional_legacy_fallback` | medium | DIFF-136 |
-| POST | `/artifacts` | `services/api/app/artifacts.py::create_raw_artifact` | `unsafe_to_migrate_now` | high | DIFF-135 |
-| POST | `/collection-runs` | `services/api/app/collection_runs.py::create_collection_run` | `unsafe_to_migrate_now` | high | DIFF-135 |
-| POST | `/collection-runs/local-project` | `services/api/app/collection_runs.py::create_local_project_collection` | `unsafe_to_migrate_now` | high | DIFF-135 |
-| POST | `/collection-runs/manual-upload/ingest` | `services/api/app/collection_runs.py::ingest_manual_upload_collection` | `unsafe_to_migrate_now` | high | DIFF-135 |
 | POST | `/experiments` | `services/api/app/experiments.py::create_experiment_run` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | POST | `/experiments/{experiment_run_id}/status` | `services/api/app/experiments.py::update_experiment_run_status` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | POST | `/improvements` | `services/api/app/improvements.py::create_improvement_item` | `intentional_legacy_fallback` | medium | DIFF-136 |
@@ -59,6 +63,6 @@ DIFF-134 migrated this report/work-item route to Rust-native handling:
 - Rust is primary for all routes counted as web-used by the route parity guard.
 - FastAPI is still required for classified non-web fallback routes.
 - Rust-only cannot honestly be claimed.
-- The report work-item bucket is complete after DIFF-134; future DIFFs should
-  migrate or retire the remaining route buckets by risk, starting with artifact
-  and collection ingestion parity scoped for DIFF-135.
+- The artifact and collection ingestion bucket is complete after DIFF-135;
+  future DIFFs should resolve the experiments and improvements fallback bucket
+  scoped for DIFF-136.
