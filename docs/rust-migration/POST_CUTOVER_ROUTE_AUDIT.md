@@ -24,16 +24,17 @@ Rust gateway service: api
     |   agent action request/execution routes, DIFF-120 dynamic web
     |   control routes, DIFF-132 active medium-risk route parity,
     |   DIFF-133 graph/vector memory route parity, DIFF-134 report
-    |   work-item route parity, and DIFF-135 artifact/collection
-    |   ingestion route parity
+    |   work-item route parity, DIFF-135 artifact/collection
+    |   ingestion route parity, and DIFF-136 experiments/improvements
+    |   route parity
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
-FastAPI is still required for classified non-web routes. No web-used route
-requires FastAPI fallback after DIFF-135, and DIFF-135 records the current
-non-web fallback posture in
+FastAPI is still required until root-route resolution and fallback readiness
+are explicitly evaluated. No web-used route requires FastAPI fallback after
+DIFF-136, and DIFF-136 records the current non-web fallback posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
 `legacy-api` must not be archived, removed, or disabled until route parity
@@ -121,9 +122,16 @@ These routes are handled directly by `crates/igy6-gateway`:
 | GET | `/evidence/chunks/{chunk_id}` | Rust-native DB read |
 | GET | `/evidence/claims` | Rust-native DB read |
 | GET | `/evidence/claims/{claim_id}` | Rust-native DB read |
+| GET | `/experiments` | Rust-native DB read |
+| GET | `/experiments/{experiment_run_id}` | Rust-native DB read |
+| POST | `/experiments` | Rust-native DB write with improvement reference validation and audit event |
+| POST | `/experiments/{experiment_run_id}/status` | Rust-native DB status update with audit event |
 | GET | `/feedback` | Rust-native DB read |
 | GET | `/feedback/{feedback_id}` | Rust-native DB read |
 | POST | `/feedback` | Rust-native DB write with audit event |
+| GET | `/improvements` | Rust-native DB read |
+| GET | `/improvements/{improvement_item_id}` | Rust-native DB read |
+| POST | `/improvements` | Rust-native DB write with target/priority validation and audit event |
 | GET | `/outcomes` | Rust-native DB read |
 | GET | `/outcomes/{outcome_id}` | Rust-native DB read |
 | POST | `/outcomes` | Rust-native DB write with audit events |
@@ -152,13 +160,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 | DIFF-136 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 | 93 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 | 1 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -247,6 +255,28 @@ resolution.
 | --- | ---: |
 | `active_parity_required` | 0 |
 | `intentional_legacy_fallback` | 7 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 0 |
+
+## DIFF-136 Experiments And Improvements Route Resolution
+
+DIFF-136 decision: migrate the experiments and improvements route family to
+Rust.
+
+DIFF-136 migrates the seven experiments and improvements fallback routes to
+Rust-native gateway handlers. The route batch covers experiment list/detail,
+experiment creation, experiment status update, improvement list/detail, and
+improvement creation. The Rust handlers preserve DB-backed metadata reads,
+status and enum validation, improvement reference validation for experiment
+creation, and audit events for experiment and improvement writes. FastAPI
+fallback remains required until DIFF-137 resolves the duplicate root route and
+DIFF-138 evaluates fallback readiness.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 0 |
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
 | `unsafe_to_migrate_now` | 0 |

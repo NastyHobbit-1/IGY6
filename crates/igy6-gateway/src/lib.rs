@@ -83,9 +83,16 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/evidence/chunks/{chunk_id}"),
     ("GET", "/evidence/claims"),
     ("GET", "/evidence/claims/{claim_id}"),
+    ("GET", "/experiments"),
+    ("GET", "/experiments/{experiment_run_id}"),
+    ("POST", "/experiments"),
+    ("POST", "/experiments/{experiment_run_id}/status"),
     ("GET", "/feedback"),
     ("GET", "/feedback/{feedback_id}"),
     ("POST", "/feedback"),
+    ("GET", "/improvements"),
+    ("GET", "/improvements/{improvement_item_id}"),
+    ("POST", "/improvements"),
     ("GET", "/memory/graph/schema"),
     ("POST", "/memory/graph/schema/ensure"),
     ("POST", "/memory/graph/lineage/sync"),
@@ -348,7 +355,9 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/evidence/items") => {
             evidence_item_create_response(&request.body, database_url)
         }
+        ("POST", "/experiments") => experiment_create_response(&request.body, database_url),
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
+        ("POST", "/improvements") => improvement_create_response(&request.body, database_url),
         ("POST", "/memory/graph/lineage/sync") => {
             action_route_response(sync_graph_lineage(database_url))
         }
@@ -400,6 +409,12 @@ pub fn handle_gateway_request_with_db(
             } else if let Some(document_id) = evidence_document_chunks_path(&request.path) {
                 write_route_response(generate_document_chunks(
                     &document_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(experiment_run_id) = experiment_status_path(&request.path) {
+                action_route_response(update_experiment_status(
+                    &experiment_run_id,
                     &request.body,
                     database_url,
                 ))
@@ -522,8 +537,14 @@ fn db_read_route(path: &str) -> Option<DbReadRoute> {
         "/evidence/claims" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims ORDER BY created_at DESC) t), '[]')",
         }),
+        "/experiments" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, improvement_item_id, status, mlflow_run_id, optuna_study_name, metrics_json, artifacts_json, metadata_json, created_at, updated_at FROM experiment_runs ORDER BY created_at DESC) t), '[]')",
+        }),
         "/feedback" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, target_type, target_id, label, actor_id, note, metadata_json, created_at, updated_at FROM feedback_events ORDER BY created_at DESC) t), '[]')",
+        }),
+        "/improvements" => Some(DbReadRoute::List {
+            sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, target_area, status, objective, proposed_by_actor_id, priority, metadata_json, created_at, updated_at FROM improvement_items ORDER BY created_at DESC) t), '[]')",
         }),
         "/outcomes" => Some(DbReadRoute::List {
             sql: "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json, created_at, updated_at FROM outcomes ORDER BY created_at DESC) t), '[]')",
@@ -604,10 +625,20 @@ fn db_detail_route(path: &str) -> Option<DbReadRoute> {
             "Claim not found",
             "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, claim_text, claim_type, status, evidence_ids, confidence, metadata_json, created_at, updated_at FROM claims WHERE id = $1) t), '')",
         )),
+        ["experiments", id] => Some(detail(
+            id,
+            "Experiment run not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, improvement_item_id, status, mlflow_run_id, optuna_study_name, metrics_json, artifacts_json, metadata_json, created_at, updated_at FROM experiment_runs WHERE id = $1) t), '')",
+        )),
         ["feedback", id] => Some(detail(
             id,
             "Feedback event not found",
             "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, target_type, target_id, label, actor_id, note, metadata_json, created_at, updated_at FROM feedback_events WHERE id = $1) t), '')",
+        )),
+        ["improvements", id] => Some(detail(
+            id,
+            "Improvement item not found",
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, target_area, status, objective, proposed_by_actor_id, priority, metadata_json, created_at, updated_at FROM improvement_items WHERE id = $1) t), '')",
         )),
         ["outcomes", id] => Some(detail(
             id,
@@ -815,6 +846,14 @@ fn evidence_document_create_response(body: &str, database_url: Option<&str>) -> 
 
 fn evidence_item_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_evidence_item(body, database_url))
+}
+
+fn experiment_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_experiment(body, database_url))
+}
+
+fn improvement_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_improvement(body, database_url))
 }
 
 fn retrieval_chunk_search_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -4435,6 +4474,168 @@ fn create_evidence_item(body: &str, database_url: Option<&str>) -> Result<String
     Ok(response_body)
 }
 
+fn create_experiment(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_experiment_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if let Some(improvement_item_id) = &payload.improvement_item_id {
+        let exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM improvement_items WHERE id = $1)",
+                &[improvement_item_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !exists {
+            return Err(GatewayError::Validation(
+                "Improvement item not found".to_string(),
+            ));
+        }
+    }
+    let experiment_id = generated_record_id("experiment");
+    transaction
+        .execute(
+            "INSERT INTO experiment_runs (id, improvement_item_id, status, mlflow_run_id, optuna_study_name, metrics_json, artifacts_json, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)",
+            &[
+                &experiment_id,
+                &payload.improvement_item_id,
+                &payload.status,
+                &payload.mlflow_run_id,
+                &payload.optuna_study_name,
+                &payload.metrics_json,
+                &payload.artifacts_json,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "improvement_item_id": payload.improvement_item_id,
+        "status": payload.status,
+        "mlflow_run_id": payload.mlflow_run_id,
+        "optuna_study_name": payload.optuna_study_name
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'experiment_run.created', 'created', 'experiment_run', $2, NULL, $3::jsonb)",
+            &[&payload.actor_id, &experiment_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = experiment_response_json(&mut transaction, &experiment_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn update_experiment_status(
+    experiment_run_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let experiment_run_id = validate_route_id(experiment_run_id, "experiment_run_id")?;
+    let payload = parse_experiment_status(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let row = transaction
+        .query_opt(
+            "SELECT status FROM experiment_runs WHERE id = $1",
+            &[&experiment_run_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+        .ok_or_else(|| GatewayError::NotFound("Experiment run not found".to_string()))?;
+    let previous_status: String = row.get(0);
+    transaction
+        .execute(
+            "UPDATE experiment_runs SET status = $1, metrics_json = CASE WHEN $2 THEN $3::jsonb ELSE metrics_json END, artifacts_json = CASE WHEN $4 THEN $5::jsonb ELSE artifacts_json END, metadata_json = CASE WHEN $6 THEN $7::jsonb ELSE metadata_json END, updated_at = now() WHERE id = $8",
+            &[
+                &payload.status,
+                &payload.metrics_updated,
+                &payload.metrics_json,
+                &payload.artifacts_updated,
+                &payload.artifacts_json,
+                &payload.metadata_updated,
+                &payload.metadata_json,
+                &experiment_run_id,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "previous_status": previous_status,
+        "new_status": payload.status,
+        "metrics_updated": payload.metrics_updated,
+        "artifacts_updated": payload.artifacts_updated,
+        "metadata_updated": payload.metadata_updated
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'experiment_run.status_updated', $2, 'experiment_run', $3, NULL, $4::jsonb)",
+            &[&payload.actor_id, &payload.status, &experiment_run_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = experiment_response_json(&mut transaction, &experiment_run_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_improvement(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_improvement_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let improvement_id = generated_record_id("improvement");
+    transaction
+        .execute(
+            "INSERT INTO improvement_items (id, target_area, status, objective, proposed_by_actor_id, priority, metadata_json) VALUES ($1, $2, 'proposed', $3, $4, $5, $6::jsonb)",
+            &[
+                &improvement_id,
+                &payload.target_area,
+                &payload.objective,
+                &payload.proposed_by_actor_id,
+                &payload.priority,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "target_area": payload.target_area,
+        "priority": payload.priority,
+        "status": "proposed"
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'improvement_item.created', 'proposed', 'improvement_item', $2, NULL, $3::jsonb)",
+            &[&payload.proposed_by_actor_id, &improvement_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = improvement_response_json(&mut transaction, &improvement_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn create_feedback(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_feedback_create(body)?;
     let database_url = database_url
@@ -4820,6 +5021,36 @@ struct EvidenceItemCreatePayload {
     confidence: Option<i32>,
     metadata_json: Value,
     created_by_actor_id: String,
+}
+
+struct ExperimentCreatePayload {
+    improvement_item_id: Option<String>,
+    status: String,
+    mlflow_run_id: Option<String>,
+    optuna_study_name: Option<String>,
+    metrics_json: Value,
+    artifacts_json: Value,
+    metadata_json: Value,
+    actor_id: String,
+}
+
+struct ExperimentStatusPayload {
+    status: String,
+    metrics_json: Value,
+    artifacts_json: Value,
+    metadata_json: Value,
+    metrics_updated: bool,
+    artifacts_updated: bool,
+    metadata_updated: bool,
+    actor_id: String,
+}
+
+struct ImprovementCreatePayload {
+    target_area: String,
+    objective: String,
+    proposed_by_actor_id: String,
+    priority: String,
+    metadata_json: Value,
 }
 
 struct ReportCreatePayload {
@@ -5394,6 +5625,91 @@ fn parse_evidence_item_create(body: &str) -> Result<EvidenceItemCreatePayload, G
             "local-owner",
             128,
         )?,
+    })
+}
+
+fn parse_experiment_create(body: &str) -> Result<ExperimentCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Experiment request body")?;
+    let status = optional_string_field_with_max(&object, "status", "planned", 64)?;
+    if !is_experiment_status(&status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown experiment status: {status}"
+        )));
+    }
+    Ok(ExperimentCreatePayload {
+        improvement_item_id: optional_nullable_string_field_with_max(
+            &object,
+            "improvement_item_id",
+            36,
+        )?,
+        status,
+        mlflow_run_id: optional_nullable_string_field_with_max(&object, "mlflow_run_id", 255)?,
+        optuna_study_name: optional_nullable_string_field_with_max(
+            &object,
+            "optuna_study_name",
+            255,
+        )?,
+        metrics_json: optional_object_field(&object, "metrics_json")?,
+        artifacts_json: optional_object_field(&object, "artifacts_json")?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+    })
+}
+
+fn parse_experiment_status(body: &str) -> Result<ExperimentStatusPayload, GatewayError> {
+    let object = parse_json_object(body, "Experiment status request body")?;
+    let status = required_string_field(&object, "status", 64)?;
+    if !is_experiment_status(&status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown experiment status: {status}"
+        )));
+    }
+    let metrics_updated = object
+        .get("metrics_json")
+        .is_some_and(|value| !value.is_null());
+    let artifacts_updated = object
+        .get("artifacts_json")
+        .is_some_and(|value| !value.is_null());
+    let metadata_updated = object
+        .get("metadata_json")
+        .is_some_and(|value| !value.is_null());
+    Ok(ExperimentStatusPayload {
+        status,
+        metrics_json: optional_object_field(&object, "metrics_json")?,
+        artifacts_json: optional_object_field(&object, "artifacts_json")?,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
+        metrics_updated,
+        artifacts_updated,
+        metadata_updated,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+    })
+}
+
+fn parse_improvement_create(body: &str) -> Result<ImprovementCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Improvement request body")?;
+    let target_area = required_string_field(&object, "target_area", 64)?;
+    if !is_improvement_target_area(&target_area) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown improvement target area: {target_area}"
+        )));
+    }
+    let priority = optional_string_field_with_max(&object, "priority", "normal", 64)?;
+    if !is_improvement_priority(&priority) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown improvement priority: {priority}"
+        )));
+    }
+    Ok(ImprovementCreatePayload {
+        target_area,
+        objective: required_text_field(&object, "objective")?,
+        proposed_by_actor_id: optional_string_field_with_max(
+            &object,
+            "proposed_by_actor_id",
+            "local-owner",
+            128,
+        )?,
+        priority,
+        metadata_json: optional_object_field(&object, "metadata_json")?,
     })
 }
 
@@ -7004,6 +7320,32 @@ fn collection_run_response_json_client(
         .map_err(|error| GatewayError::Database(error.to_string()))
 }
 
+fn experiment_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    experiment_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, improvement_item_id, status, mlflow_run_id, optuna_study_name, metrics_json, artifacts_json, metadata_json, created_at, updated_at FROM experiment_runs WHERE id = $1) t",
+            &[&experiment_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn improvement_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    improvement_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, target_area, status, objective, proposed_by_actor_id, priority, metadata_json, created_at, updated_at FROM improvement_items WHERE id = $1) t",
+            &[&improvement_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
 fn insert_collection_run_created_audit(
     transaction: &mut postgres::Transaction<'_>,
     actor_id: &str,
@@ -8119,6 +8461,10 @@ fn evidence_document_chunks_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/evidence/documents/", "/chunks")
 }
 
+fn experiment_status_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/experiments/", "/status")
+}
+
 fn source_permission_create_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/sources/", "/permissions")
 }
@@ -8977,6 +9323,24 @@ fn is_report_status(value: &str) -> bool {
         value,
         "placeholder" | "requested" | "draft" | "ready" | "archived"
     )
+}
+
+fn is_experiment_status(value: &str) -> bool {
+    matches!(
+        value,
+        "planned" | "running" | "completed" | "failed" | "abandoned"
+    )
+}
+
+fn is_improvement_target_area(value: &str) -> bool {
+    matches!(
+        value,
+        "parsing" | "retrieval" | "scoring" | "prediction" | "reporting" | "reasoning" | "safety"
+    )
+}
+
+fn is_improvement_priority(value: &str) -> bool {
+    matches!(value, "low" | "normal" | "high" | "urgent")
 }
 
 fn is_supported_work_item_type(value: &str) -> bool {
@@ -10110,6 +10474,10 @@ mod tests {
             ("GET", "/evidence/chunks/chunk-1"),
             ("GET", "/evidence/claims"),
             ("GET", "/evidence/claims/claim-1"),
+            ("GET", "/experiments"),
+            ("GET", "/experiments/experiment-1"),
+            ("GET", "/improvements"),
+            ("GET", "/improvements/improvement-1"),
         ] {
             let response = handle_gateway_request_with_db(
                 &request(method, path, ""),
@@ -10739,6 +11107,77 @@ mod tests {
     }
 
     #[test]
+    fn diff136_routes_are_rust_native_and_require_database_url_after_validation() {
+        for (path, body) in [
+            (
+                "/experiments",
+                r#"{"status":"planned","metrics_json":{"score":1}}"#,
+            ),
+            (
+                "/experiments/experiment-1/status",
+                r#"{"status":"running","metrics_json":{"started":true}}"#,
+            ),
+            (
+                "/improvements",
+                r#"{"target_area":"retrieval","objective":"Improve retrieval scoring.","priority":"high"}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 503, "{path}");
+            assert!(!response.proxied_to_fallback, "{path}");
+            assert!(response.body.contains("DATABASE_URL"), "{path}");
+        }
+    }
+
+    #[test]
+    fn diff136_validation_rejects_invalid_requests_without_fallback() {
+        for (path, body) in [
+            ("/experiments", r#"{"status":"unknown"}"#),
+            ("/experiments", r#"{"metrics_json":[]}"#),
+            (
+                "/experiments",
+                r#"{"improvement_item_id":"improvement-1","actor_id":""}"#,
+            ),
+            ("/experiments/experiment-1/status", "{}"),
+            (
+                "/experiments/experiment-1/status",
+                r#"{"status":"completed","artifacts_json":[]}"#,
+            ),
+            ("/improvements", "{}"),
+            (
+                "/improvements",
+                r#"{"target_area":"unknown","objective":"Improve something."}"#,
+            ),
+            (
+                "/improvements",
+                r#"{"target_area":"retrieval","objective":"","priority":"normal"}"#,
+            ),
+            (
+                "/improvements",
+                r#"{"target_area":"retrieval","objective":"Improve something.","priority":"unknown"}"#,
+            ),
+            (
+                "/improvements",
+                r#"{"target_area":"retrieval","objective":"Improve something.","metadata_json":[]}"#,
+            ),
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", path, body),
+                None,
+                DEFAULT_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{path} {body}");
+            assert!(!response.proxied_to_fallback, "{path} {body}");
+        }
+    }
+
+    #[test]
     fn manual_upload_is_rust_native_and_requires_database_url_after_validation() {
         let response = handle_gateway_request_with_db(
             &request(
@@ -11316,7 +11755,14 @@ mod tests {
             ("GET", "/evidence/chunks/{chunk_id}"),
             ("GET", "/evidence/claims"),
             ("GET", "/evidence/claims/{claim_id}"),
+            ("GET", "/experiments"),
+            ("GET", "/experiments/{experiment_run_id}"),
+            ("POST", "/experiments"),
+            ("POST", "/experiments/{experiment_run_id}/status"),
             ("POST", "/collection-runs/manual-upload"),
+            ("GET", "/improvements"),
+            ("GET", "/improvements/{improvement_item_id}"),
+            ("POST", "/improvements"),
             ("POST", "/work-items"),
             ("POST", "/work-items/"),
             ("GET", "/retrieval/chunks/{chunk_id}/trail"),

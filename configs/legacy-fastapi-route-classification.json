@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-135",
+  "diff": "DIFF-136",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,8 +9,8 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 86,
-    "fastapi_routes_missing_from_rust": 8,
+    "rust_native_routes": 93,
+    "fastapi_routes_missing_from_rust": 1,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
@@ -18,7 +18,7 @@
   "rust_only_claim_allowed": false,
   "classification_counts": {
     "active_parity_required": 0,
-    "intentional_legacy_fallback": 7,
+    "intentional_legacy_fallback": 0,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
     "unsafe_to_migrate_now": 0
@@ -37,104 +37,6 @@
       "migration_risk": "low",
       "retirement_condition": "Confirm no local workflow depends on the FastAPI root identity response, then retire or ignore during FastAPI removal.",
       "recommended_future_diff": "DIFF-137"
-    },
-    {
-      "method": "GET",
-      "path": "/experiments",
-      "python_module": "services/api/app/experiments.py",
-      "python_handler": "list_experiment_runs",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Experiment tracking is still part of the Python self-improvement surface and should remain available until the Rust self-improvement route batch is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust self-improvement API provides equivalent experiment list/detail/create/status semantics and audit behavior, or the product retires this HTTP surface.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "GET",
-      "path": "/experiments/{experiment_run_id}",
-      "python_module": "services/api/app/experiments.py",
-      "python_handler": "get_experiment_run",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Experiment detail remains tied to the Python self-improvement API until Rust parity is explicitly scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust self-improvement API provides equivalent experiment detail semantics or the route is formally retired.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "GET",
-      "path": "/improvements",
-      "python_module": "services/api/app/improvements.py",
-      "python_handler": "list_improvement_items",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Improvement queue routes remain Python-backed until self-improvement parity is handled as a coherent route batch.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust improvement queue API provides list/create/detail semantics with audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "GET",
-      "path": "/improvements/{improvement_item_id}",
-      "python_module": "services/api/app/improvements.py",
-      "python_handler": "get_improvement_item",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Improvement detail remains Python-backed until the Rust self-improvement route batch is implemented.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust improvement queue API provides equivalent detail semantics or the route is formally retired.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/experiments",
-      "python_module": "services/api/app/experiments.py",
-      "python_handler": "create_experiment_run",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Experiment creation is part of the Python self-improvement API and should remain fallback until MLflow/Optuna metadata parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust self-improvement API supports experiment creation and audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/experiments/{experiment_run_id}/status",
-      "python_module": "services/api/app/experiments.py",
-      "python_handler": "update_experiment_run_status",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Experiment status changes remain Python-backed until self-improvement status transition parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust self-improvement API preserves experiment status values, metadata update behavior, and audit parity.",
-      "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/improvements",
-      "python_module": "services/api/app/improvements.py",
-      "python_handler": "create_improvement_item",
-      "rust_status": "missing_from_rust",
-      "classification": "intentional_legacy_fallback",
-      "reason": "Improvement item creation remains Python-backed until self-improvement queue parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "medium",
-      "retirement_condition": "Rust improvement queue API supports target area/priority validation and audit parity, or the route is formally retired.",
-      "recommended_future_diff": "DIFF-136"
     }
   ]
 }
