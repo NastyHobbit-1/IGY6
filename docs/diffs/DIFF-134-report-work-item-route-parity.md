@@ -1,6 +1,6 @@
 # DIFF-134: Report Work-Item Route Parity
 
-Status: Active
+Status: Locked
 
 ## Type
 
