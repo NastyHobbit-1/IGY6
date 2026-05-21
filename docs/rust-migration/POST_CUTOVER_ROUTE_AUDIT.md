@@ -4,8 +4,10 @@ Date: 2026-05-17
 
 ## Summary
 
-DIFF-103 completed cutover governance, but the runtime is not Rust-only. The
-current topology is Rust-primary with required FastAPI fallback:
+DIFF-103 completed cutover governance with Rust primary and FastAPI fallback.
+DIFF-138 removes FastAPI fallback after route parity reaches zero missing
+FastAPI routes. The current API topology is Rust-native while Python/Celery
+workers remain active:
 
 ```text
 Next.js web
@@ -28,17 +30,16 @@ Rust gateway service: api
     |   ingestion route parity, DIFF-136 experiments/improvements
     |   route parity, and DIFF-137 root route parity
     |
-    +-- FastAPI fallback service: legacy-api
-        for all unsupported routes
+    +-- unsupported routes return deterministic Rust 404 responses
 ```
 
-FastAPI fallback remains configured until DIFF-138 evaluates readiness. No
-web-used route requires FastAPI fallback after DIFF-137, and DIFF-137 records
-the current route parity posture in
+FastAPI fallback is no longer configured after DIFF-138. No web-used route
+requires FastAPI fallback, and DIFF-138 records the current route parity posture
+in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
-`legacy-api` must not be archived, removed, or disabled until route parity
-proves every active route is served by Rust or deliberately retired.
+`services/api/` is not archived in DIFF-138; DIFF-139 remains responsible for
+the legacy Python archive or preservation decision.
 
 ## Runtime Topology
 
@@ -47,13 +48,13 @@ proves every active route is served by Rust or deliberately retired.
 | Service | Runtime role |
 | --- | --- |
 | `api` | Rust gateway built from `crates/igy6-gateway/Dockerfile`, published on `127.0.0.1:${APP_PORT:-8000}:8000`. |
-| `legacy-api` | FastAPI backend built from `services/api`, not directly published, used by Rust gateway as fallback at `http://legacy-api:8000`. |
 | `web` | Next.js UI with `API_BASE_URL=http://api:8000`; browser-side helpers also call `http://127.0.0.1:8000`. |
 | `worker` and `beat` | Python/Celery execution remains active. |
 
 The web UI calls the Rust gateway endpoint. The route parity guard reports zero
-web-used routes requiring fallback, while non-web FastAPI routes continue to be
-proxied to `legacy-api`.
+FastAPI routes missing from Rust and zero web-used routes requiring fallback.
+Unsupported gateway routes now return Rust 404 responses instead of proxying to
+FastAPI.
 
 ## Rust-Native Gateway Routes
 
@@ -156,18 +157,18 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/work-items/{work_item_id}/dispatch` | Rust-native dispatch validation and non-executing audit marker |
 | POST | `/work-items/{work_item_id}/status` | Rust-native DB status transition with audit event |
 
-All other routes are forwarded to `legacy-api` when the fallback origin is
-configured.
+Unsupported routes return a deterministic Rust 404 response. FastAPI fallback
+proxying is removed from the runtime gateway path.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 | DIFF-136 | DIFF-137 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 | 93 | 94 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 | 1 | 0 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 | DIFF-136 | DIFF-137 | DIFF-138 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 | 93 | 94 | 94 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 | 1 | 0 | 0 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -300,6 +301,29 @@ evaluates readiness and removes fallback only if safe.
 | `duplicate_or_superseded` | 0 |
 | `unsafe_to_migrate_now` | 0 |
 
+## DIFF-138 FastAPI Fallback Readiness Gate
+
+DIFF-138 decision: remove FastAPI fallback from the runtime API path.
+
+DIFF-138 verifies route parity is complete: 91 FastAPI routes are accounted for,
+94 Rust-native routes are registered, 0 FastAPI routes are missing from Rust,
+and 0 web-used routes require fallback. The Rust gateway no longer accepts or
+uses a FastAPI fallback origin at runtime. `infra/docker-compose.yml` no longer
+defines `legacy-api`, and unsupported routes return deterministic Rust 404
+responses.
+
+This DIFF does not archive `services/api/` and does not change Python/Celery
+worker services. DIFF-139 remains responsible for the legacy Python archive or
+preservation decision.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 0 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 0 |
+| `unsafe_to_migrate_now` | 0 |
+
 ## Web-Used Route Matrix
 
 | Method | Route | Web usage | Gateway behavior |
@@ -377,18 +401,18 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/approvals/{approval_id}` | Rust-native DB read |
 | POST | `/approvals/{approval_id}/decision` | Rust-native pending-only decision with audit event |
 | GET | `/artifacts` | Rust-native DB read |
-| POST | `/artifacts` | Proxied to FastAPI |
+| POST | `/artifacts` | Rust-native DB/artifact write with content-addressed storage and audit event |
 | GET | `/artifacts/{artifact_id}` | Rust-native DB read |
 | GET | `/audit-events` | Rust-native DB read |
 | GET | `/audit-events/{audit_event_id}` | Rust-native DB read |
 | POST | `/chat/retrieval-preview` | Rust-native |
 | POST | `/chat/evidence-answer` | Rust-native |
 | GET | `/collection-runs` | Rust-native DB read |
-| POST | `/collection-runs` | Proxied to FastAPI |
+| POST | `/collection-runs` | Rust-native DB write with source validation and audit event |
 | POST | `/collection-runs/dry-run` | Rust-native DB write with source/permission validation and audit events |
 | POST | `/collection-runs/manual-upload` | Rust-native DB/artifact write with source permission, approval, and audit events |
-| POST | `/collection-runs/manual-upload/ingest` | Proxied to FastAPI |
-| POST | `/collection-runs/local-project` | Proxied to FastAPI |
+| POST | `/collection-runs/manual-upload/ingest` | Rust-native bounded manual text ingest with vector upsert behavior |
+| POST | `/collection-runs/local-project` | Rust-native scoped local-project collection with path safety checks |
 | GET | `/collection-runs/{collection_run_id}` | Rust-native DB read |
 | GET | `/evidence/documents` | Rust-native DB read |
 | GET | `/evidence/documents/{document_id}` | Rust-native DB read |
@@ -401,18 +425,18 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/evidence/claims` | Rust-native DB read |
 | GET | `/evidence/claims/{claim_id}` | Rust-native DB read |
 | POST | `/evidence/items` | Rust-native DB write with source/document/chunk validation and audit event |
-| GET | `/experiments` | Proxied to FastAPI |
-| POST | `/experiments` | Proxied to FastAPI |
-| POST | `/experiments/{experiment_run_id}/status` | Proxied to FastAPI |
-| GET | `/experiments/{experiment_run_id}` | Proxied to FastAPI |
+| GET | `/experiments` | Rust-native DB read |
+| POST | `/experiments` | Rust-native DB write with validation and audit event |
+| POST | `/experiments/{experiment_run_id}/status` | Rust-native DB status transition with audit event |
+| GET | `/experiments/{experiment_run_id}` | Rust-native DB read |
 | GET | `/feedback` | Rust-native DB read |
 | POST | `/feedback` | Rust-native DB write with audit event |
 | GET | `/feedback/{feedback_id}` | Rust-native DB read |
 | GET | `/health/live` | Rust-native |
 | GET | `/health/ready` | Rust-native |
-| GET | `/improvements` | Proxied to FastAPI |
-| POST | `/improvements` | Proxied to FastAPI |
-| GET | `/improvements/{improvement_item_id}` | Proxied to FastAPI |
+| GET | `/improvements` | Rust-native DB read |
+| POST | `/improvements` | Rust-native DB write with validation and audit event |
+| GET | `/improvements/{improvement_item_id}` | Rust-native DB read |
 | GET | `/memory/graph/schema` | Rust-native read-only status |
 | POST | `/memory/graph/schema/ensure` | Rust-native Neo4j schema ensure via bounded service call |
 | POST | `/memory/graph/lineage/sync` | Rust-native Neo4j lineage sync via bounded service calls |
@@ -427,7 +451,7 @@ human-readable inventory of the active route families and gateway behavior.
 | GET | `/reports` | Rust-native DB read |
 | POST | `/reports` | Rust-native DB write with audit event |
 | POST | `/reports/{report_id}/status` | Rust-native DB status update with audit event |
-| POST | `/reports/{report_id}/work-item` | Proxied to FastAPI |
+| POST | `/reports/{report_id}/work-item` | Rust-native DB work-item creation with audit event |
 | POST | `/reports/{report_id}/render` | Rust-native bounded metadata render with artifact and audit event |
 | GET | `/reports/{report_id}` | Rust-native DB read |
 | GET | `/retrieval/chunks/{chunk_id}/trail` | Rust-native DB evidence trail hydration |
@@ -449,14 +473,15 @@ human-readable inventory of the active route families and gateway behavior.
 ## Cutover Script Finding
 
 `scripts/rust-cutover.sh` correctly enforces manifest shape, Rust checks,
-`cutover_ready=true`, and a clean worktree before `--execute`. It does not prove
-route parity and did not claim to do so in code. The DIFF-103 outcome was
-therefore governance-complete, not operationally Rust-complete.
+`cutover_ready=true`, and a clean worktree before `--execute`. Since DIFF-105 it
+also runs the route parity guard. DIFF-138 uses that guard plus manifest and
+Compose state to remove the FastAPI fallback wiring from the runtime API path.
 
 DIFF-105 adds `scripts/rust-route-parity.py` and runs it from
 `scripts/rust-cutover.sh --check`. The guard inventories source-defined routes
-and validates that the manifest still marks FastAPI fallback as required while
-parity is incomplete. DIFF-106 extends the guard to count the Rust gateway route
+and validates that the manifest marks FastAPI fallback as required while parity
+is incomplete, and as not required once DIFF-138 completes parity and removes
+fallback wiring. DIFF-106 extends the guard to count the Rust gateway route
 registry and records the reduced fallback counts. DIFF-107 records the second
 DB read batch and reduces web route fallback dependency again. DIFF-108 adds
 Rust-native read-only settings/env metadata, vector status, and graph status
@@ -566,5 +591,7 @@ deliberately retired:
    Neo4j/Qdrant safety and failure tests.
 18. DIFF-134 through DIFF-137: resolve report work-item, artifact/collection
    ingestion, experiments/improvements, and duplicate root fallback buckets.
-19. Final retirement DIFF: remove or disable `legacy-api` only after route
-   parity tests prove no active route depends on it.
+19. DIFF-138: remove `legacy-api` fallback wiring after route parity tests
+   prove no active FastAPI route depends on it.
+20. DIFF-139: decide whether to archive or preserve legacy Python source and
+   worker components.

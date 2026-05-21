@@ -1,29 +1,32 @@
 # Rust Cutover Rollback
 
-DIFF-103 keeps the Rust gateway as the primary `api` service while preserving
-the FastAPI `legacy-api` fallback. The final cutover script is non-destructive:
-it does not delete files, does not touch runtime/private data, and does not move
-`.env` files.
+DIFF-138 keeps the Rust gateway as the `api` service and removes the FastAPI
+`legacy-api` fallback wiring after route parity reaches zero missing FastAPI
+routes. The cutover checks remain non-destructive: they do not delete files, do
+not touch runtime/private data, and do not move `.env` files.
 
 ## Current Cutover State
 
 - Rust gateway service: `api`
-- FastAPI fallback service: `legacy-api`
 - Web API target inside Compose: `http://api:8000`
-- Unsupported gateway routes are proxied to `http://legacy-api:8000`.
-- No Python API or worker files are archived in DIFF-103 because fallback
-  behavior remains required.
+- Unsupported gateway routes return deterministic Rust 404 responses.
+- No Python API or worker files are archived in DIFF-138. `services/api/`
+  remains present for the DIFF-139 archive or preservation decision, and
+  Python/Celery worker services remain active.
 
 ## Rollback Expectations
 
-If the Rust gateway fails in local deployment, rollback is a Compose-level
-configuration rollback to the DIFF-101 state or to the last known good commit
-before DIFF-102. The expected rollback path is:
+If the Rust gateway fails in local deployment, rollback is a normal git rollback
+to the last known good commit before DIFF-138, or to the earlier DIFF-103
+Rust-primary-with-fallback topology if FastAPI fallback must be restored for
+diagnosis. The expected rollback path is:
 
 1. Stop local services with the existing operator script or Docker Compose.
-2. Revert the DIFF-102 and DIFF-103 commits in a normal git rollback.
+2. Revert DIFF-138 in a normal git rollback, or restore the earlier
+   Rust-primary-with-fallback commits if that specific topology is needed.
 3. Re-run Docker Compose config validation before starting services.
-4. Start services and verify the Python/FastAPI `api` health endpoint.
+4. Start services and verify the expected API health endpoint for the restored
+   topology.
 
 Do not move runtime data into the repository during rollback. Do not archive or
 delete governance files, `docs/diffs/`, `docs/agents/`, `.env`, storage roots,

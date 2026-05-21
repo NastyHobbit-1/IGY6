@@ -2,12 +2,10 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
 
 use igy6_gateway::{
-    build_fallback_proxy_plan, handle_gateway_request_with_db, help_text, parse_gateway_request,
-    render_fallback_http_request, render_http_response, GatewayResponse, DEFAULT_BIND_ADDR,
-    DEFAULT_FALLBACK_ORIGIN,
+    handle_gateway_request_with_db, help_text, parse_gateway_request, render_http_response,
+    GatewayResponse, DEFAULT_BIND_ADDR,
 };
 
 fn main() {
@@ -20,12 +18,9 @@ fn main() {
     let bind_addr = parse_arg_value(&args, "--bind")
         .or_else(|| env::var("GATEWAY_BIND_ADDR").ok())
         .unwrap_or_else(|| DEFAULT_BIND_ADDR.to_string());
-    let fallback_origin = parse_arg_value(&args, "--fallback")
-        .or_else(|| env::var("FALLBACK_API_BASE_URL").ok())
-        .unwrap_or_else(|| DEFAULT_FALLBACK_ORIGIN.to_string());
     let database_url = env::var("DATABASE_URL").ok();
 
-    if let Err(error) = serve(&bind_addr, &fallback_origin, database_url.as_deref()) {
+    if let Err(error) = serve(&bind_addr, database_url.as_deref()) {
         eprintln!("igy6-gateway failed: {error}");
         std::process::exit(1);
     }
@@ -37,17 +32,13 @@ fn parse_arg_value(args: &[String], flag: &str) -> Option<String> {
         .map(|pair| pair[1].clone())
 }
 
-fn serve(
-    bind_addr: &str,
-    fallback_origin: &str,
-    database_url: Option<&str>,
-) -> std::io::Result<()> {
+fn serve(bind_addr: &str, database_url: Option<&str>) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr)?;
     println!("igy6-gateway listening on http://{bind_addr}");
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(error) = handle_stream(&mut stream, fallback_origin, database_url) {
+                if let Err(error) = handle_stream(&mut stream, database_url) {
                     eprintln!("request failed: {error}");
                 }
             }
@@ -57,40 +48,16 @@ fn serve(
     Ok(())
 }
 
-fn handle_stream(
-    stream: &mut TcpStream,
-    fallback_origin: &str,
-    database_url: Option<&str>,
-) -> std::io::Result<()> {
+fn handle_stream(stream: &mut TcpStream, database_url: Option<&str>) -> std::io::Result<()> {
     let mut buffer = [0_u8; 64 * 1024];
     let bytes_read = stream.read(&mut buffer)?;
     let raw = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
     let manifest = fs::read_to_string("configs/rust-cutover-manifest.json").ok();
     let response = match parse_gateway_request(&raw) {
         Ok(request) => {
-            let response = handle_gateway_request_with_db(
-                &request,
-                manifest.as_deref(),
-                fallback_origin,
-                database_url,
-            );
-            if response.proxied_to_fallback {
-                match proxy_to_fallback(&request, fallback_origin) {
-                    Ok(proxied) => proxied,
-                    Err(error) => GatewayResponse {
-                        status_code: 502,
-                        reason: "Bad Gateway".to_string(),
-                        content_type: "application/json".to_string(),
-                        body: format!(
-                            "{{\"detail\":\"FastAPI fallback proxy failed\",\"error\":\"{}\"}}",
-                            json_escape(&error.to_string())
-                        ),
-                        proxied_to_fallback: true,
-                    },
-                }
-            } else {
-                response
-            }
+            let response =
+                handle_gateway_request_with_db(&request, manifest.as_deref(), "", database_url);
+            response
         }
         Err(error) => GatewayResponse {
             status_code: 400,
@@ -101,58 +68,4 @@ fn handle_stream(
         },
     };
     stream.write_all(render_http_response(&response).as_bytes())
-}
-
-fn proxy_to_fallback(
-    request: &igy6_gateway::GatewayRequest,
-    fallback_origin: &str,
-) -> std::io::Result<GatewayResponse> {
-    let plan = build_fallback_proxy_plan(request, fallback_origin)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    let mut stream = TcpStream::connect((plan.host.as_str(), plan.port))?;
-    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
-    stream.write_all(render_fallback_http_request(&plan, request).as_bytes())?;
-
-    let mut raw_response = String::new();
-    stream.read_to_string(&mut raw_response)?;
-    Ok(parse_fallback_response(&raw_response))
-}
-
-fn parse_fallback_response(raw: &str) -> GatewayResponse {
-    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((raw, ""));
-    let status_line = head.lines().next().unwrap_or("HTTP/1.1 502 Bad Gateway");
-    let mut parts = status_line.splitn(3, ' ');
-    let _version = parts.next();
-    let status_code = parts
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(502);
-    let reason = parts.next().unwrap_or("Bad Gateway").to_string();
-    let content_type = head
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-type") {
-                Some(value.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "application/json".to_string());
-    GatewayResponse {
-        status_code,
-        reason,
-        content_type,
-        body: body.to_string(),
-        proxied_to_fallback: true,
-    }
-}
-
-fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
 }

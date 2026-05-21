@@ -10,10 +10,13 @@ or deterministic evidence packets from local records.
 
 ## Current Backend Posture
 
-IGY6 is Rust-primary through the gateway and route parity work completed through
-DIFF-120. It is not Rust-only. The route manifest still marks FastAPI fallback as
-required for remaining legacy/non-web routes, so do not remove FastAPI or claim
-Rust-only operation until the manifest and route parity scripts prove it.
+IGY6's API path is Rust-native after DIFF-138. Route parity records zero
+FastAPI routes missing from Rust and Docker Compose no longer wires the FastAPI
+`legacy-api` fallback service into the runtime API path.
+
+This does not archive the legacy Python API source and does not claim Python
+worker parity. Python/Celery worker services remain part of the local stack
+until a later DIFF proves or documents their replacement.
 
 Current web-used route parity is tracked by:
 

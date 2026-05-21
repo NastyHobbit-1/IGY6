@@ -103,60 +103,12 @@ services:
       timeout: 5s
       retries: 20
 
-  legacy-api:
-    build:
-      context: ../services/api
-    environment:
-      APP_ENV: ${APP_ENV}
-      APP_HOST: ${APP_HOST}
-      APP_PORT: ${APP_PORT}
-      DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: ${REDIS_URL}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-      QDRANT_URL: ${QDRANT_URL}
-      NEO4J_URI: ${NEO4J_URI}
-      NEO4J_USER: ${NEO4J_USER}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT}
-      ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
-      EXPORT_STORE_PATH: ${EXPORT_STORE_PATH}
-      ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
-      ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
-      IGY6_DATA_ROOT: ${IGY6_DATA_ROOT}
-      EXTERNAL_MODEL_POLICY_DEFAULT: ${EXTERNAL_MODEL_POLICY_DEFAULT}
-      SINGLE_USER_MODE: ${SINGLE_USER_MODE}
-      AUDIT_LOG_LEVEL: ${AUDIT_LOG_LEVEL}
-      APPROVAL_REQUIRED_DEFAULT: ${APPROVAL_REQUIRED_DEFAULT}
-    volumes:
-      - type: bind
-        source: ${IGY6_DATA_ROOT}
-        target: /workspace/storage
-      - type: bind
-        source: ..
-        target: /workspace/project
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-      neo4j:
-        condition: service_started
-      mlflow:
-        condition: service_started
-      phoenix:
-        condition: service_started
-
   api:
     build:
       context: ..
       dockerfile: crates/igy6-gateway/Dockerfile
     environment:
       GATEWAY_BIND_ADDR: 0.0.0.0:8000
-      FALLBACK_API_BASE_URL: http://legacy-api:8000
       DATABASE_URL: ${DATABASE_URL}
       ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
       ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
@@ -170,9 +122,6 @@ services:
       - type: bind
         source: ..
         target: /workspace/project
-    depends_on:
-      legacy-api:
-        condition: service_started
 
   worker:
     build:

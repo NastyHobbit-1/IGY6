@@ -30,7 +30,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
-pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
+pub const NO_FALLBACK_ORIGIN: &str = "";
 #[rustfmt::skip]
 pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/"),
@@ -134,7 +134,6 @@ pub enum GatewayError {
     EmptyRequest,
     MalformedRequest,
     InvalidContentLength,
-    InvalidFallbackOrigin(String),
     MissingDatabaseUrl,
     Database(String),
     Validation(String),
@@ -150,9 +149,6 @@ impl fmt::Display for GatewayError {
             Self::EmptyRequest => write!(formatter, "request is empty"),
             Self::MalformedRequest => write!(formatter, "request is malformed"),
             Self::InvalidContentLength => write!(formatter, "content-length is invalid"),
-            Self::InvalidFallbackOrigin(origin) => {
-                write!(formatter, "fallback origin is invalid: {origin}")
-            }
             Self::MissingDatabaseUrl => {
                 write!(formatter, "DATABASE_URL is required for this route")
             }
@@ -190,15 +186,6 @@ pub struct GatewayResponse {
     pub content_type: String,
     pub body: String,
     pub proxied_to_fallback: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FallbackProxyPlan {
-    pub host: String,
-    pub port: u16,
-    pub request_target: String,
-    pub method: String,
-    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,14 +269,14 @@ pub fn handle_gateway_request(
 pub fn handle_gateway_request_with_db(
     request: &GatewayRequest,
     manifest_content: Option<&str>,
-    fallback_origin: &str,
+    _fallback_origin: &str,
     database_url: Option<&str>,
 ) -> GatewayResponse {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => json_response(
             200,
             "OK",
-            "{\"service\":\"igy6-gateway\",\"phase\":\"rust-primary\",\"status\":\"ok\",\"primary_gateway\":true,\"fallback\":\"fastapi\"}".to_string(),
+            "{\"service\":\"igy6-gateway\",\"phase\":\"rust-primary\",\"status\":\"ok\",\"primary_gateway\":true,\"fallback\":\"none\"}".to_string(),
             false,
         ),
         ("GET", "/health/live") => json_response(
@@ -301,10 +288,7 @@ pub fn handle_gateway_request_with_db(
         ("GET", "/health/ready") => json_response(
             200,
             "OK",
-            format!(
-                "{{\"status\":\"ok\",\"checks\":{{\"rust_gateway\":{{\"status\":\"ok\"}},\"fastapi_fallback\":{{\"status\":\"configured\",\"origin\":\"{}\"}}}},\"primary_gateway\":\"rust\",\"fallback\":\"fastapi\"}}",
-                escape_json(fallback_origin)
-            ),
+            "{\"status\":\"ok\",\"checks\":{\"rust_gateway\":{\"status\":\"ok\"},\"fastapi_fallback\":{\"status\":\"removed\"}},\"primary_gateway\":\"rust\",\"fallback\":\"none\"}".to_string(),
             false,
         ),
         ("GET", "/rust-migration/status") => {
@@ -313,7 +297,7 @@ pub fn handle_gateway_request_with_db(
                 200,
                 "OK",
                 format!(
-                    "{{\"status\":\"ok\",\"cutover_ready\":{},\"complete_phases\":{},\"pending_phases\":{},\"primary_gateway\":\"rust\",\"fallback\":\"fastapi\"}}",
+                    "{{\"status\":\"ok\",\"cutover_ready\":{},\"complete_phases\":{},\"pending_phases\":{},\"primary_gateway\":\"rust\",\"fallback\":\"none\"}}",
                     summary.cutover_ready, summary.complete_phases, summary.pending_phases
                 ),
                 false,
@@ -444,7 +428,7 @@ pub fn handle_gateway_request_with_db(
                     database_url,
                 ))
             } else {
-                fallback_or_error(request, fallback_origin)
+                fallback_or_error(request)
             }
         }
         ("GET", "/memory/vector/chunks") => {
@@ -461,37 +445,24 @@ pub fn handle_gateway_request_with_db(
             } else if let Some(route) = db_read_route(&request.path) {
                 db_read_response(route, database_url)
             } else {
-                fallback_or_error(request, fallback_origin)
+                fallback_or_error(request)
             }
         }
-        _ => fallback_or_error(request, fallback_origin),
+        _ => fallback_or_error(request),
     }
 }
 
-fn fallback_or_error(request: &GatewayRequest, fallback_origin: &str) -> GatewayResponse {
-    match build_fallback_proxy_plan(request, fallback_origin) {
-        Ok(plan) => json_response(
-            502,
-            "Bad Gateway",
-            format!(
-                "{{\"detail\":\"Rust gateway fallback proxy is required at runtime\",\"fallback_host\":\"{}\",\"fallback_port\":{},\"fallback_path\":\"{}\"}}",
-                escape_json(&plan.host),
-                plan.port,
-                escape_json(&plan.request_target)
-            ),
-            true,
+fn fallback_or_error(request: &GatewayRequest) -> GatewayResponse {
+    json_response(
+        404,
+        "Not Found",
+        format!(
+            "{{\"detail\":\"Route is not implemented by the Rust gateway and FastAPI fallback is removed\",\"method\":\"{}\",\"path\":\"{}\"}}",
+            escape_json(&request.method),
+            escape_json(&request.path)
         ),
-        Err(error) => json_response(
-            500,
-            "Internal Server Error",
-            format!(
-                "{{\"detail\":\"{}\",\"fallback_origin\":\"{}\"}}",
-                escape_json(&error.to_string()),
-                escape_json(fallback_origin)
-            ),
-            false,
-        ),
-    }
+        false,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9482,40 +9453,6 @@ fn postgres_client_url(database_url: &str) -> String {
     database_url.to_string()
 }
 
-pub fn build_fallback_proxy_plan(
-    request: &GatewayRequest,
-    fallback_origin: &str,
-) -> Result<FallbackProxyPlan, GatewayError> {
-    let without_scheme = fallback_origin
-        .strip_prefix("http://")
-        .ok_or_else(|| GatewayError::InvalidFallbackOrigin(fallback_origin.to_string()))?;
-    if without_scheme.is_empty() || without_scheme.contains('/') {
-        return Err(GatewayError::InvalidFallbackOrigin(
-            fallback_origin.to_string(),
-        ));
-    }
-    let (host, port) = if let Some((host, port)) = without_scheme.rsplit_once(':') {
-        let port = port
-            .parse::<u16>()
-            .map_err(|_| GatewayError::InvalidFallbackOrigin(fallback_origin.to_string()))?;
-        (host.to_string(), port)
-    } else {
-        (without_scheme.to_string(), 80)
-    };
-    if host.trim().is_empty() {
-        return Err(GatewayError::InvalidFallbackOrigin(
-            fallback_origin.to_string(),
-        ));
-    }
-    Ok(FallbackProxyPlan {
-        host,
-        port,
-        request_target: request.path.clone(),
-        method: request.method.clone(),
-        body: request.body.clone(),
-    })
-}
-
 pub fn render_http_response(response: &GatewayResponse) -> String {
     format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -9525,38 +9462,6 @@ pub fn render_http_response(response: &GatewayResponse) -> String {
         response.body.len(),
         response.body
     )
-}
-
-pub fn render_fallback_http_request(plan: &FallbackProxyPlan, original: &GatewayRequest) -> String {
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
-        plan.method, plan.request_target, plan.host
-    );
-    let mut has_content_type = false;
-    for (name, value) in &original.headers {
-        if name.eq_ignore_ascii_case("host")
-            || name.eq_ignore_ascii_case("connection")
-            || name.eq_ignore_ascii_case("content-length")
-        {
-            continue;
-        }
-        if name.eq_ignore_ascii_case("content-type") {
-            has_content_type = true;
-        }
-        request.push_str(name);
-        request.push_str(": ");
-        request.push_str(value);
-        request.push_str("\r\n");
-    }
-    if !plan.body.is_empty() {
-        if !has_content_type {
-            request.push_str("Content-Type: application/json\r\n");
-        }
-        request.push_str(&format!("Content-Length: {}\r\n", plan.body.len()));
-    }
-    request.push_str("\r\n");
-    request.push_str(&plan.body);
-    request
 }
 
 fn execute_external_http(
@@ -9711,7 +9616,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000] [--fallback http://legacy-api:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes are proxied to the configured FastAPI fallback at runtime.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -9997,7 +9902,7 @@ fn agent_capabilities_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"actions\":[{}],\"runtime\":{{\"gateway\":\"rust\",\"fastapi_fallback\":true}}}}",
+        "{{\"actions\":[{}],\"runtime\":{{\"gateway\":\"rust\",\"fastapi_fallback\":false}}}}",
         actions
     )
 }
@@ -10224,8 +10129,7 @@ mod tests {
 
     #[test]
     fn health_routes_identify_rust_as_primary_gateway() {
-        let response =
-            handle_gateway_request(&request("GET", "/", ""), None, DEFAULT_FALLBACK_ORIGIN);
+        let response = handle_gateway_request(&request("GET", "/", ""), None, NO_FALLBACK_ORIGIN);
         assert_eq!(response.status_code, 200);
         assert!(!response.proxied_to_fallback);
         assert!(response.body.contains("\"service\":\"igy6-gateway\""));
@@ -10234,7 +10138,7 @@ mod tests {
         let response = handle_gateway_request(
             &request("GET", "/health/live", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response.body.contains("\"primary_gateway\":true"));
@@ -10242,11 +10146,14 @@ mod tests {
         let response = handle_gateway_request(
             &request("GET", "/health/ready", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response.body.contains("\"primary_gateway\":\"rust\""));
-        assert!(response.body.contains("\"fallback\":\"fastapi\""));
+        assert!(response.body.contains("\"fallback\":\"none\""));
+        assert!(response
+            .body
+            .contains("\"fastapi_fallback\":{\"status\":\"removed\"}"));
     }
 
     #[test]
@@ -10254,7 +10161,7 @@ mod tests {
         let response = handle_gateway_request(
             &request("GET", "/rust-migration/status", ""),
             Some("{\"cutover_ready\": true, \"status\": \"complete\"}"),
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response.body.contains("\"cutover_ready\":true"));
@@ -10266,7 +10173,7 @@ mod tests {
         let response = handle_gateway_request(
             &request("GET", "/agent/capabilities", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response.body.contains("show_project_health"));
@@ -10278,7 +10185,7 @@ mod tests {
         let response = handle_gateway_request(
             &request("POST", "/agent/intent", "{\"message\":\"show health\"}"),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response
@@ -10296,7 +10203,7 @@ mod tests {
                 "{\"message\":\"what changed?\"}",
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response
@@ -10310,7 +10217,7 @@ mod tests {
                 "{\"message\":\"what changed?\"}",
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
         );
         assert_eq!(response.status_code, 200);
         assert!(response
@@ -10319,16 +10226,12 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_routes_plan_fastapi_fallback() {
+    fn unsupported_routes_return_rust_not_found_without_fallback() {
         let request = request("POST", "/unimplemented-route", "{}");
-        let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
-        assert_eq!(plan.host, "legacy-api");
-        assert_eq!(plan.port, 8000);
-        assert_eq!(plan.request_target, "/unimplemented-route");
-
-        let response = handle_gateway_request(&request, None, "http://legacy-api:8000");
-        assert_eq!(response.status_code, 502);
-        assert!(response.proxied_to_fallback);
+        let response = handle_gateway_request(&request, None, NO_FALLBACK_ORIGIN);
+        assert_eq!(response.status_code, 404);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("FastAPI fallback is removed"));
     }
 
     #[test]
@@ -10340,7 +10243,7 @@ mod tests {
                 r#"{"message":"show project health","parameters":{},"actor_id":"local-owner"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10359,7 +10262,7 @@ mod tests {
         let unknown = handle_gateway_request_with_db(
             &request("POST", "/agent/actions/not_allowed/execute", "{}"),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(unknown.status_code, 404);
@@ -10368,7 +10271,7 @@ mod tests {
         let malformed = handle_gateway_request_with_db(
             &request("POST", "/agent/actions/rm%20-rf/execute", "{}"),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(malformed.status_code, 422);
@@ -10381,7 +10284,7 @@ mod tests {
                 r#"{"parameters":{},"actor_id":"local-owner"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(missing_parameter.status_code, 422);
@@ -10394,7 +10297,7 @@ mod tests {
                 r#"{"parameters":{"argv":["/bin/sh"]},"actor_id":"local-owner"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(user_argv.status_code, 422);
@@ -10407,7 +10310,7 @@ mod tests {
                 r#"{"parameters":{},"actor_id":"local-owner"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(missing_approval.status_code, 403);
@@ -10423,7 +10326,7 @@ mod tests {
                 r#"{"parameters":{},"actor_id":"local-owner"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10496,7 +10399,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request(method, path, ""),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -10510,7 +10413,7 @@ mod tests {
         let response = handle_gateway_request_with_db(
             &request("GET", "/sources", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             Some("not-a-postgres-url"),
         );
         assert_eq!(response.status_code, 502);
@@ -10528,7 +10431,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("GET", path, ""),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 200, "{path}");
@@ -10546,7 +10449,7 @@ mod tests {
                 "",
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(unsupported_graph_label.status_code, 422);
@@ -10555,7 +10458,7 @@ mod tests {
         let graph_lineage_without_db = handle_gateway_request_with_db(
             &request("POST", "/memory/graph/lineage/sync", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(graph_lineage_without_db.status_code, 503);
@@ -10569,7 +10472,7 @@ mod tests {
                 r#"{"query":"alpha","limit":99}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(vector_search_invalid_limit.status_code, 422);
@@ -10578,7 +10481,7 @@ mod tests {
         let vector_upsert_without_db = handle_gateway_request_with_db(
             &request("POST", "/memory/vector/chunks/upsert", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(vector_upsert_without_db.status_code, 503);
@@ -10619,7 +10522,7 @@ mod tests {
         let response = handle_gateway_request_with_db(
             &request("GET", "/settings/env", ""),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 200);
@@ -10635,7 +10538,7 @@ mod tests {
         let verify_response = handle_gateway_request_with_db(
             &request("POST", "/settings/env/verify", r#"{"values":{}}"#),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(verify_response.status_code, 200);
@@ -10649,7 +10552,7 @@ mod tests {
                 r#"{"values":{},"verification_token":"bad"}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(apply_response.status_code, 409);
@@ -10668,7 +10571,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/settings/env/verify", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10721,7 +10624,7 @@ mod tests {
         let response = handle_gateway_request_with_db(
             &request("POST", "/settings/env/apply", &body),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10739,7 +10642,7 @@ mod tests {
         let response = handle_gateway_request_with_db(
             &request("POST", "/settings/env/apply", &body),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 409);
@@ -10756,7 +10659,7 @@ mod tests {
                 r#"{"request_type":"agent_action","request_payload_json":{"action_name":"start_stack"}}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10775,7 +10678,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/approvals", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10798,7 +10701,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -10816,7 +10719,7 @@ mod tests {
                 r#"{"name":"Manual notes","source_type":"manual_upload","sensitivity":"internal","permission":{"scope_json":{},"allowed_operations":["dry_run","read"],"external_model_policy":"blocked","approval_required":true}}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10833,7 +10736,7 @@ mod tests {
                 r#"{"title":"MVP report","report_type":"summary","status":"requested","metadata_json":{"scope":"local"}}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10846,7 +10749,7 @@ mod tests {
         let response = handle_gateway_request_with_db(
             &request("POST", "/work-items/", &valid_work_item_create_body()),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -10876,7 +10779,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/work-items/", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10909,7 +10812,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/reports", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10936,7 +10839,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -10960,7 +10863,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/analysis/patterns", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10975,7 +10878,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/analysis/patterns/pattern-1/review", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -10997,7 +10900,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -11028,7 +10931,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{path} {body}");
@@ -11085,7 +10988,7 @@ mod tests {
                 r#"{"source_id":"source-1","source_permission_id":"permission-1","notes":{"reason":"preview"}}"#,
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -11111,7 +11014,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -11139,7 +11042,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{path}");
@@ -11183,7 +11086,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{path} {body}");
@@ -11200,7 +11103,7 @@ mod tests {
                 &valid_manual_upload_body(),
             ),
             None,
-            DEFAULT_FALLBACK_ORIGIN,
+            NO_FALLBACK_ORIGIN,
             None,
         );
         assert_eq!(response.status_code, 503);
@@ -11235,7 +11138,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/collection-runs/manual-upload", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11288,7 +11191,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{path} {body}");
@@ -11347,7 +11250,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/collection-runs/dry-run", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11467,7 +11370,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/analysis/patterns/detect-baseline", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11521,7 +11424,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/sources", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11541,7 +11444,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/feedback", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11562,7 +11465,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/outcomes", body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{body}");
@@ -11620,7 +11523,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request(method, path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 503, "{method} {path}");
@@ -11663,7 +11566,7 @@ mod tests {
             let response = handle_gateway_request_with_db(
                 &request("POST", path, body),
                 None,
-                DEFAULT_FALLBACK_ORIGIN,
+                NO_FALLBACK_ORIGIN,
                 None,
             );
             assert_eq!(response.status_code, 422, "{path} {body}");
@@ -11818,26 +11721,6 @@ mod tests {
             host_port_from_url("bolt://neo4j:7687"),
             Some(("neo4j".to_string(), 7687))
         );
-    }
-
-    #[test]
-    fn fallback_origin_is_local_http_only() {
-        let error = build_fallback_proxy_plan(&request("GET", "/sources", ""), "https://api:8000")
-            .expect_err("https is rejected");
-        assert!(matches!(error, GatewayError::InvalidFallbackOrigin(_)));
-    }
-
-    #[test]
-    fn renders_fallback_request_without_host_or_content_length_duplication() {
-        let request = parse_gateway_request(
-            "POST /sources HTTP/1.1\r\nHost: api\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
-        )
-        .expect("request");
-        let plan = build_fallback_proxy_plan(&request, "http://legacy-api:8000").expect("plan");
-        let rendered = render_fallback_http_request(&plan, &request);
-        assert!(rendered.starts_with("POST /sources HTTP/1.1\r\nHost: legacy-api\r\n"));
-        assert_eq!(rendered.matches("Content-Length").count(), 1);
-        assert!(rendered.ends_with("{}"));
     }
 
     fn request(method: &str, path: &str, body: &str) -> GatewayRequest {

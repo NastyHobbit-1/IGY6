@@ -171,11 +171,6 @@ def _classification_errors(
     if not isinstance(route_parity, dict):
         errors.append("manifest route_parity must be an object")
         route_parity = {}
-    readiness_pending = (
-        not summary["fastapi_fallback_required"]
-        and route_parity.get("next_required_diff") == "DIFF-138"
-        and route_parity.get("status") == "partial"
-    )
     if summary["web_routes_requiring_fallback"] != 0:
         errors.append("web_routes_requiring_fallback must remain 0 after DIFF-118")
 
@@ -260,13 +255,13 @@ def _classification_errors(
         or bucket_counts["unsafe_to_migrate_now"] > 0
         or bool(missing_from_rust)
     )
-    if bool(classification.get("fastapi_fallback_required")) != requires_legacy and not readiness_pending:
+    if bool(classification.get("fastapi_fallback_required")) != requires_legacy:
         errors.append("classification fastapi_fallback_required is stale")
-    if classification.get("rust_only_claim_allowed") is not (not requires_legacy) and not readiness_pending:
+    if classification.get("rust_only_claim_allowed") is not (not requires_legacy):
         errors.append("classification rust_only_claim_allowed is stale")
 
     manifest_fallback_required = bool(manifest.get("fastapi_fallback_required"))
-    if manifest_fallback_required != summary["fastapi_fallback_required"] and not readiness_pending:
+    if manifest_fallback_required != summary["fastapi_fallback_required"]:
         errors.append("manifest fastapi_fallback_required does not match route parity")
     if route_parity.get("rust_native_routes") != summary["rust_native_routes"]:
         errors.append("manifest rust_native_routes is stale")
