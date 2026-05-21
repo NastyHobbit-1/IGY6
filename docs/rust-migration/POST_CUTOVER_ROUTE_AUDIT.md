@@ -25,16 +25,16 @@ Rust gateway service: api
     |   control routes, DIFF-132 active medium-risk route parity,
     |   DIFF-133 graph/vector memory route parity, DIFF-134 report
     |   work-item route parity, DIFF-135 artifact/collection
-    |   ingestion route parity, and DIFF-136 experiments/improvements
-    |   route parity
+    |   ingestion route parity, DIFF-136 experiments/improvements
+    |   route parity, and DIFF-137 root route parity
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
-FastAPI is still required until root-route resolution and fallback readiness
-are explicitly evaluated. No web-used route requires FastAPI fallback after
-DIFF-136, and DIFF-136 records the current non-web fallback posture in
+FastAPI fallback remains configured until DIFF-138 evaluates readiness. No
+web-used route requires FastAPI fallback after DIFF-137, and DIFF-137 records
+the current route parity posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
 `legacy-api` must not be archived, removed, or disabled until route parity
@@ -61,6 +61,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 
 | Method | Route | Rust status |
 | --- | --- | --- |
+| GET | `/` | Rust-native gateway identity response |
 | GET | `/health/live` | Rust-native |
 | GET | `/health/ready` | Rust-native |
 | GET | `/rust-migration/status` | Rust-native |
@@ -160,13 +161,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 | DIFF-136 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 | 93 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 | 1 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 | DIFF-135 | DIFF-136 | DIFF-137 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 | 86 | 93 | 94 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 | 8 | 1 | 0 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -279,6 +280,24 @@ DIFF-138 evaluates fallback readiness.
 | `intentional_legacy_fallback` | 0 |
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 0 |
+
+## DIFF-137 Duplicate Root Route Resolution
+
+DIFF-137 decision: migrate `GET /` to Rust.
+
+DIFF-137 migrates the duplicate/superseded FastAPI scaffold root route to a
+Rust-native gateway identity response. The Rust root identity plus
+`/health/live`, `/health/ready`, and `/rust-migration/status` supersede the old
+FastAPI scaffold response. FastAPI fallback remains configured until DIFF-138
+evaluates readiness and removes fallback only if safe.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 0 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 0 |
 | `unsafe_to_migrate_now` | 0 |
 
 ## Web-Used Route Matrix

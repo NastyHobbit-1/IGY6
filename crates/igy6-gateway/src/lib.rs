@@ -33,6 +33,7 @@ pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const DEFAULT_FALLBACK_ORIGIN: &str = "http://legacy-api:8000";
 #[rustfmt::skip]
 pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/"),
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
@@ -285,6 +286,12 @@ pub fn handle_gateway_request_with_db(
     database_url: Option<&str>,
 ) -> GatewayResponse {
     match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/") => json_response(
+            200,
+            "OK",
+            "{\"service\":\"igy6-gateway\",\"phase\":\"rust-primary\",\"status\":\"ok\",\"primary_gateway\":true,\"fallback\":\"fastapi\"}".to_string(),
+            false,
+        ),
         ("GET", "/health/live") => json_response(
             200,
             "OK",
@@ -10217,6 +10224,13 @@ mod tests {
 
     #[test]
     fn health_routes_identify_rust_as_primary_gateway() {
+        let response =
+            handle_gateway_request(&request("GET", "/", ""), None, DEFAULT_FALLBACK_ORIGIN);
+        assert_eq!(response.status_code, 200);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("\"service\":\"igy6-gateway\""));
+        assert!(response.body.contains("\"primary_gateway\":true"));
+
         let response = handle_gateway_request(
             &request("GET", "/health/live", ""),
             None,
@@ -11698,6 +11712,7 @@ mod tests {
     #[test]
     fn rust_native_route_registry_covers_db_read_batch() {
         for expected in [
+            ("GET", "/"),
             ("GET", "/sources"),
             ("GET", "/sources/{source_id}"),
             ("GET", "/sources/{source_id}/permissions"),

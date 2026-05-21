@@ -1,17 +1,17 @@
-# DIFF-136 Non-Web FastAPI Route Classification
+# DIFF-137 Non-Web FastAPI Route Classification
 
 Date: 2026-05-20
 
 ## Summary
 
-DIFF-136 migrates the experiments and improvements FastAPI fallback routes to
-Rust-native gateway handling. The 1 route still missing from Rust is classified
-below. The web route guard remains at
+DIFF-137 migrates the duplicate/superseded FastAPI root route to Rust-native
+gateway handling. There are 0 FastAPI routes still missing from Rust. The web
+route guard remains at
 `web_routes_requiring_fallback=0`, so Rust is primary for web-used traffic, but
 the repository is not Rust-only.
 
-FastAPI remains required because the duplicate/superseded root route is still
-unresolved until DIFF-137. The machine-readable source of truth is
+FastAPI fallback remains configured until DIFF-138 performs the explicit
+fallback readiness decision. The machine-readable source of truth is
 `configs/legacy-fastapi-route-classification.json`; this document is the
 human-readable companion.
 
@@ -50,25 +50,34 @@ handling:
 - `GET /improvements/{improvement_item_id}`
 - `POST /improvements`
 
+DIFF-137 decision: migrate the duplicate/superseded root route to Rust.
+
+DIFF-137 migrated this route to Rust-native handling:
+
+- `GET /`
+
+The Rust root identity, `/health/live`, `/health/ready`, and
+`/rust-migration/status` supersede the old FastAPI scaffold root response.
+
 ## Counts
 
 | Bucket | Count | Meaning |
 | --- | ---: | --- |
 | `active_parity_required` | 0 | No currently classified missing route is in the active medium-risk parity bucket. |
-| `intentional_legacy_fallback` | 0 | No remaining route is intentionally retained as FastAPI fallback after DIFF-136. |
+| `intentional_legacy_fallback` | 0 | No remaining route is intentionally retained as FastAPI fallback after DIFF-137. |
 | `retireable_unused` | 0 | No missing route is currently proven safe to remove solely as unused. |
-| `duplicate_or_superseded` | 1 | Functionally covered by Rust health/status surfaces or otherwise superseded. |
+| `duplicate_or_superseded` | 0 | No missing duplicate/superseded route remains after DIFF-137. |
 | `unsafe_to_migrate_now` | 0 | No currently classified missing route remains in the high-risk artifact/collection bucket. |
 
 ## Classification Matrix
 
 | Method | Route | Python handler | Classification | Risk | Future DIFF |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/` | `services/api/app/main.py::root` | `duplicate_or_superseded` | low | DIFF-137 |
+| _none_ | _none_ | _none_ | _none_ | _none_ | _none_ |
 ## Final Posture
 
 - Rust is primary for all routes counted as web-used by the route parity guard.
-- FastAPI is still required until the duplicate/superseded root route is
-  resolved in DIFF-137 and DIFF-138 evaluates fallback readiness.
+- FastAPI fallback remains configured until DIFF-138 evaluates fallback
+  readiness and decides whether it can be removed.
 - Rust-only cannot honestly be claimed.
-- The experiments and improvements route family is complete after DIFF-136.
+- No FastAPI routes are missing from Rust after DIFF-137.
