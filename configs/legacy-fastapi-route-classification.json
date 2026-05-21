@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-136",
+  "diff": "DIFF-137",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -10,33 +10,18 @@
   "route_parity": {
     "fastapi_routes": 91,
     "rust_native_routes": 93,
-    "fastapi_routes_missing_from_rust": 1,
+    "fastapi_routes_missing_from_rust": 0,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
-  "fastapi_fallback_required": true,
-  "rust_only_claim_allowed": false,
+  "fastapi_fallback_required": false,
+  "rust_only_claim_allowed": true,
   "classification_counts": {
     "active_parity_required": 0,
     "intentional_legacy_fallback": 0,
     "retireable_unused": 0,
-    "duplicate_or_superseded": 1,
+    "duplicate_or_superseded": 0,
     "unsafe_to_migrate_now": 0
   },
-  "routes": [
-    {
-      "method": "GET",
-      "path": "/",
-      "python_module": "services/api/app/main.py",
-      "python_handler": "root",
-      "rust_status": "missing_from_rust",
-      "classification": "duplicate_or_superseded",
-      "reason": "FastAPI root returns service identity only; Rust already exposes health and migration status endpoints used for runtime checks.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": false,
-      "migration_risk": "low",
-      "retirement_condition": "Confirm no local workflow depends on the FastAPI root identity response, then retire or ignore during FastAPI removal.",
-      "recommended_future_diff": "DIFF-137"
-    }
-  ]
+  "routes": []
 }
