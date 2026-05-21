@@ -20,7 +20,6 @@ EXPECTED_SERVICES=(
   neo4j
   mlflow
   phoenix
-  legacy-api
   api
   worker
   beat

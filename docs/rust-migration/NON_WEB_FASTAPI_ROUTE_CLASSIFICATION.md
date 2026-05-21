@@ -1,4 +1,4 @@
-# DIFF-138 Non-Web FastAPI Route Classification
+# DIFF-139 Non-Web FastAPI Route Classification
 
 Date: 2026-05-20
 
@@ -6,13 +6,13 @@ Date: 2026-05-20
 
 DIFF-138 removes FastAPI fallback from the runtime API path after DIFF-137
 migrated the duplicate/superseded FastAPI root route to Rust-native gateway
-handling. There are 0 FastAPI routes still missing from Rust. The web route
-guard remains at `web_routes_requiring_fallback=0`, so the API route surface no
-longer requires FastAPI fallback.
+handling. DIFF-139 archives the tracked legacy FastAPI API source at
+`archive/legacy-python/services-api`. There are 0 FastAPI routes still missing
+from Rust. The web route guard remains at `web_routes_requiring_fallback=0`, so
+the API route surface no longer requires FastAPI fallback.
 
-This is an API fallback decision only. It does not archive `services/api/` and
-does not replace or archive the Python/Celery worker services. The
-machine-readable source of truth is
+This is an API archive decision only. It does not replace or archive the
+Python/Celery worker services. The machine-readable source of truth is
 `configs/legacy-fastapi-route-classification.json`; this document is the
 human-readable companion.
 
@@ -78,8 +78,9 @@ The Rust root identity, `/health/live`, `/health/ready`, and
 ## Final Posture
 
 - Rust handles all routes counted by the FastAPI/Rust route parity guard.
-- FastAPI fallback is no longer required or wired into Docker Compose after
-  DIFF-138.
-- No FastAPI routes are missing from Rust after DIFF-138.
+- FastAPI fallback is no longer required or wired into Docker Compose.
+- Legacy FastAPI API source is archived at
+  `archive/legacy-python/services-api` after DIFF-139.
+- No FastAPI routes are missing from Rust after DIFF-139.
 - Full repository Rust-only operation is not claimed because Python worker
   services remain in scope for later DIFF review.

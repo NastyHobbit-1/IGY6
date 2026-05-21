@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-FASTAPI_APP = REPO_ROOT / "services" / "api" / "app"
+FASTAPI_APP = REPO_ROOT / "archive" / "legacy-python" / "services-api" / "app"
 GATEWAY_LIB = REPO_ROOT / "crates" / "igy6-gateway" / "src" / "lib.rs"
 WEB_ROOT = REPO_ROOT / "apps" / "web"
 MANIFEST = REPO_ROOT / "configs" / "rust-cutover-manifest.json"
@@ -257,8 +257,17 @@ def _classification_errors(
     )
     if bool(classification.get("fastapi_fallback_required")) != requires_legacy:
         errors.append("classification fastapi_fallback_required is stale")
-    if classification.get("rust_only_claim_allowed") is not (not requires_legacy):
+    legacy_python_review = manifest.get("legacy_python_review", {})
+    if isinstance(legacy_python_review, dict):
+        rust_only_claim_allowed = bool(
+            legacy_python_review.get("rust_only_repository_claim_allowed", not requires_legacy)
+        )
+    else:
+        rust_only_claim_allowed = not requires_legacy
+    if classification.get("rust_only_claim_allowed") is not rust_only_claim_allowed:
         errors.append("classification rust_only_claim_allowed is stale")
+    if classification.get("rust_api_route_parity_claim_allowed") is not (not requires_legacy):
+        errors.append("classification rust_api_route_parity_claim_allowed is stale")
 
     manifest_fallback_required = bool(manifest.get("fastapi_fallback_required"))
     if manifest_fallback_required != summary["fastapi_fallback_required"]:

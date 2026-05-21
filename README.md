@@ -14,9 +14,10 @@ IGY6's API path is Rust-native after DIFF-138. Route parity records zero
 FastAPI routes missing from Rust and Docker Compose no longer wires the FastAPI
 `legacy-api` fallback service into the runtime API path.
 
-This does not archive the legacy Python API source and does not claim Python
-worker parity. Python/Celery worker services remain part of the local stack
-until a later DIFF proves or documents their replacement.
+DIFF-139 archives the legacy FastAPI API source at
+`archive/legacy-python/services-api`. This does not claim Python worker parity:
+Python/Celery `worker` and `beat` services remain part of the local stack until
+a later DIFF proves or documents their replacement.
 
 Current web-used route parity is tracked by:
 

@@ -84,9 +84,15 @@ based on the final DIFF's policy.
 
 ## Legacy Services
 
-Do not archive `services/api/`, `services/worker/`, legacy Python tests, or
-legacy migrations until Rust replacements are complete and the manifest says
-final cutover is ready.
+`services/api/` may be archived only after FastAPI fallback wiring is removed,
+route parity proves zero FastAPI routes are missing from Rust, and the manifest
+records `fastapi_fallback_required=false`. DIFF-139 meets that condition and
+archives the tracked legacy FastAPI API tree under
+`archive/legacy-python/services-api`.
+
+Do not archive `services/worker/` until Rust worker execution parity exists and
+is verified. As of DIFF-139, Python/Celery `worker` and `beat` remain active
+runtime components.
 
 ## Fresh Rust Docs
 

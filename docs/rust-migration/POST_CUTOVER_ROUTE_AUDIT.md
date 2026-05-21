@@ -6,8 +6,8 @@ Date: 2026-05-17
 
 DIFF-103 completed cutover governance with Rust primary and FastAPI fallback.
 DIFF-138 removes FastAPI fallback after route parity reaches zero missing
-FastAPI routes. The current API topology is Rust-native while Python/Celery
-workers remain active:
+FastAPI routes. DIFF-139 archives the tracked legacy FastAPI API source. The
+current API topology is Rust-native while Python/Celery workers remain active:
 
 ```text
 Next.js web
@@ -38,8 +38,9 @@ requires FastAPI fallback, and DIFF-138 records the current route parity posture
 in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
-`services/api/` is not archived in DIFF-138; DIFF-139 remains responsible for
-the legacy Python archive or preservation decision.
+The legacy FastAPI source is archived at
+`archive/legacy-python/services-api`. Python/Celery `worker` and `beat` remain
+active runtime services from `services/worker`.
 
 ## Runtime Topology
 
@@ -324,6 +325,26 @@ preservation decision.
 | `duplicate_or_superseded` | 0 |
 | `unsafe_to_migrate_now` | 0 |
 
+## DIFF-139 Legacy Python Archive Decision
+
+DIFF-139 decision: archive the legacy FastAPI API source and retain
+Python/Celery worker execution.
+
+`services/api/` is no longer needed by an active runtime path after DIFF-138:
+Docker Compose no longer defines `legacy-api`, the Rust gateway no longer
+accepts a fallback origin, and route parity reports 0 FastAPI routes missing
+from Rust. DIFF-139 moves the tracked FastAPI API tree to
+`archive/legacy-python/services-api` using `git mv`.
+
+`services/worker/` remains required because Docker Compose still runs:
+
+- `worker`: `celery -A app.celery_app:celery_app worker --loglevel=INFO`
+- `beat`: `celery -A app.celery_app:celery_app beat --loglevel=INFO`
+
+The Rust worker crate remains a deterministic planning foundation; it does not
+replace live Celery execution, database writes, audit writes, or Qdrant work.
+Full Rust-only repository/runtime operation is therefore not claimed.
+
 ## Web-Used Route Matrix
 
 | Method | Route | Web usage | Gateway behavior |
@@ -371,11 +392,13 @@ preservation decision.
 | POST | `/work-items/` | Page work item creation | Rust-native DB write with intent verification and audit event |
 | POST | `/work-items/{work_item_id}/dispatch` | Page work dispatch | Rust-native validation and non-executing dispatch audit marker |
 
-## FastAPI Route Inventory
+## Archived FastAPI Route Inventory
 
-FastAPI exposes `/` plus the following APIRouter routes. DIFF-105 automated the
-count and found 90 APIRouter routes plus `/`; DIFF-104's manual table remains a
-human-readable inventory of the active route families and gateway behavior.
+The archived FastAPI source at `archive/legacy-python/services-api/app`
+contains `/` plus the following APIRouter routes. DIFF-105 automated the count
+and found 90 APIRouter routes plus `/`; this manual table remains a
+human-readable inventory of the historical FastAPI route families and current
+Rust gateway behavior.
 
 | Method | Route | Gateway behavior |
 | --- | --- | --- |
@@ -593,5 +616,7 @@ deliberately retired:
    ingestion, experiments/improvements, and duplicate root fallback buckets.
 19. DIFF-138: remove `legacy-api` fallback wiring after route parity tests
    prove no active FastAPI route depends on it.
-20. DIFF-139: decide whether to archive or preserve legacy Python source and
-   worker components.
+20. DIFF-139: archive legacy FastAPI API source and preserve Python/Celery
+   worker and beat as active runtime services.
+21. DIFF-140: final audit stating Rust-native API with retained Python worker,
+   unless a later worker parity DIFF removes those services first.

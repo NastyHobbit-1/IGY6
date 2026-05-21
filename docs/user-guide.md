@@ -191,10 +191,11 @@ different system instruction, model, temperature, purpose, and
 
 ## Safety Notes
 
-IGY6 is local-first and evidence-only by default. It does not claim Rust-only
-operation while the manifest still requires FastAPI fallback. It does not send
-evidence to an external model by default. It does not run arbitrary shell text
-from Assistant input.
+IGY6 is local-first and evidence-only by default. The API path no longer uses
+FastAPI fallback after DIFF-138, but full Rust-only repository/runtime operation
+is not claimed while Python/Celery worker and beat services remain active. It
+does not send evidence to an external model by default. It does not run
+arbitrary shell text from Assistant input.
 
 System-changing actions must clearly show approval requirements. Stack
 start/stop/recovery actions require approval and fixed allowlisted runtime

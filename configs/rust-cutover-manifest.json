@@ -2,10 +2,10 @@
   "schema_version": 1,
   "cutover_ready": true,
   "target_architecture": "rust-primary",
-  "operational_status": "rust-native-api-with-python-worker",
+  "operational_status": "rust-native-api-with-archived-fastapi-and-python-worker",
   "fastapi_fallback_required": false,
   "route_parity": {
-    "diff": "DIFF-138",
+    "diff": "DIFF-139",
     "status": "complete",
     "rust_native_routes": 94,
     "fastapi_router_routes": 90,
@@ -18,7 +18,22 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-139"
+    "next_required_diff": "DIFF-140"
+  },
+  "legacy_python_review": {
+    "diff": "DIFF-139",
+    "services_api": {
+      "decision": "archived",
+      "from": "services/api/",
+      "to": "archive/legacy-python/services-api/",
+      "reason": "No active runtime path needs the FastAPI API service after DIFF-138 removed legacy-api fallback wiring and route parity reached zero missing FastAPI routes."
+    },
+    "services_worker": {
+      "decision": "retained",
+      "path": "services/worker/",
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity is not implemented or verified."
+    },
+    "rust_only_repository_claim_allowed": false
   },
   "required_phases": [
     "host_bridge",
@@ -113,7 +128,7 @@
       "diff": "DIFF-091",
       "verification": [
         "DIFF-091 adds Rust content-addressed artifact storage in crates/igy6-artifacts.",
-        "Python/FastAPI artifact behavior remains active until a later parity DIFF explicitly replaces it.",
+        "Legacy Python/FastAPI artifact behavior is archived under archive/legacy-python/services-api after DIFF-139; Rust artifact route parity is active.",
         "git status --short checked DIFF-091 scoped files only",
         "git diff --check passed",
         "cargo fmt --all --check passed",
@@ -147,7 +162,7 @@
       "diff": "DIFF-093",
       "verification": [
         "DIFF-093 adds Rust deterministic chunking foundation in crates/igy6-chunking.",
-        "Python API and worker chunk generation remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python API chunk generation is archived after DIFF-139; Python/Celery worker chunk generation remains active until Rust worker execution parity explicitly replaces it.",
         "git status --short checked DIFF-093 scoped files only",
         "git diff --check passed",
         "cargo fmt --all --check passed",
@@ -164,7 +179,7 @@
       "diff": "DIFF-094",
       "verification": [
         "DIFF-094 adds Rust deterministic vector-memory helpers in crates/igy6-vector-memory.",
-        "Python API database routes and worker vector behavior remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python API database routes are archived after DIFF-139; Python/Celery worker vector behavior remains active until Rust worker execution parity explicitly replaces it.",
         "Qdrant request planning is local/client-provided HTTP only and is not executed during verification.",
         "git status --short checked DIFF-094 scoped files only",
         "git diff --check passed",
@@ -200,7 +215,7 @@
       "diff": "DIFF-096",
       "verification": [
         "DIFF-096 adds a Rust read-only API sidecar foundation in crates/igy6-read-only-api.",
-        "FastAPI remains the primary API and gateway until a later parity DIFF explicitly replaces it.",
+        "The active API gateway is Rust. This read-only sidecar crate remains historical scaffolding; FastAPI API source is archived after DIFF-139.",
         "Rust sidecar routes are local read-only health and migration-status responses with no database, runtime data, or external service calls.",
         "git status --short checked DIFF-096 scoped files only",
         "git diff --check passed",
@@ -219,7 +234,7 @@
       "diff": "DIFF-097",
       "verification": [
         "DIFF-097 adds Rust typed agent command-plane classification in crates/igy6-agent-api.",
-        "Python/FastAPI agent routes, approvals, audits, action execution, and subprocess/script behavior remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python/FastAPI agent routes, approvals, audits, and action endpoints are archived after DIFF-139; Rust gateway route parity is active.",
         "Rust agent API covers the fixed action registry and intent classification only; it performs no actions.",
         "git status --short checked DIFF-097 scoped files only",
         "git diff --check passed",
@@ -237,7 +252,7 @@
       "diff": "DIFF-098",
       "verification": [
         "DIFF-098 adds Rust in-memory retrieval-preview planning in crates/igy6-retrieval-preview.",
-        "Python/FastAPI DB hydration, Qdrant search, and retrieval routes remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python/FastAPI DB hydration, Qdrant search, and retrieval routes are archived after DIFF-139; Rust gateway route parity is active.",
         "Rust preview preserves answer_status not_generated and performs no database, Qdrant, graph, or external model calls.",
         "git status --short checked DIFF-098 scoped files only",
         "git diff --check passed",
@@ -255,7 +270,7 @@
       "diff": "DIFF-099",
       "verification": [
         "DIFF-099 adds Rust deterministic evidence-answer packet construction in crates/igy6-evidence-answer.",
-        "Python/FastAPI chat routes, live retrieval, Qdrant, graph, and evidence-answer behavior remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python/FastAPI chat routes are archived after DIFF-139; Rust gateway route parity is active.",
         "Rust evidence answer operates on caller-provided hydrated retrieval context only and performs no external model calls.",
         "git status --short checked DIFF-099 scoped files only",
         "git diff --check passed",
@@ -274,7 +289,7 @@
       "crate": "crates/igy6-write-api",
       "verification": [
         "DIFF-100 adds Rust write API batch 1 contract planning in crates/igy6-write-api.",
-        "Python/FastAPI sources, approvals, audit, feedback, and outcomes routes remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python/FastAPI sources, approvals, audit, feedback, and outcomes routes are archived after DIFF-139; Rust gateway route parity is active.",
         "Rust write API batch 1 validates contracts and builds deterministic audit/side-effect plans without database writes, runtime/private data access, or external service calls.",
         "git status --short checked DIFF-100 scoped files only",
         "git diff --check passed",
@@ -293,7 +308,7 @@
       "crate": "crates/igy6-work-queue-reports",
       "verification": [
         "DIFF-101 adds Rust work queue and report contract planning in crates/igy6-work-queue-reports.",
-        "Python/FastAPI work-item and report routes plus Celery execution remain active until a later parity DIFF explicitly replaces them.",
+        "Legacy Python/FastAPI work-item and report routes are archived after DIFF-139; Python/Celery worker execution remains active until Rust worker execution parity explicitly replaces it.",
         "Rust work queue reports validates contracts and builds deterministic dispatch/report/audit plans without database writes, runtime/private data access, Celery execution, artifact writes, or external service calls.",
         "git status --short checked DIFF-101 scoped files only",
         "git diff --check passed",
@@ -329,9 +344,9 @@
     },
     "route_parity": {
       "status": "complete",
-      "diff": "DIFF-138",
+      "diff": "DIFF-139",
       "verification": [
-        "FastAPI route parity guard found 90 APIRouter routes plus root route.",
+        "FastAPI route parity guard reads the archived FastAPI source at archive/legacy-python/services-api/app and found 90 APIRouter routes plus root route.",
         "Rust gateway route inventory found 94 Rust-native routes after DIFF-137.",
         "apps/web route inventory found 45 web-used routes and 0 active routes requiring FastAPI fallback after DIFF-133.",
         "DIFF-137 classifies 0 FastAPI routes still missing from Rust in configs/legacy-fastapi-route-classification.json.",
@@ -358,6 +373,8 @@
         "DIFF-136 migrates experiments and improvements route parity for GET/POST experiment metadata and GET/POST improvement metadata routes with DB-backed reads, writes, status updates, validation, and audit events while FastAPI fallback remains required for root-route resolution.",
         "DIFF-137 migrates the duplicate FastAPI GET / scaffold root to a Rust-native gateway identity response.",
         "DIFF-138 removes legacy-api fallback wiring from infra/docker-compose.yml and unsupported Rust gateway routes now return deterministic Rust 404 responses.",
+        "DIFF-139 archives the tracked legacy FastAPI API tree from services/api to archive/legacy-python/services-api because no active runtime path needs it.",
+        "DIFF-139 preserves services/worker because Docker Compose still runs Python/Celery worker and beat services from that directory.",
         "scripts/rust-cutover.sh validates governance cutover readiness but does not validate full route parity.",
         "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan.",
         "DIFF-105 adds scripts/rust-route-parity.py and runs it from scripts/rust-cutover.sh --check.",
@@ -405,8 +422,8 @@
                 "reason": "active local deployment config with Rust api and Python worker services"
             },
             {
-                "path": "services/api/",
-                "reason": "legacy FastAPI source is preserved for DIFF-139 archive or retention decision; it is not wired as runtime fallback"
+                "path": "archive/legacy-python/services-api/",
+                "reason": "archived legacy FastAPI API source retained for route parity history, migration archaeology, and rollback analysis; not an active runtime service"
             },
             {
                 "path": "services/worker/",

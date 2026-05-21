@@ -12,7 +12,7 @@ current README, or the DIFF process. It is an implementation migration plan.
 
 ## Why Not Rewrite Everything At Once
 
-IGY6 already has working Python/FastAPI, Celery worker, Next.js, PostgreSQL,
+IGY6 already has working Rust API, Python/Celery worker, Next.js, PostgreSQL,
 Qdrant, Neo4j, MLflow, Phoenix, source, approval, work-item, retrieval, and
 evidence workflows. Rewriting all of that in one step would make behavior hard
 to verify, weaken auditability, and risk breaking local-first safety controls.
@@ -20,27 +20,31 @@ to verify, weaken auditability, and risk breaking local-first safety controls.
 Every Rust migration DIFF must therefore:
 
 - Add Rust beside the existing system.
-- Preserve current Python/FastAPI/worker behavior until Rust parity exists.
+- Preserve current Python/Celery worker behavior until Rust worker parity exists.
 - Update `configs/rust-cutover-manifest.json`.
 - Run targeted verification for the phase it changes.
 - Leave `cutover_ready` false until all required phases are complete.
 
 ## Current Architecture
 
-During migration, the active system remains:
+After DIFF-139, the active API path is Rust-native and no longer uses FastAPI
+fallback. The legacy FastAPI source is archived for history under
+`archive/legacy-python/services-api/`. Python/Celery worker and beat services
+remain active runtime components.
+
+The active system is:
 
 ```text
 Next.js web UI
         |
         v
-FastAPI API
+Rust Axum API gateway
         |
-        +--> Celery workers
+        +--> Python/Celery worker and beat services
         +--> PostgreSQL state/audit store
         +--> Qdrant vector memory
         +--> Neo4j graph memory
         +--> local artifact/export/env backup storage
-        +--> Rust tools/sidecars added gradually
 ```
 
 The current web UI can remain Next.js while backend components move to Rust.
@@ -72,9 +76,12 @@ system-changing actions without approval.
 
 ## Current Post-Cutover Reality
 
-DIFF-103 executed the cutover workflow, but DIFF-104 verified that the runtime
-is not Rust-only. The current operational state is Rust-primary with required
-FastAPI fallback:
+DIFF-103 executed the cutover workflow, DIFF-104 through DIFF-137 completed
+route parity work, DIFF-138 removed FastAPI fallback wiring, and DIFF-139
+archived the legacy FastAPI API source.
+
+The current operational state is Rust-native for API traffic, with Python
+worker services still required:
 
 ```text
 Next.js web UI
@@ -82,15 +89,15 @@ Next.js web UI
         v
 Rust gateway service: api
         |
-        +--> Rust-native health, migration status, agent capability,
-        |    agent intent, retrieval preview, and evidence answer routes
-        |
-        +--> FastAPI service: legacy-api
-             for unsupported routes
+        +--> Rust-native route handlers
+        +--> PostgreSQL, Qdrant, Neo4j, Redis
+        +--> Python/Celery services: worker and beat
 ```
 
-FastAPI must remain active until later route-parity DIFFs prove that every
-active route is served by Rust or intentionally retired. See
+FastAPI fallback is not required, and the tracked FastAPI API tree has moved to
+`archive/legacy-python/services-api/`. Full Rust-only repository or runtime
+operation is not claimed because Python/Celery worker execution remains active.
+See
 `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`.
 
 ## DIFF-By-DIFF Migration Sequence
@@ -114,14 +121,16 @@ The planned sequence is:
 | `evidence_answer` | DIFF-099 | Add Rust deterministic evidence-answer packet construction. |
 | `write_api_batch_1` | DIFF-100 | Move sources, approvals, audit, feedback, and outcomes. |
 | `work_queue_reports` | DIFF-101 | Move work items, dispatch, reports, and report rendering. |
-| `rust_gateway` | DIFF-102 | Make Rust the main API gateway; FastAPI becomes fallback. |
-| final cutover | DIFF-103 | Run the cutover script with no archive moves because FastAPI fallback remains required. |
+| `rust_gateway` | DIFF-102 | Make Rust the main API gateway; FastAPI became fallback at that point. |
+| final cutover | DIFF-103 | Run the cutover script with no archive moves because FastAPI fallback was still required at that point. |
 | `route_parity` | DIFF-104 | Audit actual Rust/FastAPI/web route parity and document follow-up implementation work. |
 | `route_parity_guard` | DIFF-105 | Add an automated route parity guard to `scripts/rust-cutover.sh --check`. |
+| route parity completion | DIFF-132 through DIFF-137 | Complete the remaining active route buckets and duplicate root route resolution. |
+| fallback removal | DIFF-138 | Remove FastAPI fallback wiring after route parity reaches zero missing routes. |
+| legacy Python review | DIFF-139 | Archive the legacy FastAPI API source and retain Python/Celery worker services. |
 
-Because DIFF-085 is the migration-control DIFF, the next implementation DIFF
-should normally be the Rust Host Control Bridge unless a later repository state
-requires a different next unused DIFF number.
+The next DIFF must follow the latest locked DIFF and the manifest's recorded
+next-required work.
 
 ## Active During Migration
 
@@ -133,21 +142,24 @@ them after verified Rust parity:
 - `docs/agents/`
 - `README.md`
 - `infra/docker-compose.yml`
-- `services/api/`
 - `services/worker/`
 - `apps/web/`
 - `scripts/run.sh`
 - `scripts/stop.sh`
 - `scripts/run-last-healthy-config.sh`
 
+The legacy FastAPI API source is archived, not active:
+
+- `archive/legacy-python/services-api/`
+
 ## Deprecated Only After Rust Parity
 
-Python/FastAPI modules, Celery worker tasks, legacy scripts, old README text,
-and old operational docs are deprecated only after equivalent Rust behavior
-exists, verification has passed, and the active DIFF updates the manifest.
+Python/Celery worker tasks, legacy scripts, old README text, and old
+operational docs are deprecated only after equivalent Rust behavior exists,
+verification has passed, and the active DIFF updates the manifest.
 
-Do not archive or delete working Python services just because a Rust phase has
-started.
+Do not archive or delete working Python worker services just because the Rust
+API path is complete.
 
 ## How Rust Crates Will Be Added
 
@@ -161,10 +173,10 @@ its DIFF file and `configs/rust-cutover-manifest.json`.
 
 ## How Python Services Are Gradually Replaced
 
-Python remains primary until a Rust replacement is built and verified. A Rust
-sidecar can be introduced beside FastAPI first. After route parity is proven,
-the manifest can mark the phase complete. Only the final cutover DIFF may
-archive deprecated Python services.
+Python/FastAPI API fallback has been replaced by Rust route parity and archived
+after DIFF-138 removed fallback wiring. Python/Celery worker and beat remain
+primary for background execution until Rust worker execution parity is built,
+verified, and documented in a later DIFF.
 
 ## Web UI During Migration
 

@@ -14,8 +14,9 @@ curl http://127.0.0.1:8000/health/live
 curl http://127.0.0.1:8000/health/ready
 ```
 
-Expected readiness checks include PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and
-Phoenix. A healthy Phase 0 stack returns overall status `ok`.
+The Rust gateway readiness endpoint reports gateway status and current fallback
+posture. Service-specific readiness should be checked through Docker Compose
+health and logs.
 
 ## Worker
 
@@ -27,29 +28,29 @@ Expected result: one Celery node responds with `pong`.
 
 ## Migrations
 
-The API container runs `alembic upgrade head` before starting Uvicorn.
+The active API container is the Rust gateway and does not run Alembic on
+startup. The legacy FastAPI Alembic history is archived under
+`archive/legacy-python/services-api/migrations` and must be preserved until a
+later migration-governance DIFF replaces or retires it.
 
-Manual migration command:
+Legacy migration inspection, if needed for archaeology, should use the archived
+Python API environment explicitly rather than the active `api` container.
+
+Historical command shape:
 
 ```bash
-docker compose -f infra/docker-compose.yml --env-file .env run --rm api alembic upgrade head
+PYTHONPATH=archive/legacy-python/services-api alembic -c archive/legacy-python/services-api/alembic.ini current
 ```
 
-Check current migration:
+The active Compose services no longer include a FastAPI API container.
 
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env exec -T api alembic current
-```
-
-Expected Phase 0 revision: `0001_phase0_foundation`.
-
-List foundational tables:
+List foundational tables directly:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env exec -T postgres psql -U adaptive -d adaptive_intelligence -c "\dt"
 ```
 
-Expected Phase 0 tables:
+Expected foundational tables include:
 
 - `sources`
 - `source_permissions`
