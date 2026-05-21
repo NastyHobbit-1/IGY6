@@ -22,15 +22,16 @@ Rust gateway service: api
     |   previews, DIFF-115 settings verify/apply, DIFF-116 work-item
     |   creation, DIFF-117 manual upload collection creation, DIFF-118
     |   agent action request/execution routes, DIFF-120 dynamic web
-    |   control routes, DIFF-132 active medium-risk route parity, and
-    |   DIFF-133 graph/vector memory route parity
+    |   control routes, DIFF-132 active medium-risk route parity,
+    |   DIFF-133 graph/vector memory route parity, and DIFF-134 report
+    |   work-item route parity
     |
     +-- FastAPI fallback service: legacy-api
         for all unsupported routes
 ```
 
 FastAPI is still required for classified non-web routes. No web-used route
-requires FastAPI fallback after DIFF-133, and DIFF-133 records the current
+requires FastAPI fallback after DIFF-134, and DIFF-134 records the current
 non-web fallback posture in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
@@ -126,6 +127,7 @@ These routes are handled directly by `crates/igy6-gateway`:
 | POST | `/reports` | Rust-native DB write with audit event |
 | POST | `/reports/{report_id}/status` | Rust-native DB status update with audit event |
 | POST | `/reports/{report_id}/render` | Rust-native bounded metadata report render with artifact and audit event |
+| POST | `/reports/{report_id}/work-item` | Rust-native queued report_generation work item with scaffold-only payload and audit event |
 | GET | `/retrieval/chunks/{chunk_id}/trail` | Rust-native DB evidence trail hydration |
 | POST | `/retrieval/chunks/search` | Rust-native DB hydrated chunk search |
 | GET | `/sources` | Rust-native DB read |
@@ -145,13 +147,13 @@ configured.
 
 Route parity counts:
 
-| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
-| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 |
-| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 |
-| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 |
-| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 |
+| Metric | DIFF-105 | DIFF-106 | DIFF-107 | DIFF-108 | DIFF-109 | DIFF-110 | DIFF-111 | DIFF-112 | DIFF-113 | DIFF-114 | DIFF-115 | DIFF-116 | DIFF-117 | DIFF-118 | DIFF-119 | DIFF-120 | DIFF-132 | DIFF-133 | DIFF-134 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FastAPI total routes | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 | 91 |
+| Rust-native routes | 7 | 24 | 42 | 45 | 46 | 48 | 49 | 50 | 52 | 53 | 55 | 57 | 58 | 60 | 60 | 64 | 75 | 81 | 82 |
+| FastAPI routes missing from Rust | 85 | 68 | 50 | 47 | 46 | 44 | 43 | 42 | 40 | 39 | 37 | 36 | 35 | 34 | 34 | 30 | 19 | 13 | 12 |
+| Web-used routes | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 41 | 45 | 45 | 45 | 45 |
+| Web routes requiring fallback | 36 | 28 | 19 | 16 | 14 | 12 | 11 | 9 | 7 | 6 | 4 | 3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## DIFF-120 Dynamic Web Control Route Parity
 
@@ -206,6 +208,23 @@ Rust-only cannot be claimed.
 | `retireable_unused` | 0 |
 | `duplicate_or_superseded` | 1 |
 | `unsafe_to_migrate_now` | 5 |
+
+## DIFF-134 Report Work-Item Route Parity
+
+DIFF-134 migrates `POST /reports/{report_id}/work-item` to Rust-native gateway
+handling. The handler validates the report ID and request body, loads the
+existing report, creates a queued `report_generation` work item with a bounded
+scaffold-only payload, and inserts the correlated `work_item.created` audit
+event in the same database transaction. It does not dispatch Celery work and
+does not remove FastAPI fallback for the remaining classified routes.
+
+| Classification | Count |
+| --- | ---: |
+| `active_parity_required` | 0 |
+| `intentional_legacy_fallback` | 7 |
+| `retireable_unused` | 0 |
+| `duplicate_or_superseded` | 1 |
+| `unsafe_to_migrate_now` | 4 |
 
 ## Web-Used Route Matrix
 

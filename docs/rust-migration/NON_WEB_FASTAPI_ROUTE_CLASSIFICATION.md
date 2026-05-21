@@ -1,11 +1,11 @@
-# DIFF-133 Non-Web FastAPI Route Classification
+# DIFF-134 Non-Web FastAPI Route Classification
 
 Date: 2026-05-20
 
 ## Summary
 
-DIFF-133 migrates the six graph/vector memory FastAPI fallback routes to
-Rust-native gateway handlers. The 13 routes still missing from Rust are
+DIFF-134 migrates the report work-item FastAPI fallback route to Rust-native
+gateway handling. The 12 routes still missing from Rust are
 classified below. The web route guard remains at
 `web_routes_requiring_fallback=0`, so Rust is primary for web-used traffic, but
 the repository is not Rust-only.
@@ -24,6 +24,10 @@ DIFF-133 migrated these graph/vector memory routes to Rust-native handlers:
 - `POST /memory/vector/chunks/search`
 - `POST /memory/vector/chunks/upsert`
 
+DIFF-134 migrated this report/work-item route to Rust-native handling:
+
+- `POST /reports/{report_id}/work-item`
+
 ## Counts
 
 | Bucket | Count | Meaning |
@@ -32,7 +36,7 @@ DIFF-133 migrated these graph/vector memory routes to Rust-native handlers:
 | `intentional_legacy_fallback` | 7 | Temporarily retained Python route with a documented retirement condition. |
 | `retireable_unused` | 0 | No missing route is currently proven safe to remove solely as unused. |
 | `duplicate_or_superseded` | 1 | Functionally covered by Rust health/status surfaces or otherwise superseded. |
-| `unsafe_to_migrate_now` | 5 | High-risk route needing a dedicated parity DIFF before Rust migration. |
+| `unsafe_to_migrate_now` | 4 | High-risk route needing a dedicated parity DIFF before Rust migration. |
 
 ## Classification Matrix
 
@@ -50,13 +54,11 @@ DIFF-133 migrated these graph/vector memory routes to Rust-native handlers:
 | POST | `/experiments` | `services/api/app/experiments.py::create_experiment_run` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | POST | `/experiments/{experiment_run_id}/status` | `services/api/app/experiments.py::update_experiment_run_status` | `intentional_legacy_fallback` | medium | DIFF-136 |
 | POST | `/improvements` | `services/api/app/improvements.py::create_improvement_item` | `intentional_legacy_fallback` | medium | DIFF-136 |
-| POST | `/reports/{report_id}/work-item` | `services/api/app/reports.py::create_report_work_item` | `unsafe_to_migrate_now` | high | DIFF-134 |
-
 ## Final Posture
 
 - Rust is primary for all routes counted as web-used by the route parity guard.
 - FastAPI is still required for classified non-web fallback routes.
 - Rust-only cannot honestly be claimed.
-- The graph/vector memory bucket is complete after DIFF-133; future DIFFs
-  should migrate or retire the remaining route buckets by risk, starting with
-  report work-item parity scoped for DIFF-134.
+- The report work-item bucket is complete after DIFF-134; future DIFFs should
+  migrate or retire the remaining route buckets by risk, starting with artifact
+  and collection ingestion parity scoped for DIFF-135.

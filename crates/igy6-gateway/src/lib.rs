@@ -98,6 +98,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/reports"),
     ("POST", "/reports/{report_id}/render"),
     ("POST", "/reports/{report_id}/status"),
+    ("POST", "/reports/{report_id}/work-item"),
     ("GET", "/retrieval/chunks/{chunk_id}/trail"),
     ("POST", "/retrieval/chunks/search"),
     ("GET", "/settings/env"),
@@ -374,6 +375,12 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(render_report(&report_id, &request.body, database_url))
             } else if let Some(report_id) = report_status_path(&request.path) {
                 action_route_response(update_report_status(
+                    &report_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(report_id) = report_work_item_path(&request.path) {
+                write_route_response(create_report_work_item(
                     &report_id,
                     &request.body,
                     database_url,
@@ -1590,6 +1597,75 @@ fn create_report(body: &str, database_url: Option<&str>) -> Result<String, Gatew
         .query_one(
             "SELECT row_to_json(t)::text FROM (SELECT id, title, report_type, status, requested_by_actor_id, artifact_path, metadata_json, created_at, updated_at FROM reports WHERE id = $1) t",
             &[&report_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn create_report_work_item(
+    report_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let report_id = validate_route_id(report_id, "report_id")?;
+    let payload = parse_report_work_item(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let Some(report_row) = transaction
+        .query_opt(
+            "SELECT id, title, report_type, status FROM reports WHERE id = $1",
+            &[&report_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Report not found".to_string()));
+    };
+    let report_title: String = report_row.get(1);
+    let report_type: String = report_row.get(2);
+    let report_status: String = report_row.get(3);
+    let work_item_id = generated_record_id("work");
+    let payload_json = report_work_item_payload(
+        &report_id,
+        &report_title,
+        &report_type,
+        &report_status,
+        payload.notes.as_deref(),
+    );
+
+    transaction
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'report_generation', 'queued', $2, $3::jsonb, NULL)",
+            &[&work_item_id, &payload.requested_by_actor_id, &payload_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "work_type": "report_generation",
+        "status": "queued",
+        "report_id": report_id,
+        "report_type": report_type,
+        "scaffold_only": true
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'queued', 'work_item', $2, $3, $4::jsonb)",
+            &[&payload.requested_by_actor_id, &work_item_id, &report_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items WHERE id = $1) t",
+            &[&work_item_id],
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -4242,6 +4318,11 @@ struct ReportStatusPayload {
     artifact_path: Option<String>,
 }
 
+struct ReportWorkItemPayload {
+    requested_by_actor_id: String,
+    notes: Option<String>,
+}
+
 struct WorkItemCreatePayload {
     work_type: String,
     requested_by_actor_id: String,
@@ -4739,6 +4820,19 @@ fn parse_work_item_status(body: &str) -> Result<WorkItemStatusPayload, GatewayEr
         status,
         actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
         error_message: optional_nullable_string_field(&object, "error_message")?,
+    })
+}
+
+fn parse_report_work_item(body: &str) -> Result<ReportWorkItemPayload, GatewayError> {
+    let object = parse_json_object(body, "Report work item request body")?;
+    Ok(ReportWorkItemPayload {
+        requested_by_actor_id: optional_string_field_with_max(
+            &object,
+            "requested_by_actor_id",
+            "local-owner",
+            128,
+        )?,
+        notes: optional_nullable_string_field(&object, "notes")?,
     })
 }
 
@@ -6640,6 +6734,40 @@ fn manual_upload_normalization_work_payload(
     })
 }
 
+fn report_work_item_payload(
+    report_id: &str,
+    report_title: &str,
+    report_type: &str,
+    report_status: &str,
+    notes: Option<&str>,
+) -> Value {
+    serde_json::json!({
+        "report_id": report_id,
+        "report_title": report_title,
+        "report_type": report_type,
+        "report_status": report_status,
+        "scaffold_only": true,
+        "executes_report_generation": false,
+        "notes": notes,
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": format!("Generate report {report_id}"),
+            "interpretation": format!("Create a local metadata report for {report_title}."),
+            "proposed_work_type": "report_generation",
+            "sources_likely_used": ["local metadata records"],
+            "expected_output": "Rendered local markdown report artifact.",
+            "safety_requirements": [
+                "Use local metadata only.",
+                "Do not read raw artifact contents.",
+                "Do not call external models or services."
+            ],
+            "assumptions": ["Report metadata already exists."],
+            "missing_information": [],
+            "recorded_by": "DIFF-134 report work-item parity"
+        }
+    })
+}
+
 fn agent_action_execute_path(path: &str) -> Option<String> {
     let stripped = path.strip_prefix("/agent/actions/")?;
     let action_name = stripped.strip_suffix("/execute")?;
@@ -6663,6 +6791,10 @@ fn report_render_path(path: &str) -> Option<String> {
 
 fn report_status_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/reports/", "/status")
+}
+
+fn report_work_item_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/reports/", "/work-item")
 }
 
 fn evidence_document_chunks_path(path: &str) -> Option<String> {
@@ -9159,6 +9291,7 @@ mod tests {
                 r#"{"status":"approved","decision_reason":"ok"}"#,
             ),
             ("/reports/report-1/render", r#"{"notes":"handoff"}"#),
+            ("/reports/report-1/work-item", r#"{"notes":"handoff"}"#),
             ("/work-items/work-1/dispatch", "{}"),
         ] {
             let response = handle_gateway_request_with_db(
@@ -9184,6 +9317,11 @@ mod tests {
             ),
             ("/reports/report-1/render", "[]"),
             ("/reports/report-1/render", r#"{"actor_id":""}"#),
+            ("/reports/report-1/work-item", "[]"),
+            (
+                "/reports/report-1/work-item",
+                r#"{"requested_by_actor_id":""}"#,
+            ),
             ("/work-items/work-1/dispatch", "[]"),
             ("/work-items/work-1/dispatch", r#"{"actor_id":""}"#),
         ] {
@@ -9204,7 +9342,12 @@ mod tests {
             pattern_review_path("/analysis/patterns/pattern-1/review").as_deref(),
             Some("pattern-1")
         );
+        assert_eq!(
+            report_work_item_path("/reports/report-1/work-item").as_deref(),
+            Some("report-1")
+        );
         assert!(pattern_review_path("/analysis/patterns/../x/review").is_none());
+        assert!(report_work_item_path("/reports/../x/work-item").is_none());
         assert!(validate_route_id("../x", "pattern_id").is_err());
         assert!(validate_route_id("x/y", "pattern_id").is_err());
     }

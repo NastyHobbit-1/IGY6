@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-133",
+  "diff": "DIFF-134",
   "source": {
     "fastapi_route_inventory": "services/api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -9,8 +9,8 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 81,
-    "fastapi_routes_missing_from_rust": 13,
+    "rust_native_routes": 82,
+    "fastapi_routes_missing_from_rust": 12,
     "web_used_routes": 45,
     "web_routes_requiring_fallback": 0
   },
@@ -21,7 +21,7 @@
     "intentional_legacy_fallback": 7,
     "retireable_unused": 0,
     "duplicate_or_superseded": 1,
-    "unsafe_to_migrate_now": 5
+    "unsafe_to_migrate_now": 4
   },
   "routes": [
     {
@@ -191,20 +191,6 @@
       "migration_risk": "medium",
       "retirement_condition": "Rust improvement queue API supports target area/priority validation and audit parity, or the route is formally retired.",
       "recommended_future_diff": "DIFF-136"
-    },
-    {
-      "method": "POST",
-      "path": "/reports/{report_id}/work-item",
-      "python_module": "services/api/app/reports.py",
-      "python_handler": "create_report_work_item",
-      "rust_status": "missing_from_rust",
-      "classification": "unsafe_to_migrate_now",
-      "reason": "Report work-item creation connects reports to worker execution and should remain fallback until dispatch/workflow parity is scoped.",
-      "used_by_apps_web": false,
-      "used_by_scripts_tests_docs": true,
-      "migration_risk": "high",
-      "retirement_condition": "Rust reports/work-items API creates equivalent work items with intent verification, audit, and dispatch-safe behavior.",
-      "recommended_future_diff": "DIFF-134"
     }
   ]
 }
