@@ -12,6 +12,12 @@ replace the live Python/Celery worker yet. The Rust gateway dispatch route is
 safe-limited: it records dispatch metadata and audit events but does not invoke
 Celery or arbitrary runtime execution.
 
+DIFF-141 audits worker execution parity and recommends migrating worker
+execution to Rust one job family at a time. Until that parity is implemented and
+verified, Python/Celery `worker` remains required for live processing. `beat`
+also remains in the stack; no repo-defined beat schedule currently exists, but
+scheduled-work retirement or replacement requires a later DIFF.
+
 ## Pipeline
 
 ```text

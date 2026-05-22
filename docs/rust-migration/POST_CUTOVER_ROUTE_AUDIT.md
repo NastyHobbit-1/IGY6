@@ -6,8 +6,9 @@ Date: 2026-05-17
 
 DIFF-103 completed cutover governance with Rust primary and FastAPI fallback.
 DIFF-138 removes FastAPI fallback after route parity reaches zero missing
-FastAPI routes. DIFF-139 archives the tracked legacy FastAPI API source. The
-current API topology is Rust-native while Python/Celery workers remain active:
+FastAPI routes. DIFF-139 archives the tracked legacy FastAPI API source.
+DIFF-140 is the final Rust API cutover audit. The current API topology is
+Rust-native while Python/Celery workers remain active:
 
 ```text
 Next.js web
@@ -34,13 +35,14 @@ Rust gateway service: api
 ```
 
 FastAPI fallback is no longer configured after DIFF-138. No web-used route
-requires FastAPI fallback, and DIFF-138 records the current route parity posture
-in
+requires FastAPI fallback, and DIFF-140 records the final audit posture while
+the route classification remains recorded in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
 The legacy FastAPI source is archived at
 `archive/legacy-python/services-api`. Python/Celery `worker` and `beat` remain
-active runtime services from `services/worker`.
+active runtime services from `services/worker` because Rust worker execution
+parity is not implemented or verified.
 
 ## Runtime Topology
 
@@ -55,7 +57,8 @@ active runtime services from `services/worker`.
 The web UI calls the Rust gateway endpoint. The route parity guard reports zero
 FastAPI routes missing from Rust and zero web-used routes requiring fallback.
 Unsupported gateway routes now return Rust 404 responses instead of proxying to
-FastAPI.
+FastAPI. Full Rust-only repository or runtime operation is not claimed while
+Python/Celery `worker` and `beat` remain active.
 
 ## Rust-Native Gateway Routes
 
@@ -345,6 +348,12 @@ The Rust worker crate remains a deterministic planning foundation; it does not
 replace live Celery execution, database writes, audit writes, or Qdrant work.
 Full Rust-only repository/runtime operation is therefore not claimed.
 
+DIFF-141 audits the active Python/Celery worker and beat services. It finds five
+registered Celery tasks, no repo-defined beat schedule, and no Python/Celery
+Neo4j operations. The recommended path is to migrate worker execution to Rust
+one job family at a time while retaining Python/Celery until execution parity is
+complete.
+
 ## Web-Used Route Matrix
 
 | Method | Route | Web usage | Gateway behavior |
@@ -556,21 +565,24 @@ decision, report render, and work-item dispatch. DIFF-132 adds Rust-native
 handlers for the active medium-risk route bucket: analysis creation, evidence
 document/chunk/item writes, source permission creation, report/work-item status
 transitions, and retrieval trail/search hydration. DIFF-133 adds Rust-native
-graph/vector memory parity with bounded Neo4j and Qdrant service calls. FastAPI
-fallback remains required for the 13 classified routes still missing from Rust.
+graph/vector memory parity with bounded Neo4j and Qdrant service calls. At the
+time of DIFF-133, FastAPI fallback remained required for the 13 classified
+routes still missing from Rust. DIFF-138 later removed fallback after route
+parity reached zero missing FastAPI routes.
 
 ## Manifest Finding
 
 The manifest accurately showed the DIFF-102 gateway phase complete, but it did
 not include an explicit post-cutover route-parity phase or a machine-readable
-statement that FastAPI fallback remains required. DIFF-104 adds that status so
-future cutover checks cannot be read as proof that FastAPI is removable.
+statement for the then-current fallback requirement. DIFF-104 added that status
+so future cutover checks could not be read as proof that FastAPI was removable
+before route parity completed. DIFF-138 superseded that posture by removing
+fallback after route parity reached zero missing FastAPI routes.
 
 ## Follow-Up DIFF Plan
 
-Web-used FastAPI fallback is eliminated as of DIFF-118. FastAPI remains
-required for unsupported non-web routes until those routes are implemented or
-deliberately retired:
+Web-used FastAPI fallback was eliminated as of DIFF-118. The following plan
+then drove unsupported non-web route migration or retirement through DIFF-138:
 
 1. DIFF-105: add an automated route parity guard so fallback dependency cannot
    become an undocumented manual finding.
@@ -618,5 +630,12 @@ deliberately retired:
    prove no active FastAPI route depends on it.
 20. DIFF-139: archive legacy FastAPI API source and preserve Python/Celery
    worker and beat as active runtime services.
-21. DIFF-140: final audit stating Rust-native API with retained Python worker,
-   unless a later worker parity DIFF removes those services first.
+21. DIFF-140: final audit stating Rust-native API with retained Python worker
+    and beat services. Full Rust-only repository or runtime operation is not
+    claimed.
+22. Recommended next DIFF: worker execution parity, or an explicit long-term
+    Python worker retention decision.
+23. DIFF-141: audit Python/Celery worker and beat usage and recommend
+    one-job-family-at-a-time Rust worker execution parity.
+24. Recommended next DIFF: DIFF-142 Rust worker execution contract and
+    queue-claim foundation.

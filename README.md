@@ -10,14 +10,17 @@ or deterministic evidence packets from local records.
 
 ## Current Backend Posture
 
-IGY6's API path is Rust-native after DIFF-138. Route parity records zero
-FastAPI routes missing from Rust and Docker Compose no longer wires the FastAPI
-`legacy-api` fallback service into the runtime API path.
+IGY6's API path is Rust-native after DIFF-138 and DIFF-140 records the final
+Rust API cutover audit. Route parity records zero FastAPI routes missing from
+Rust and Docker Compose no longer wires the FastAPI `legacy-api` fallback
+service into the runtime API path.
 
 DIFF-139 archives the legacy FastAPI API source at
 `archive/legacy-python/services-api`. This does not claim Python worker parity:
 Python/Celery `worker` and `beat` services remain part of the local stack until
-a later DIFF proves or documents their replacement.
+a later DIFF proves their replacement or explicitly documents long-term
+retention. DIFF-141 recommends migrating worker execution to Rust one job family
+at a time while retaining Python/Celery until execution parity is complete.
 
 Current web-used route parity is tracked by:
 
