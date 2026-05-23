@@ -148,6 +148,14 @@ artifact read, one `normalized_documents` write, and one chained
 live `document_chunking`, live `chunk_vector_upsert`/Qdrant, broad queue
 ownership, Compose worker replacement, and beat posture remain unresolved.
 
+DIFF-154 decision: B, successful `document_chunking` canary could not be
+completed. Exactly one isolated `document_chunking` canary was attempted for
+`diff-154-canary-work-item`, but the fixture used invalid `chunk_size=80`; the
+Rust worker marked the item `failed` and wrote claim/start/failure audit events
+without writing chunks, evidence items, or a chained `chunk_vector_upsert` work
+item. The fixture helper is corrected to emit `chunk_size=100` for a later
+canary. Qdrant side effects were not expected or run in DIFF-154.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

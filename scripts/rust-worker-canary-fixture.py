@@ -22,10 +22,20 @@ SOURCE_ID = "diff-152-canary-source"
 COLLECTION_RUN_ID = "diff-152-canary-run"
 RAW_ARTIFACT_ID = "diff-152-canary-raw"
 WORK_ITEM_ID = "diff-152-canary-work-item"
+DOCUMENT_ACTOR_ID = "diff-154-canary"
+DOCUMENT_SOURCE_ID = "diff-154-canary-source"
+DOCUMENT_ID = "diff-154-canary-document"
+DOCUMENT_WORK_ITEM_ID = "diff-154-canary-work-item"
 ARTIFACT_TEXT = (
     "DIFF-152 synthetic Rust worker canary artifact.\n"
     "This file contains non-sensitive local fixture text only.\n"
     "It exists to verify one selected collection_normalization canary in a later DIFF.\n"
+)
+DOCUMENT_TEXT = (
+    "DIFF-154 synthetic document chunking canary text. "
+    "This non-sensitive local fixture is intentionally long enough to create "
+    "multiple deterministic chunks when the Rust worker uses a small chunk size. "
+    "It verifies chunk and evidence writes without Qdrant execution."
 )
 
 
@@ -82,7 +92,40 @@ def work_item_payload() -> dict[str, Any]:
     }
 
 
-def fixture_sql() -> str:
+def document_work_item_payload() -> dict[str, Any]:
+    return {
+        "document_ids": [DOCUMENT_ID],
+        "chunk_size": 100,
+        "worker_task_name": "evidence.generate_document_chunks",
+        "generated_by": "DIFF-154",
+        "intent_verification_recorded": True,
+        "intent_verification": {
+            "original_request": "Run one safe document_chunking Rust worker canary.",
+            "interpretation": (
+                "Seed one synthetic queued document_chunking work item for a "
+                "gated Rust canary run."
+            ),
+            "proposed_work_type": "document_chunking",
+            "sources_likely_used": [DOCUMENT_SOURCE_ID],
+            "expected_output": (
+                "Chunk rows, evidence item rows, and one chained "
+                "chunk_vector_upsert work item."
+            ),
+            "safety_requirements": [
+                "Use synthetic fixture data only.",
+                "Run only the selected document_chunking work item.",
+                "Do not run chunk_vector_upsert or Qdrant canaries in DIFF-154.",
+            ],
+            "assumptions": [
+                "The isolated canary database contains only this synthetic document fixture."
+            ],
+            "missing_information": [],
+            "recorded_by": "DIFF-154 fixture",
+        },
+    }
+
+
+def collection_fixture_sql() -> str:
     artifact = artifact_plan()
     source_metadata = {
         "generated_by": "DIFF-152",
@@ -143,6 +186,58 @@ def fixture_sql() -> str:
     )
 
 
+def document_fixture_sql() -> str:
+    source_metadata = {
+        "generated_by": "DIFF-154",
+        "fixture": "rust_worker_document_chunking_canary",
+        "non_production": True,
+    }
+    document_metadata = {
+        "generated_by": "DIFF-154",
+        "fixture": "rust_worker_document_chunking_canary",
+        "non_sensitive": True,
+    }
+    payload = document_work_item_payload()
+    return "\n".join(
+        [
+            "BEGIN;",
+            "INSERT INTO sources (id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json)",
+            (
+                f"VALUES ({text_sql(DOCUMENT_SOURCE_ID)}, 'DIFF-154 Rust document_chunking canary source', "
+                f"'manual_upload', 'synthetic://diff-154-document-chunking-canary', "
+                f"{text_sql(DOCUMENT_ACTOR_ID)}, 'internal', 'test_fixture', true, {json_sql(source_metadata)})"
+            ),
+            "ON CONFLICT (id) DO UPDATE SET enabled = true, metadata_json = EXCLUDED.metadata_json, updated_at = now();",
+            "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json)",
+            (
+                f"VALUES ({text_sql(DOCUMENT_ID)}, NULL, {text_sql(DOCUMENT_SOURCE_ID)}, "
+                f"'diff-154-document-chunking-canary.txt', 'text', NULL, {text_sql(DOCUMENT_TEXT)}, "
+                f"'internal', {json_sql(document_metadata)})"
+            ),
+            "ON CONFLICT (id) DO UPDATE SET text_content = EXCLUDED.text_content, metadata_json = EXCLUDED.metadata_json, updated_at = now();",
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message)",
+            (
+                f"VALUES ({text_sql(DOCUMENT_WORK_ITEM_ID)}, 'document_chunking', 'queued', "
+                f"{text_sql(DOCUMENT_ACTOR_ID)}, {json_sql(payload)}, NULL)"
+            ),
+            "ON CONFLICT (id) DO UPDATE SET status = 'queued', payload_json = EXCLUDED.payload_json, error_message = NULL, updated_at = now();",
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json)",
+            (
+                f"VALUES ({text_sql(DOCUMENT_ACTOR_ID)}, 'rust_worker_canary_fixture.selected', "
+                f"'selected', 'work_item', {text_sql(DOCUMENT_WORK_ITEM_ID)}, {text_sql(DOCUMENT_WORK_ITEM_ID)}, "
+                f"{json_sql({'generated_by': 'DIFF-154', 'selected_work_item_id': DOCUMENT_WORK_ITEM_ID, 'work_type': 'document_chunking'})});"
+            ),
+            "COMMIT;",
+        ]
+    )
+
+
+def fixture_sql(fixture: str = "collection_normalization") -> str:
+    if fixture == "document_chunking":
+        return document_fixture_sql()
+    return collection_fixture_sql()
+
+
 def schema_sql() -> str:
     return "\n".join(
         [
@@ -195,6 +290,30 @@ def schema_sql() -> str:
             "  created_at timestamptz NOT NULL DEFAULT now(),",
             "  updated_at timestamptz NOT NULL DEFAULT now()",
             ");",
+            "CREATE TABLE IF NOT EXISTS chunks (",
+            "  id varchar(36) PRIMARY KEY,",
+            "  document_id varchar(36) NOT NULL REFERENCES normalized_documents(id),",
+            "  chunk_index integer NOT NULL,",
+            "  text_content text NOT NULL,",
+            "  location_json jsonb NOT NULL DEFAULT '{}'::jsonb,",
+            "  embedding_status varchar(64) NOT NULL DEFAULT 'not_started',",
+            "  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,",
+            "  created_at timestamptz NOT NULL DEFAULT now(),",
+            "  updated_at timestamptz NOT NULL DEFAULT now()",
+            ");",
+            "CREATE TABLE IF NOT EXISTS evidence_items (",
+            "  id varchar(36) PRIMARY KEY,",
+            "  source_id varchar(36) REFERENCES sources(id),",
+            "  document_id varchar(36) REFERENCES normalized_documents(id),",
+            "  chunk_id varchar(36) REFERENCES chunks(id),",
+            "  evidence_type varchar(64) NOT NULL,",
+            "  statement text NOT NULL,",
+            "  observed_at timestamptz,",
+            "  confidence integer,",
+            "  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,",
+            "  created_at timestamptz NOT NULL DEFAULT now(),",
+            "  updated_at timestamptz NOT NULL DEFAULT now()",
+            ");",
             "CREATE TABLE IF NOT EXISTS work_items (",
             "  id varchar(36) PRIMARY KEY,",
             "  work_type varchar(64) NOT NULL,",
@@ -220,7 +339,7 @@ def schema_sql() -> str:
     )
 
 
-def observation_sql() -> str:
+def collection_observation_sql() -> str:
     return "\n".join(
         [
             "\\pset format unaligned",
@@ -235,14 +354,42 @@ def observation_sql() -> str:
     )
 
 
-def write_sql(path: Path, include_schema: bool, include_fixture: bool, include_observation: bool) -> None:
+def document_observation_sql() -> str:
+    return "\n".join(
+        [
+            "\\pset format unaligned",
+            "\\pset fieldsep '|'",
+            "\\pset tuples_only off",
+            "SELECT 'work_item' AS section, id, work_type, status, COALESCE(error_message, '') AS error_message FROM work_items WHERE id = 'diff-154-canary-work-item' ORDER BY id;",
+            "SELECT 'chained_work_item' AS section, id, work_type, status, payload_json->>'parent_work_item_id' AS parent_work_item_id FROM work_items WHERE payload_json->>'parent_work_item_id' = 'diff-154-canary-work-item' ORDER BY id;",
+            "SELECT 'audit_event' AS section, event_type, decision, resource_type, resource_id, correlation_id FROM audit_events WHERE correlation_id = 'diff-154-canary-work-item' OR resource_id = 'diff-154-canary-work-item' ORDER BY id;",
+            "SELECT 'chunk' AS section, id, document_id, chunk_index::text, embedding_status, length(text_content)::text AS text_length FROM chunks WHERE document_id = 'diff-154-canary-document' ORDER BY chunk_index;",
+            "SELECT 'evidence_item' AS section, id, document_id, chunk_id, evidence_type, length(statement)::text AS statement_length FROM evidence_items WHERE document_id = 'diff-154-canary-document' ORDER BY id;",
+            "SELECT 'normalized_document' AS section, id, source_id, title, document_type, sensitivity, length(text_content)::text AS text_length FROM normalized_documents WHERE id = 'diff-154-canary-document' ORDER BY id;",
+        ]
+    )
+
+
+def observation_sql(fixture: str = "collection_normalization") -> str:
+    if fixture == "document_chunking":
+        return document_observation_sql()
+    return collection_observation_sql()
+
+
+def write_sql(
+    path: Path,
+    include_schema: bool,
+    include_fixture: bool,
+    include_observation: bool,
+    fixture: str,
+) -> None:
     sections: list[str] = []
     if include_schema:
         sections.append(schema_sql())
     if include_fixture:
-        sections.append(fixture_sql())
+        sections.append(fixture_sql(fixture))
     if include_observation:
-        sections.append(observation_sql())
+        sections.append(observation_sql(fixture))
     if not sections:
         raise SystemExit("--write-sql requires at least one SQL-emitting flag")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,7 +399,13 @@ def write_sql(path: Path, include_schema: bool, include_fixture: bool, include_o
 def ensure_canary_data_root(data_root: Path) -> None:
     normalized = data_root.expanduser().resolve()
     lowered = str(normalized).lower()
-    if "canary" not in lowered and "diff152" not in lowered and "diff-152" not in lowered:
+    if (
+        "canary" not in lowered
+        and "diff152" not in lowered
+        and "diff-152" not in lowered
+        and "diff154" not in lowered
+        and "diff-154" not in lowered
+    ):
         raise SystemExit(
             "Refusing to write artifact: --data-root must clearly be a canary/diff152 test path."
         )
@@ -271,6 +424,12 @@ def write_artifact(data_root: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare the DIFF-152 Rust worker canary fixture.")
+    parser.add_argument(
+        "--fixture",
+        choices=["collection_normalization", "document_chunking"],
+        default="collection_normalization",
+        help="Synthetic canary fixture to emit.",
+    )
     parser.add_argument("--emit-schema-sql", action="store_true", help="Print minimal canary schema SQL.")
     parser.add_argument("--emit-sql", action="store_true", help="Print SQL seed statements.")
     parser.add_argument(
@@ -295,24 +454,41 @@ def main() -> int:
     args = parser.parse_args()
 
     artifact = artifact_plan()
-    selected = {
-        "diff": "DIFF-152",
-        "decision": "A",
-        "fixture": "rust_worker_canary_collection_normalization",
-        "selected_work_item_id": WORK_ITEM_ID,
-        "source_id": SOURCE_ID,
-        "collection_run_id": COLLECTION_RUN_ID,
-        "raw_artifact_id": RAW_ARTIFACT_ID,
-        "work_type": "collection_normalization",
-        "artifact_storage_path": artifact["storage_path"],
-        "artifact_content_hash": artifact["content_hash"],
-        "artifact_size_bytes": artifact["size_bytes"],
-        "live_canary_command": (
-            "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- "
-            f"--once --canary-live --canary-work-item {WORK_ITEM_ID}"
-        ),
-        "live_canary_run_by_fixture": False,
-    }
+    if args.fixture == "document_chunking":
+        selected = {
+            "diff": "DIFF-154",
+            "decision": "A",
+            "fixture": "rust_worker_canary_document_chunking",
+            "selected_work_item_id": DOCUMENT_WORK_ITEM_ID,
+            "source_id": DOCUMENT_SOURCE_ID,
+            "document_id": DOCUMENT_ID,
+            "work_type": "document_chunking",
+            "chunk_size": 100,
+            "live_canary_command": (
+                "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- "
+                f"--once --canary-live --canary-work-item {DOCUMENT_WORK_ITEM_ID}"
+            ),
+            "live_canary_run_by_fixture": False,
+        }
+    else:
+        selected = {
+            "diff": "DIFF-152",
+            "decision": "A",
+            "fixture": "rust_worker_canary_collection_normalization",
+            "selected_work_item_id": WORK_ITEM_ID,
+            "source_id": SOURCE_ID,
+            "collection_run_id": COLLECTION_RUN_ID,
+            "raw_artifact_id": RAW_ARTIFACT_ID,
+            "work_type": "collection_normalization",
+            "artifact_storage_path": artifact["storage_path"],
+            "artifact_content_hash": artifact["content_hash"],
+            "artifact_size_bytes": artifact["size_bytes"],
+            "live_canary_command": (
+                "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- "
+                f"--once --canary-live --canary-work-item {WORK_ITEM_ID}"
+            ),
+            "live_canary_run_by_fixture": False,
+        }
     print(json.dumps(selected, indent=2, sort_keys=True))
 
     if args.emit_schema_sql:
@@ -322,13 +498,13 @@ def main() -> int:
 
     if args.emit_sql:
         print()
-        print("-- DIFF-152 deterministic canary seed SQL")
-        print(fixture_sql())
+        print(f"-- {selected['diff']} deterministic canary seed SQL")
+        print(fixture_sql(args.fixture))
 
     if args.emit_observation_sql:
         print()
-        print("-- DIFF-153 read-only canary observation SQL")
-        print(observation_sql())
+        print(f"-- {selected['diff']} read-only canary observation SQL")
+        print(observation_sql(args.fixture))
 
     if args.write_sql:
         write_sql(
@@ -336,6 +512,7 @@ def main() -> int:
             include_schema=args.emit_schema_sql,
             include_fixture=args.emit_sql,
             include_observation=args.emit_observation_sql,
+            fixture=args.fixture,
         )
         print()
         print(f"Wrote SQL: {args.write_sql}")

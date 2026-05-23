@@ -99,6 +99,15 @@ canary was `collection_normalization`. Python/Celery `worker` and `beat` remain
 active because live `document_chunking`, live `chunk_vector_upsert`, broad Rust
 worker ownership, and scheduler posture are still not replaced.
 
+DIFF-154 attempts exactly one gated live Rust canary for
+`document_chunking` against isolated synthetic data. The attempt fails safely
+before chunk writes because the fixture used invalid `chunk_size=80` while the
+Rust contract requires 100 through 5000. Observed side effects: the selected
+work item moved to `failed`, claim/start/failure audit rows were written, and
+no `chunks`, `evidence_items`, or chained `chunk_vector_upsert` work item were
+created. The fixture helper now emits `chunk_size=100` for the next controlled
+document-chunking canary, but DIFF-154 does not run a second canary.
+
 ## Pipeline
 
 ```text

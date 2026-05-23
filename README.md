@@ -48,7 +48,11 @@ isolated local canary PostgreSQL container and runs exactly one gated Rust
 canary for `diff-152-canary-work-item`; it verifies collection normalization
 DB/audit/artifact side effects only. Python/Celery `worker` and `beat` still
 remain active because live `document_chunking`, live `chunk_vector_upsert` with
-Qdrant, broad worker ownership, and scheduler posture are not replaced.
+Qdrant, broad worker ownership, and scheduler posture are not replaced. DIFF-154
+attempts exactly one isolated `document_chunking` canary, but the fixture used
+invalid `chunk_size=80`; Rust failed the item safely before chunk/evidence
+writes. The fixture helper now emits valid `chunk_size=100` for the next
+controlled document-chunking canary.
 
 Current web-used route parity is tracked by:
 
@@ -278,6 +282,9 @@ DIFF-153 performed that one isolated collection-normalization canary and
 observed the selected work item complete, expected audit rows, one normalized
 document, a chained `document_chunking` work item, and the expected synthetic
 artifact hash. Qdrant work was not expected for this canary type.
+DIFF-154 observed safe failure handling for a `document_chunking` canary:
+claim/start/failure audit rows were written, the work item moved to `failed`,
+and no chunks, evidence items, or chained vector work item were written.
 
 Check worker/processing status:
 

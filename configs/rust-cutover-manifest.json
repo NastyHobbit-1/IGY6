@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-154"
+    "next_required_diff": "DIFF-155"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -357,7 +357,7 @@
       "Rust worker Docker/Compose canary service is not wired",
       "beat/scheduler replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "rust_worker_live_side_effect_executor": {
     "diff": "DIFF-149",
@@ -412,7 +412,7 @@
       "beat/scheduler replacement or retirement is not decided",
       "Python/Celery remains the production worker owner until a cutover DIFF removes or disables it"
     ],
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "rust_worker_canary_verification_cutover_decision": {
     "diff": "DIFF-150",
@@ -462,7 +462,7 @@
       "beat/scheduler posture has not been replaced or formally retired",
       "production rollback procedure after Rust worker ownership is not yet verified"
     ],
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "controlled_rust_worker_canary_observed_side_effect_audit": {
     "diff": "DIFF-151",
@@ -501,7 +501,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "safe_canary_fixture_work_item_selection": {
     "diff": "DIFF-152",
@@ -536,7 +536,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "controlled_live_rust_worker_canary_run": {
     "diff": "DIFF-153",
@@ -575,7 +575,48 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-154 controlled document_chunking live canary verification"
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
+  },
+  "controlled_document_chunking_live_canary": {
+    "diff": "DIFF-154",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "A document_chunking canary was attempted exactly once in an isolated database, but the synthetic fixture used invalid chunk_size 80 and the worker failed safely before chunk/evidence writes.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture document_chunking --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff154-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff154-postgres on 127.0.0.1:55433; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff154-local@127.0.0.1:55433/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff154-canary QDRANT_URL=http://127.0.0.1:6333 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-154-canary-work-item",
+    "work_item_id": "diff-154-canary-work-item",
+    "work_type": "document_chunking",
+    "result_state": "failed",
+    "blocker": "The DIFF-154 fixture seeded chunk_size=80, but Rust document chunking requires chunk_size between 100 and 5000.",
+    "observed_side_effects": [
+      "work_items diff-154-canary-work-item moved from queued to failed",
+      "error_message was recorded as chunk size must be between 100 and 5000, got 80",
+      "audit_events rows observed for rust_worker_canary_fixture.selected, work_item.claimed, work_item.started, and document_chunks.failed",
+      "no chunks were written",
+      "no evidence_items were written",
+      "no chained chunk_vector_upsert work item was created"
+    ],
+    "fixture_correction": "scripts/rust-worker-canary-fixture.py now emits chunk_size=100 for the document_chunking fixture, but DIFF-154 does not rerun the live canary because only one canary work item may be processed in this DIFF.",
+    "qdrant_expected": false,
+    "qdrant_reason": "The selected canary work type was document_chunking; Qdrant side effects are expected only for chunk_vector_upsert, which DIFF-154 was prohibited from running.",
+    "side_effects_still_unverified": [
+      "successful live document_chunking chunks writes",
+      "successful live document_chunking evidence_items writes",
+      "successful chained chunk_vector_upsert work item creation",
+      "live chunk_vector_upsert Qdrant collection ensure and point upsert",
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-155 corrected document_chunking live canary verification"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -588,7 +629,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-153 verifies one isolated collection_normalization Rust canary but live document_chunking, live chunk_vector_upsert/Qdrant, broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-154 attempted one isolated document_chunking Rust canary and verified safe failure handling, but successful document_chunking, live chunk_vector_upsert/Qdrant, broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -999,7 +1040,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-153 because only one isolated collection_normalization Rust canary has been verified; live document_chunking, live chunk_vector_upsert/Qdrant, broad worker ownership, and beat/scheduler posture are not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-154 because the isolated document_chunking Rust canary failed safely before successful chunks/evidence writes; live chunk_vector_upsert/Qdrant, broad worker ownership, and beat/scheduler posture are not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
