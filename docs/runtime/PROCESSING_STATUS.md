@@ -4,13 +4,18 @@ Manual upload processing currently has two paths:
 
 - `POST /collection-runs/manual-upload` creates a completed collection run, a
   raw artifact, and a queued `collection_normalization` work item.
-- Python/Celery worker tasks own live runtime processing from raw artifacts to
-  normalized documents, chunks, evidence, and Qdrant vector memory.
+- Python/Celery worker tasks still own the live runtime process for end-to-end
+  processing from raw artifacts to normalized documents, chunks, evidence, and
+  Qdrant vector memory.
 
-The Rust worker crate is a deterministic planning foundation. It does not
-replace the live Python/Celery worker yet. The Rust gateway dispatch route is
-safe-limited: it records dispatch metadata and audit events but does not invoke
-Celery or arbitrary runtime execution.
+The Rust worker crate now has a DIFF-143 `collection_normalization` execution
+planner and SQL/audit/status executor contract. It preserves Python/Celery
+normalization semantics for UTF-8 raw artifacts, `normalized_documents` insert
+shape, duplicate skips, originating work-item status, completion/failure audit
+events, and chained `document_chunking` work-item creation. It does not yet
+replace the live Python/Celery worker process. The Rust gateway dispatch route
+is safe-limited: it records dispatch metadata and audit events but does not
+invoke Celery or arbitrary runtime execution.
 
 DIFF-141 audits worker execution parity and recommends migrating worker
 execution to Rust one job family at a time. Until that parity is implemented and
@@ -18,10 +23,10 @@ verified, Python/Celery `worker` remains required for live processing. `beat`
 also remains in the stack; no repo-defined beat schedule currently exists, but
 scheduled-work retirement or replacement requires a later DIFF.
 
-DIFF-142 adds the Rust queue-claim contract only. It validates claim eligibility
-for `collection_normalization`, `document_chunking`, and `chunk_vector_upsert`
-work items, but it does not execute those jobs, read artifacts, write database
-rows, write audit events, call Qdrant, or replace Celery.
+DIFF-142 adds the Rust queue-claim contract only. DIFF-143 adds
+`collection_normalization` execution parity planning and executor contracts.
+`document_chunking` and `chunk_vector_upsert` execution remain Python/Celery-
+backed, and DIFF-143 does not call Qdrant or replace Celery.
 
 ## Pipeline
 

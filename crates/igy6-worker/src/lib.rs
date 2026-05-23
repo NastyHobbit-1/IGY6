@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use igy6_chunking::{plan_document_chunks, ChunkPlan, ChunkingError, EvidencePlan};
@@ -8,7 +8,7 @@ use igy6_normalization::{
 use igy6_vector_memory::{
     upsert_points_request, ChunkVectorPoint, HttpRequestPlan, QdrantSettings, VectorMemoryError,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerError {
@@ -190,6 +190,422 @@ pub fn plan_queue_claim(
         audit_decision: "running".to_string(),
         execution_status: "claimed_without_execution".to_string(),
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectionNormalizationError {
+    WorkItemNotFound,
+    WrongWorkType(String),
+    PayloadMismatch(String),
+    CollectionRunNotFound,
+    MissingRawArtifacts(Vec<String>),
+    RawArtifactCollectionMismatch(String),
+    NonUtf8Artifact(String),
+    MissingGeneratedDocumentId(String),
+}
+
+impl fmt::Display for CollectionNormalizationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WorkItemNotFound => write!(formatter, "Work item not found"),
+            Self::WrongWorkType(work_type) => {
+                write!(formatter, "Work item is not a collection_normalization item: {work_type}")
+            }
+            Self::PayloadMismatch(message) => write!(formatter, "{message}"),
+            Self::CollectionRunNotFound => write!(formatter, "Collection run not found"),
+            Self::MissingRawArtifacts(ids) => write!(formatter, "Raw artifacts not found: {}", ids.join(", ")),
+            Self::RawArtifactCollectionMismatch(id) => write!(
+                formatter,
+                "Raw artifact does not belong to the collection run: {id}"
+            ),
+            Self::NonUtf8Artifact(id) => write!(
+                formatter,
+                "Artifact is not UTF-8 text; this phase supports UTF-8 text normalization only: {id}"
+            ),
+            Self::MissingGeneratedDocumentId(id) => {
+                write!(formatter, "missing generated document id for raw artifact: {id}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CollectionNormalizationError {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionNormalizationWorkItem {
+    pub id: String,
+    pub work_type: String,
+    pub status: String,
+    pub requested_by_actor_id: String,
+    pub payload_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionRunRecord {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawArtifactRecord {
+    pub id: String,
+    pub source_id: String,
+    pub collection_run_id: String,
+    pub content_hash: String,
+    pub storage_path: String,
+    pub metadata_json: Value,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingNormalizedDocument {
+    pub id: String,
+    pub raw_artifact_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedDocumentId {
+    pub raw_artifact_id: String,
+    pub document_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionNormalizationExecutionInput {
+    pub work_item: Option<CollectionNormalizationWorkItem>,
+    pub requested_collection_run_id: String,
+    pub requested_raw_artifact_ids: Vec<String>,
+    pub collection_run: Option<CollectionRunRecord>,
+    pub raw_artifacts: Vec<RawArtifactRecord>,
+    pub existing_documents: Vec<ExistingNormalizedDocument>,
+    pub generated_document_ids: Vec<GeneratedDocumentId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedDocumentDraft {
+    pub id: String,
+    pub raw_artifact_id: String,
+    pub source_id: String,
+    pub title: Option<String>,
+    pub document_type: String,
+    pub language: Option<String>,
+    pub text_content: String,
+    pub sensitivity: String,
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainedWorkItemDraft {
+    pub work_type: String,
+    pub status: String,
+    pub requested_by_actor_id: String,
+    pub payload_json: Value,
+    pub audit_event: AuditEventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItemStatusDraft {
+    pub work_item_id: String,
+    pub status: String,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditEventDraft {
+    pub actor_id: String,
+    pub event_type: String,
+    pub decision: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub correlation_id: String,
+    pub details_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionNormalizationExecutionPlan {
+    pub status: String,
+    pub actor_id: String,
+    pub work_item_id: String,
+    pub collection_run_id: String,
+    pub normalized_documents: Vec<NormalizedDocumentDraft>,
+    pub skipped_raw_artifact_ids: Vec<String>,
+    pub completion_status_update: WorkItemStatusDraft,
+    pub document_chunking_work_item: Option<ChainedWorkItemDraft>,
+    pub completion_audit_event: AuditEventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionNormalizationSqlPlan {
+    pub mark_running_sql: &'static str,
+    pub insert_normalized_document_sql: &'static str,
+    pub mark_completed_sql: &'static str,
+    pub mark_failed_sql: &'static str,
+    pub insert_chained_work_item_sql: &'static str,
+    pub insert_audit_event_sql: &'static str,
+}
+
+pub fn collection_normalization_sql_plan() -> CollectionNormalizationSqlPlan {
+    CollectionNormalizationSqlPlan {
+        mark_running_sql:
+            "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1",
+        insert_normalized_document_sql:
+            "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json) VALUES ($1, $2, $3, $4, 'text', NULL, $5, 'internal', $6)",
+        mark_completed_sql:
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+        mark_failed_sql:
+            "UPDATE work_items SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1",
+        insert_chained_work_item_sql:
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json) VALUES ($1, 'document_chunking', 'queued', $2, $3)",
+        insert_audit_event_sql:
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    }
+}
+
+pub fn plan_collection_normalization_execution(
+    input: CollectionNormalizationExecutionInput,
+) -> Result<CollectionNormalizationExecutionPlan, CollectionNormalizationError> {
+    let work_item = input
+        .work_item
+        .ok_or(CollectionNormalizationError::WorkItemNotFound)?;
+    if work_item.work_type != WorkerTaskKind::CollectionNormalization.work_type() {
+        return Err(CollectionNormalizationError::WrongWorkType(
+            work_item.work_type,
+        ));
+    }
+    validate_collection_normalization_payload(
+        &work_item.payload_json,
+        &input.requested_collection_run_id,
+        &input.requested_raw_artifact_ids,
+    )?;
+    if input.collection_run.is_none() {
+        return Err(CollectionNormalizationError::CollectionRunNotFound);
+    }
+
+    let artifacts_by_id: BTreeMap<String, RawArtifactRecord> = input
+        .raw_artifacts
+        .into_iter()
+        .map(|artifact| (artifact.id.clone(), artifact))
+        .collect();
+    let missing_artifact_ids: Vec<String> = input
+        .requested_raw_artifact_ids
+        .iter()
+        .filter(|id| !artifacts_by_id.contains_key(*id))
+        .cloned()
+        .collect();
+    if !missing_artifact_ids.is_empty() {
+        return Err(CollectionNormalizationError::MissingRawArtifacts(
+            missing_artifact_ids,
+        ));
+    }
+
+    let existing_raw_artifact_ids: BTreeSet<String> = input
+        .existing_documents
+        .iter()
+        .map(|document| document.raw_artifact_id.clone())
+        .collect();
+    let generated_document_ids: BTreeMap<String, String> = input
+        .generated_document_ids
+        .into_iter()
+        .map(|generated| (generated.raw_artifact_id, generated.document_id))
+        .collect();
+
+    let mut normalized_documents = Vec::new();
+    let mut skipped_raw_artifact_ids = Vec::new();
+    for artifact_id in &input.requested_raw_artifact_ids {
+        let artifact = artifacts_by_id.get(artifact_id).expect("validated above");
+        if artifact.collection_run_id != input.requested_collection_run_id {
+            return Err(CollectionNormalizationError::RawArtifactCollectionMismatch(
+                artifact.id.clone(),
+            ));
+        }
+        if existing_raw_artifact_ids.contains(artifact_id) {
+            skipped_raw_artifact_ids.push(artifact_id.clone());
+            continue;
+        }
+        let text_content = std::str::from_utf8(&artifact.bytes)
+            .map_err(|_| CollectionNormalizationError::NonUtf8Artifact(artifact.id.clone()))?
+            .to_string();
+        let document_id = generated_document_ids
+            .get(artifact_id)
+            .ok_or_else(|| {
+                CollectionNormalizationError::MissingGeneratedDocumentId(artifact_id.clone())
+            })?
+            .clone();
+        normalized_documents.push(NormalizedDocumentDraft {
+            id: document_id,
+            raw_artifact_id: artifact.id.clone(),
+            source_id: artifact.source_id.clone(),
+            title: document_title_from_metadata(&artifact.metadata_json, &artifact.id),
+            document_type: "text".to_string(),
+            language: None,
+            text_content,
+            sensitivity: "internal".to_string(),
+            metadata_json: json!({
+                "generated_by": "DIFF-051",
+                "raw_content_hash": artifact.content_hash,
+                "raw_storage_path": artifact.storage_path,
+                "work_item_id": work_item.id,
+            }),
+        });
+    }
+
+    let created_document_ids: Vec<String> = normalized_documents
+        .iter()
+        .map(|document| document.id.clone())
+        .collect();
+    let document_chunking_work_item = if created_document_ids.is_empty() {
+        None
+    } else {
+        Some(ChainedWorkItemDraft {
+            work_type: "document_chunking".to_string(),
+            status: "queued".to_string(),
+            requested_by_actor_id: work_item.requested_by_actor_id.clone(),
+            payload_json: chained_document_chunking_payload(&created_document_ids, &work_item.id),
+            audit_event: AuditEventDraft {
+                actor_id: work_item.requested_by_actor_id.clone(),
+                event_type: "work_item.created".to_string(),
+                decision: "queued".to_string(),
+                resource_type: "work_item".to_string(),
+                resource_id: "<generated-document-chunking-work-item-id>".to_string(),
+                correlation_id: work_item.id.clone(),
+                details_json: json!({
+                    "work_type": "document_chunking",
+                    "parent_work_item_id": work_item.id,
+                    "generated_by": "DIFF-066",
+                }),
+            },
+        })
+    };
+
+    Ok(CollectionNormalizationExecutionPlan {
+        status: "completed".to_string(),
+        actor_id: work_item.requested_by_actor_id.clone(),
+        work_item_id: work_item.id.clone(),
+        collection_run_id: input.requested_collection_run_id.clone(),
+        normalized_documents,
+        skipped_raw_artifact_ids: skipped_raw_artifact_ids.clone(),
+        completion_status_update: WorkItemStatusDraft {
+            work_item_id: work_item.id.clone(),
+            status: "completed".to_string(),
+            error_message: None,
+        },
+        completion_audit_event: AuditEventDraft {
+            actor_id: work_item.requested_by_actor_id,
+            event_type: "collection_normalization.completed".to_string(),
+            decision: "completed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item.id,
+            correlation_id: input.requested_collection_run_id.clone(),
+            details_json: json!({
+                "collection_run_id": input.requested_collection_run_id,
+                "created_document_ids": created_document_ids,
+                "skipped_raw_artifact_ids": skipped_raw_artifact_ids,
+                "document_chunking_work_item_id": if document_chunking_work_item.is_some() {
+                    Value::String("<generated-document-chunking-work-item-id>".to_string())
+                } else {
+                    Value::Null
+                },
+            }),
+        },
+        document_chunking_work_item,
+    })
+}
+
+pub fn plan_collection_normalization_failure(
+    work_item_id: &str,
+    collection_run_id: &str,
+    raw_artifact_ids: &[String],
+    actor_id: &str,
+    error_message: &str,
+) -> (WorkItemStatusDraft, AuditEventDraft) {
+    (
+        WorkItemStatusDraft {
+            work_item_id: work_item_id.to_string(),
+            status: "failed".to_string(),
+            error_message: Some(error_message.to_string()),
+        },
+        AuditEventDraft {
+            actor_id: actor_id.to_string(),
+            event_type: "collection_normalization.failed".to_string(),
+            decision: "failed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item_id.to_string(),
+            correlation_id: collection_run_id.to_string(),
+            details_json: json!({
+                "collection_run_id": collection_run_id,
+                "raw_artifact_ids": raw_artifact_ids,
+                "error_message": error_message,
+            }),
+        },
+    )
+}
+
+fn validate_collection_normalization_payload(
+    payload_json: &Value,
+    collection_run_id: &str,
+    raw_artifact_ids: &[String],
+) -> Result<(), CollectionNormalizationError> {
+    if payload_json
+        .get("collection_run_id")
+        .and_then(Value::as_str)
+        != Some(collection_run_id)
+    {
+        return Err(CollectionNormalizationError::PayloadMismatch(
+            "Work item collection_run_id does not match task request".to_string(),
+        ));
+    }
+    let expected_artifact_ids = payload_json
+        .get("raw_artifact_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            CollectionNormalizationError::PayloadMismatch(
+                "Work item raw_artifact_ids do not match task request".to_string(),
+            )
+        })?;
+    let expected_artifact_ids: Option<Vec<String>> = expected_artifact_ids
+        .iter()
+        .map(|value| value.as_str().map(ToString::to_string))
+        .collect();
+    if expected_artifact_ids.as_deref() != Some(raw_artifact_ids) {
+        return Err(CollectionNormalizationError::PayloadMismatch(
+            "Work item raw_artifact_ids do not match task request".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn chained_document_chunking_payload(document_ids: &[String], parent_work_item_id: &str) -> Value {
+    json!({
+        "document_ids": document_ids,
+        "chunk_size": 1000,
+        "parent_work_item_id": parent_work_item_id,
+        "worker_task_name": "evidence.generate_document_chunks",
+        "generated_by": "DIFF-066",
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": "Continue deterministic post-normalization evidence processing.",
+            "interpretation": "Chunk normalized UTF-8 text documents created by the approved collection pipeline.",
+            "proposed_work_type": "document_chunking",
+            "sources_likely_used": [],
+            "expected_output": "Chunk and evidence item records for normalized documents.",
+            "safety_requirements": [
+                "Use only local normalized documents from the parent work item.",
+                "Do not perform external model calls or system-changing actions."
+            ],
+            "assumptions": ["Parent normalization work item completed successfully."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 worker chained governance"
+        }
+    })
+}
+
+fn document_title_from_metadata(metadata_json: &Value, artifact_id: &str) -> Option<String> {
+    for key in ["filename", "relative_path", "source_path"] {
+        if let Some(value) = metadata_json.get(key).and_then(Value::as_str) {
+            if !value.is_empty() {
+                return Some(value.chars().take(255).collect());
+            }
+        }
+    }
+    Some(artifact_id.to_string())
 }
 
 fn has_intent_verification(payload_json: &Value) -> bool {
@@ -631,5 +1047,248 @@ mod tests {
             .expect_err("actor"),
             QueueClaimError::EmptyActorId
         );
+    }
+
+    fn normalization_work_item(payload_json: Value) -> CollectionNormalizationWorkItem {
+        CollectionNormalizationWorkItem {
+            id: "work-1".to_string(),
+            work_type: "collection_normalization".to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: "local-owner".to_string(),
+            payload_json,
+        }
+    }
+
+    fn raw_artifact(id: &str, bytes: Vec<u8>) -> RawArtifactRecord {
+        raw_artifact_for_run(id, "run-1", bytes)
+    }
+
+    fn raw_artifact_for_run(
+        id: &str,
+        collection_run_id: &str,
+        bytes: Vec<u8>,
+    ) -> RawArtifactRecord {
+        RawArtifactRecord {
+            id: id.to_string(),
+            source_id: "source-1".to_string(),
+            collection_run_id: collection_run_id.to_string(),
+            content_hash: format!("hash-{id}"),
+            storage_path: format!("sha256/{id}"),
+            metadata_json: json!({"filename": format!("{id}.txt")}),
+            bytes,
+        }
+    }
+
+    fn normalization_input() -> CollectionNormalizationExecutionInput {
+        CollectionNormalizationExecutionInput {
+            work_item: Some(normalization_work_item(json!({
+                "collection_run_id": "run-1",
+                "raw_artifact_ids": ["raw-1", "raw-2"],
+                "intent_verification_recorded": true
+            }))),
+            requested_collection_run_id: "run-1".to_string(),
+            requested_raw_artifact_ids: vec!["raw-1".to_string(), "raw-2".to_string()],
+            collection_run: Some(CollectionRunRecord {
+                id: "run-1".to_string(),
+            }),
+            raw_artifacts: vec![
+                raw_artifact("raw-1", b"alpha".to_vec()),
+                raw_artifact("raw-2", b"beta".to_vec()),
+            ],
+            existing_documents: Vec::new(),
+            generated_document_ids: vec![
+                GeneratedDocumentId {
+                    raw_artifact_id: "raw-1".to_string(),
+                    document_id: "doc-1".to_string(),
+                },
+                GeneratedDocumentId {
+                    raw_artifact_id: "raw-2".to_string(),
+                    document_id: "doc-2".to_string(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn collection_normalization_plans_python_equivalent_success() {
+        let plan = plan_collection_normalization_execution(normalization_input()).expect("success");
+
+        assert_eq!(plan.status, "completed");
+        assert_eq!(plan.actor_id, "local-owner");
+        assert_eq!(plan.normalized_documents.len(), 2);
+        assert_eq!(plan.normalized_documents[0].id, "doc-1");
+        assert_eq!(plan.normalized_documents[0].raw_artifact_id, "raw-1");
+        assert_eq!(
+            plan.normalized_documents[0].title.as_deref(),
+            Some("raw-1.txt")
+        );
+        assert_eq!(plan.normalized_documents[0].document_type, "text");
+        assert_eq!(plan.normalized_documents[0].language, None);
+        assert_eq!(plan.normalized_documents[0].text_content, "alpha");
+        assert_eq!(plan.normalized_documents[0].sensitivity, "internal");
+        assert_eq!(
+            plan.normalized_documents[0].metadata_json,
+            json!({
+                "generated_by": "DIFF-051",
+                "raw_content_hash": "hash-raw-1",
+                "raw_storage_path": "sha256/raw-1",
+                "work_item_id": "work-1"
+            })
+        );
+        assert_eq!(plan.completion_status_update.status, "completed");
+        assert_eq!(plan.completion_status_update.error_message, None);
+        assert_eq!(
+            plan.completion_audit_event.event_type,
+            "collection_normalization.completed"
+        );
+        assert_eq!(plan.completion_audit_event.decision, "completed");
+        assert_eq!(plan.completion_audit_event.correlation_id, "run-1");
+        assert_eq!(
+            plan.completion_audit_event.details_json["created_document_ids"],
+            json!(["doc-1", "doc-2"])
+        );
+    }
+
+    #[test]
+    fn collection_normalization_creates_chained_document_chunking_item_only_when_docs_created() {
+        let plan = plan_collection_normalization_execution(normalization_input()).expect("success");
+        let chained = plan
+            .document_chunking_work_item
+            .expect("document chunking item");
+        assert_eq!(chained.work_type, "document_chunking");
+        assert_eq!(chained.status, "queued");
+        assert_eq!(chained.requested_by_actor_id, "local-owner");
+        assert_eq!(
+            chained.payload_json["document_ids"],
+            json!(["doc-1", "doc-2"])
+        );
+        assert_eq!(chained.payload_json["chunk_size"], json!(1000));
+        assert_eq!(
+            chained.payload_json["worker_task_name"],
+            json!("evidence.generate_document_chunks")
+        );
+        assert_eq!(
+            chained.payload_json["intent_verification"]["recorded_by"],
+            json!("DIFF-074 worker chained governance")
+        );
+        assert_eq!(chained.audit_event.event_type, "work_item.created");
+        assert_eq!(chained.audit_event.decision, "queued");
+        assert_eq!(
+            chained.audit_event.details_json["generated_by"],
+            json!("DIFF-066")
+        );
+    }
+
+    #[test]
+    fn collection_normalization_skips_existing_documents_without_chaining_when_no_new_docs() {
+        let mut input = normalization_input();
+        input.existing_documents = vec![
+            ExistingNormalizedDocument {
+                id: "existing-1".to_string(),
+                raw_artifact_id: "raw-1".to_string(),
+            },
+            ExistingNormalizedDocument {
+                id: "existing-2".to_string(),
+                raw_artifact_id: "raw-2".to_string(),
+            },
+        ];
+
+        let plan = plan_collection_normalization_execution(input).expect("skip");
+
+        assert!(plan.normalized_documents.is_empty());
+        assert_eq!(plan.skipped_raw_artifact_ids, vec!["raw-1", "raw-2"]);
+        assert!(plan.document_chunking_work_item.is_none());
+        assert_eq!(
+            plan.completion_audit_event.details_json["document_chunking_work_item_id"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn collection_normalization_rejects_missing_artifacts() {
+        let mut input = normalization_input();
+        input.raw_artifacts.pop();
+
+        assert_eq!(
+            plan_collection_normalization_execution(input).expect_err("missing"),
+            CollectionNormalizationError::MissingRawArtifacts(vec!["raw-2".to_string()])
+        );
+    }
+
+    #[test]
+    fn collection_normalization_rejects_invalid_payload() {
+        let mut input = normalization_input();
+        input.work_item = Some(normalization_work_item(json!({
+            "collection_run_id": "run-1",
+            "raw_artifact_ids": ["raw-2", "raw-1"],
+            "intent_verification_recorded": true
+        })));
+
+        assert_eq!(
+            plan_collection_normalization_execution(input).expect_err("payload"),
+            CollectionNormalizationError::PayloadMismatch(
+                "Work item raw_artifact_ids do not match task request".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn collection_normalization_rejects_collection_mismatch_and_non_utf8() {
+        let mut mismatch = normalization_input();
+        mismatch.raw_artifacts[0] = raw_artifact_for_run("raw-1", "other-run", b"alpha".to_vec());
+        assert_eq!(
+            plan_collection_normalization_execution(mismatch).expect_err("mismatch"),
+            CollectionNormalizationError::RawArtifactCollectionMismatch("raw-1".to_string())
+        );
+
+        let mut non_utf8 = normalization_input();
+        non_utf8.raw_artifacts[0] = raw_artifact("raw-1", vec![0xff, b'a']);
+        assert_eq!(
+            plan_collection_normalization_execution(non_utf8).expect_err("utf8"),
+            CollectionNormalizationError::NonUtf8Artifact("raw-1".to_string())
+        );
+    }
+
+    #[test]
+    fn collection_normalization_failure_plan_matches_python_audit_shape() {
+        let raw_ids = vec!["raw-1".to_string(), "raw-2".to_string()];
+        let (status, audit) = plan_collection_normalization_failure(
+            "work-1",
+            "run-1",
+            &raw_ids,
+            "local-owner",
+            "Raw artifacts not found: raw-2",
+        );
+
+        assert_eq!(status.status, "failed");
+        assert_eq!(
+            status.error_message.as_deref(),
+            Some("Raw artifacts not found: raw-2")
+        );
+        assert_eq!(audit.event_type, "collection_normalization.failed");
+        assert_eq!(audit.decision, "failed");
+        assert_eq!(audit.resource_type, "work_item");
+        assert_eq!(audit.resource_id, "work-1");
+        assert_eq!(audit.correlation_id, "run-1");
+        assert_eq!(audit.details_json["raw_artifact_ids"], json!(raw_ids));
+        assert_eq!(
+            audit.details_json["error_message"],
+            json!("Raw artifacts not found: raw-2")
+        );
+    }
+
+    #[test]
+    fn collection_normalization_sql_plan_covers_status_inserts_and_audit() {
+        let sql = collection_normalization_sql_plan();
+        assert!(sql.mark_running_sql.contains("status = 'running'"));
+        assert!(sql
+            .insert_normalized_document_sql
+            .contains("normalized_documents"));
+        assert!(sql.mark_completed_sql.contains("status = 'completed'"));
+        assert!(sql.mark_failed_sql.contains("status = 'failed'"));
+        assert!(sql
+            .insert_chained_work_item_sql
+            .contains("'document_chunking'"));
+        assert!(sql.insert_audit_event_sql.contains("audit_events"));
     }
 }

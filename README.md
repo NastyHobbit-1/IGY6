@@ -21,6 +21,9 @@ Python/Celery `worker` and `beat` services remain part of the local stack until
 a later DIFF proves their replacement or explicitly documents long-term
 retention. DIFF-141 recommends migrating worker execution to Rust one job family
 at a time while retaining Python/Celery until execution parity is complete.
+DIFF-143 adds Rust `collection_normalization` execution parity planning and
+executor contracts, but `document_chunking`, `chunk_vector_upsert`, beat
+posture, and live worker process ownership remain Python/Celery-backed.
 
 Current web-used route parity is tracked by:
 
@@ -225,9 +228,10 @@ item creation, evidence availability, and retrieval visibility separately.
 ## Processing Status Diagnostics
 
 Manual upload creates raw artifact metadata and queued processing work. Live
-processing is still owned by the Python/Celery worker. The Rust worker crate is
-a deterministic planning foundation, and the Rust gateway dispatch route records
-safe dispatch metadata without invoking Celery directly.
+end-to-end processing is still owned by the Python/Celery worker. The Rust
+worker crate has DIFF-143 collection normalization parity planning and executor
+contracts, and the Rust gateway dispatch route records safe dispatch metadata
+without invoking Celery directly.
 
 Check worker/processing status:
 

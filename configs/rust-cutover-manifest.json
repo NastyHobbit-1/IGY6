@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-143"
+    "next_required_diff": "DIFF-144"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -31,7 +31,7 @@
       "services/worker worker service",
       "services/worker beat service"
     ],
-    "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; crates/igy6-worker is planning-only and does not replace runtime execution, database writes, audit writes, or Qdrant work.",
+    "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 adds Rust collection_normalization planning/executor contracts, but Rust does not yet replace document_chunking execution, chunk_vector_upsert execution, live process ownership, beat posture, or Qdrant worker work.",
     "rust_only_repository_or_runtime_claimed": false,
     "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
   },
@@ -140,6 +140,36 @@
     ],
     "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
   },
+  "collection_normalization_execution_parity": {
+    "diff": "DIFF-143",
+    "status": "complete",
+    "scope": "Rust worker collection_normalization execution planner and SQL/audit/status executor contract only",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "collection_normalization_parity_status": "planner_and_executor_contract_complete",
+    "behavior_covered": [
+      "validates collection_normalization work item payload against requested collection_run_id and raw_artifact_ids",
+      "requires an existing collection run",
+      "detects missing raw artifacts deterministically",
+      "rejects raw artifacts from a different collection run",
+      "decodes UTF-8 artifact bytes and rejects non-UTF-8 artifacts",
+      "plans normalized_documents inserts with Python/Celery metadata shape",
+      "skips raw artifacts that already have normalized documents",
+      "plans originating work_item completed or failed status updates",
+      "plans collection_normalization.completed and collection_normalization.failed audit events",
+      "plans chained document_chunking work item creation when new normalized documents are created"
+    ],
+    "out_of_scope": [
+      "document_chunking execution",
+      "chunk_vector_upsert execution",
+      "Qdrant calls from the Rust worker",
+      "Neo4j calls from the Rust worker",
+      "Python/Celery worker or beat removal",
+      "full Rust-only repository or runtime claim"
+    ],
+    "next_recommended_diff": "DIFF-144 Rust document_chunking execution parity"
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
@@ -151,7 +181,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity is not implemented or verified."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity is partial after DIFF-143 and does not yet replace document_chunking, chunk_vector_upsert, live process ownership, or beat posture."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -314,12 +344,13 @@
     },
     "worker": {
       "status": "complete",
-      "diff": "DIFF-142",
+      "diff": "DIFF-143",
       "verification": [
+        "DIFF-143 adds Rust collection_normalization execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including normalized_documents inserts, duplicate skips, failure handling, completion audit events, and chained document_chunking work-item creation.",
         "DIFF-142 adds a Rust worker queue-claim contract and bounded claim query planning without executing normalization, chunking, vector upsert, database writes, audit writes, artifact reads, Qdrant calls, or Neo4j calls.",
         "DIFF-141 audits Python/Celery worker and beat usage and recommends migrating worker execution to Rust one job family at a time while retaining Python/Celery until execution parity is complete.",
         "DIFF-095 adds a Rust worker MVP planning crate in crates/igy6-worker.",
-        "Python/Celery worker execution, database writes, audit writes, and Qdrant calls remain active until a later parity DIFF explicitly replaces them.",
+        "Python/Celery worker execution remains active for document_chunking, chunk_vector_upsert, beat posture, and live process ownership until later parity DIFFs explicitly replace them.",
         "Rust worker planning composes normalization, chunking, and vector-upsert request planning without live runtime side effects.",
         "git status --short checked DIFF-095 scoped files only",
         "git diff --check passed",
@@ -550,7 +581,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required where Rust worker behavior is still deterministic planning"
+        "reason": "Python/Celery workers remain required until Rust worker execution parity covers document_chunking, chunk_vector_upsert, live process ownership, and beat/scheduler posture"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
