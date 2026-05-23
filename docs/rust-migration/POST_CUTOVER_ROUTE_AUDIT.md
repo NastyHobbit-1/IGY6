@@ -121,6 +121,14 @@ Live observations of PostgreSQL writes, audit rows, artifact reads, Qdrant
 upserts, and failure rollback remain required before process ownership can move
 from Python/Celery to Rust.
 
+DIFF-151 decision: B, safe canary not available. No live Rust canary was run
+because no explicitly selected safe queued work item ID was available, and the
+DIFF prohibits touching runtime/private data except through that scoped canary.
+The next required work is to create or select exactly one non-sensitive queued
+canary work item, pause or isolate Python/Celery from racing that item during
+the canary window, run the gated Rust canary once, and record observed
+PostgreSQL, `audit_events`, artifact, and Qdrant side effects.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

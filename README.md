@@ -38,7 +38,9 @@ collection/point work for `chunk_vector_upsert`. It does not enable broad queue
 polling, Compose Rust worker ownership, beat replacement, or Rust-only runtime.
 DIFF-150 decides worker process cutover is not ready because no controlled real
 canary run has been executed and audited against safe runtime data; Python/Celery
-`worker` and `beat` remain active.
+`worker` and `beat` remain active. DIFF-151 reaches the same canary-run
+decision because no explicitly selected safe queued work item ID was available;
+it records the exact preparation steps for a later controlled canary.
 
 Current web-used route parity is tracked by:
 
@@ -258,6 +260,9 @@ directly.
 
 DIFF-150 keeps that posture: no real canary was run without an explicit safe
 work item, Docker Compose was not changed, and Rust-only runtime is not claimed.
+DIFF-151 also does not run a live canary because no safe work item ID was
+selected; the next step is to create or select one test work item and audit the
+single Rust canary side effects.
 
 Check worker/processing status:
 

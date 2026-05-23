@@ -72,6 +72,14 @@ non-mutating defaults, SQL claim shape, artifact path safety, and Qdrant request
 boundaries, but live PostgreSQL/audit/artifact/Qdrant observations remain
 unverified. Docker Compose still runs Python/Celery `worker` and `beat`.
 
+DIFF-151 attempts to advance to an observed canary audit, but chooses Decision
+B because no explicitly selected safe queued work item ID was available. No live
+canary command with `IGY6_WORKER_LIVE_CANARY=DIFF-148` was run. The required
+next preparation step is to create or select one non-sensitive queued canary
+work item, prevent a Python/Celery race for that item during the canary window,
+and then record the single Rust canary command plus observed PostgreSQL,
+`audit_events`, artifact, and Qdrant results.
+
 ## Pipeline
 
 ```text
