@@ -354,6 +354,14 @@ Neo4j operations. The recommended path is to migrate worker execution to Rust
 one job family at a time while retaining Python/Celery until execution parity is
 complete.
 
+DIFF-142 adds the Rust worker queue-claim contract and bounded claim planning.
+It supports only `collection_normalization`, `document_chunking`, and
+`chunk_vector_upsert` claims, requires queued status and recorded intent
+verification, and records an execution-free `work_item.claimed` audit posture.
+It does not execute any job family, write worker DB rows, write audit rows, read
+artifacts, call Qdrant, call Neo4j, remove Celery, or claim full Rust-only
+runtime operation.
+
 ## Web-Used Route Matrix
 
 | Method | Route | Web usage | Gateway behavior |
@@ -639,3 +647,7 @@ then drove unsupported non-web route migration or retirement through DIFF-138:
     one-job-family-at-a-time Rust worker execution parity.
 24. Recommended next DIFF: DIFF-142 Rust worker execution contract and
     queue-claim foundation.
+25. DIFF-142: add Rust worker queue-claim contract and bounded claim planning
+    without job execution.
+26. Recommended next DIFF: DIFF-143 Rust `collection_normalization` execution
+    parity.

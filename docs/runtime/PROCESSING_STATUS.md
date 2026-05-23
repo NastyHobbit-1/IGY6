@@ -18,6 +18,11 @@ verified, Python/Celery `worker` remains required for live processing. `beat`
 also remains in the stack; no repo-defined beat schedule currently exists, but
 scheduled-work retirement or replacement requires a later DIFF.
 
+DIFF-142 adds the Rust queue-claim contract only. It validates claim eligibility
+for `collection_normalization`, `document_chunking`, and `chunk_vector_upsert`
+work items, but it does not execute those jobs, read artifacts, write database
+rows, write audit events, call Qdrant, or replace Celery.
+
 ## Pipeline
 
 ```text

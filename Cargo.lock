@@ -349,6 +349,7 @@ dependencies = [
  "igy6-chunking",
  "igy6-normalization",
  "igy6-vector-memory",
+ "serde_json",
 ]
 
 [[package]]

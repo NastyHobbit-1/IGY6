@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-142"
+    "next_required_diff": "DIFF-143"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; crates/igy6-worker is planning-only and does not replace runtime execution, database writes, audit writes, or Qdrant work.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-142 Rust worker execution contract and queue-claim foundation"
+    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,56 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-142 Rust worker execution contract and queue-claim foundation"
+    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
+  },
+  "worker_execution_contract_queue_claim": {
+    "diff": "DIFF-142",
+    "status": "complete",
+    "scope": "Rust worker queue-claim contract and planning only; no job-family execution",
+    "claim_execution_status": "claimed_without_execution",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "allowed_work_types": [
+      "collection_normalization",
+      "document_chunking",
+      "chunk_vector_upsert"
+    ],
+    "legacy_task_names": [
+      "collection.normalize_collection_run",
+      "evidence.generate_document_chunks",
+      "memory.vector.upsert_chunks"
+    ],
+    "claim_guards": [
+      "queued status required",
+      "recorded intent verification required",
+      "non-empty claim actor required",
+      "supported work type required",
+      "work-type payload shape validation required",
+      "claim limit bounded to 1..16"
+    ],
+    "planned_sql": [
+      "SELECT queued allowed work items ordered by created_at with FOR UPDATE SKIP LOCKED",
+      "UPDATE still-queued work item to running"
+    ],
+    "audit_contract": {
+      "event_type": "work_item.claimed",
+      "decision": "running",
+      "resource_type": "work_item"
+    },
+    "out_of_scope": [
+      "collection_normalization execution",
+      "document_chunking execution",
+      "chunk_vector_upsert execution",
+      "artifact reads",
+      "database writes from a Rust worker process",
+      "audit writes from a Rust worker process",
+      "Qdrant calls from a Rust worker process",
+      "Neo4j calls from a Rust worker process",
+      "worker or beat removal"
+    ],
+    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -265,8 +314,9 @@
     },
     "worker": {
       "status": "complete",
-      "diff": "DIFF-141",
+      "diff": "DIFF-142",
       "verification": [
+        "DIFF-142 adds a Rust worker queue-claim contract and bounded claim query planning without executing normalization, chunking, vector upsert, database writes, audit writes, artifact reads, Qdrant calls, or Neo4j calls.",
         "DIFF-141 audits Python/Celery worker and beat usage and recommends migrating worker execution to Rust one job family at a time while retaining Python/Celery until execution parity is complete.",
         "DIFF-095 adds a Rust worker MVP planning crate in crates/igy6-worker.",
         "Python/Celery worker execution, database writes, audit writes, and Qdrant calls remain active until a later parity DIFF explicitly replaces them.",
