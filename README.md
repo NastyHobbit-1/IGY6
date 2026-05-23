@@ -40,7 +40,10 @@ DIFF-150 decides worker process cutover is not ready because no controlled real
 canary run has been executed and audited against safe runtime data; Python/Celery
 `worker` and `beat` remain active. DIFF-151 reaches the same canary-run
 decision because no explicitly selected safe queued work item ID was available;
-it records the exact preparation steps for a later controlled canary.
+it records the exact preparation steps for a later controlled canary. DIFF-152
+adds a deterministic safe canary fixture helper and selects
+`diff-152-canary-work-item` for a future one-item Rust canary; it does not run
+the live canary or change worker ownership.
 
 Current web-used route parity is tracked by:
 
@@ -262,7 +265,10 @@ DIFF-150 keeps that posture: no real canary was run without an explicit safe
 work item, Docker Compose was not changed, and Rust-only runtime is not claimed.
 DIFF-151 also does not run a live canary because no safe work item ID was
 selected; the next step is to create or select one test work item and audit the
-single Rust canary side effects.
+single Rust canary side effects. DIFF-152 adds
+`scripts/rust-worker-canary-fixture.py`, which emits the selected synthetic
+canary metadata and seed SQL for `diff-152-canary-work-item`; a later DIFF must
+apply the fixture in a safe test stack and run the gated live canary once.
 
 Check worker/processing status:
 

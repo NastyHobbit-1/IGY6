@@ -80,6 +80,14 @@ work item, prevent a Python/Celery race for that item during the canary window,
 and then record the single Rust canary command plus observed PostgreSQL,
 `audit_events`, artifact, and Qdrant results.
 
+DIFF-152 chooses Decision A and adds a deterministic safe fixture helper:
+`scripts/rust-worker-canary-fixture.py`. The selected canary work item ID is
+`diff-152-canary-work-item`, with one synthetic `collection_normalization`
+fixture path. The helper is non-mutating by default and can emit the seed SQL
+and synthetic artifact plan needed for a later controlled canary. DIFF-152 does
+not run the live Rust worker canary, does not process broad queues, and does
+not change Docker Compose worker or beat ownership.
+
 ## Pipeline
 
 ```text

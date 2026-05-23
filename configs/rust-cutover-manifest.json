@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-152"
+    "next_required_diff": "DIFF-153"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -357,7 +357,7 @@
       "Rust worker Docker/Compose canary service is not wired",
       "beat/scheduler replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "rust_worker_live_side_effect_executor": {
     "diff": "DIFF-149",
@@ -412,7 +412,7 @@
       "beat/scheduler replacement or retirement is not decided",
       "Python/Celery remains the production worker owner until a cutover DIFF removes or disables it"
     ],
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "rust_worker_canary_verification_cutover_decision": {
     "diff": "DIFF-150",
@@ -462,7 +462,7 @@
       "beat/scheduler posture has not been replaced or formally retired",
       "production rollback procedure after Rust worker ownership is not yet verified"
     ],
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "controlled_rust_worker_canary_observed_side_effect_audit": {
     "diff": "DIFF-151",
@@ -501,7 +501,42 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-152 safe canary fixture creation and explicit work item selection"
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
+  },
+  "safe_canary_fixture_work_item_selection": {
+    "diff": "DIFF-152",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Safe deterministic canary fixture path was added; no live Rust canary was run.",
+    "fixture_script": "scripts/rust-worker-canary-fixture.py",
+    "fixture_work_type": "collection_normalization",
+    "fixture_data_classification": "synthetic_non_production",
+    "selected_work_item_id": "diff-152-canary-work-item",
+    "selected_source_id": "diff-152-canary-source",
+    "selected_collection_run_id": "diff-152-canary-run",
+    "selected_raw_artifact_id": "diff-152-canary-raw",
+    "artifact_storage_path": "sha256/26/15/26157f4935b30dbed9c3801007fea903db0c7192cc60422602703a5f22320256",
+    "artifact_content_hash": "26157f4935b30dbed9c3801007fea903db0c7192cc60422602703a5f22320256",
+    "work_item_id_selection_method": "deterministic fixture ID emitted by scripts/rust-worker-canary-fixture.py; the selected canary work item is diff-152-canary-work-item and is bounded to one collection_normalization job.",
+    "fixture_default_mutates_runtime_data": false,
+    "live_canary_run": false,
+    "future_live_canary_command": "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-152-canary-work-item",
+    "safety_constraints": [
+      "default fixture helper only prints selection metadata",
+      "seed SQL is emitted only when requested",
+      "synthetic artifact writing requires --write-artifact and a canary/diff152 data root",
+      "no broad queue processing is performed",
+      "Python/Celery worker and beat remain active",
+      "Rust-only runtime is not claimed"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-153 controlled live canary run against DIFF-152 selected fixture"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -514,7 +549,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-151 did not run a live Rust canary because no explicitly selected safe work item was available, and broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-152 adds a deterministic safe canary fixture selection but does not run the live Rust canary, and broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -925,7 +960,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-151 because no explicitly selected safe canary work item was available and beat/scheduler posture is not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-152 because the safe canary fixture was selected but no live Rust canary has been run and beat/scheduler posture is not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
