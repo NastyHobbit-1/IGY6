@@ -8,7 +8,7 @@ Create DIFF-131 to connect the existing local LLM routing configuration to the R
 
 ## Baseline
 
-DIFF-130 added `configs/local-llm-routing.json` and Rust validation for task routes. `LLM_PROVIDER=none` remains the default. Ollama remains optional. FastAPI fallback remains required. Do not claim Rust-only operation.
+DIFF-130 added `configs/local-llm-routing.json` and Rust validation for task routes. `LLM_PROVIDER=none` remains the default. Ollama remains optional. At DIFF-131 time, FastAPI fallback remained required; after DIFF-138 and DIFF-140, the API path is Rust-native with no FastAPI fallback. Do not claim Rust-only operation while Python/Celery worker and beat services remain active.
 
 ## Required Work
 

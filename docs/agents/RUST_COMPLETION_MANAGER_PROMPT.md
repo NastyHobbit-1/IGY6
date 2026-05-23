@@ -8,7 +8,11 @@ Finish the remaining Rust migration work safely in sequential DIFFs until FastAP
 
 ## Current Baseline
 
-DIFF-131 is complete and locked. IGY6 is Rust-primary, not Rust-only. Web-used routes should not require FastAPI fallback, but non-web FastAPI fallback is still required until route parity and manifest state prove otherwise. Do not claim Rust-only operation unless it is factually true.
+DIFF-139 is complete and locked. FastAPI fallback is removed, `services/api/`
+is archived, and route parity reports zero FastAPI routes missing from Rust and
+zero web-used routes requiring fallback. IGY6 is Rust-primary with a Rust-native
+API path, not Rust-only, because Python/Celery `worker` and `beat` services
+remain active. Do not claim Rust-only operation unless it is factually true.
 
 ## Required First Reads
 
@@ -144,4 +148,4 @@ Report:
 - Whether Rust-only operation is claimed.
 - Next recommended DIFF.
 
-Unless Rust-only is fully proven, include: `IGY6 remains Rust-primary with required FastAPI fallback. Rust-only is not claimed.`
+Unless Rust-only is fully proven, include: `IGY6 remains Rust-primary with a Rust-native API path and retained Python/Celery worker and beat services. Rust-only is not claimed.`

@@ -3,7 +3,9 @@
 DIFF-138 keeps the Rust gateway as the `api` service and removes the FastAPI
 `legacy-api` fallback wiring after route parity reaches zero missing FastAPI
 routes. DIFF-139 archives the tracked legacy FastAPI API source under
-`archive/legacy-python/services-api`. The cutover checks remain
+`archive/legacy-python/services-api`. DIFF-140 records the final Rust API
+cutover audit: the active API path is Rust-native, FastAPI fallback is removed,
+and Python/Celery `worker` and `beat` remain active. The cutover checks remain
 non-destructive: they do not delete files, do not touch runtime/private data,
 and do not move `.env` files.
 
@@ -15,6 +17,8 @@ and do not move `.env` files.
 - Legacy FastAPI API source is archived at
   `archive/legacy-python/services-api`.
 - Python/Celery worker services remain active from `services/worker`.
+- Full Rust-only repository or runtime operation is not claimed while worker
+  execution parity remains unimplemented and unverified.
 
 ## Rollback Expectations
 
