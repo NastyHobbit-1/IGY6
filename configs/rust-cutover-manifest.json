@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-148"
+    "next_required_diff": "DIFF-149"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
+    "next_recommended_diff": "DIFF-149 Rust worker live side-effect executor implementation"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
+    "next_recommended_diff": "DIFF-149 Rust worker live side-effect executor implementation"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -313,6 +313,52 @@
     ],
     "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
   },
+  "rust_worker_live_executor_canary": {
+    "diff": "DIFF-148",
+    "status": "complete",
+    "scope": "Opt-in one-job Rust worker canary gate and side-effect verification planning",
+    "live_canary_execution_added": true,
+    "live_canary_default": false,
+    "live_canary_requires": [
+      "--once",
+      "--canary-live",
+      "--canary-work-item ID",
+      "IGY6_WORKER_LIVE_CANARY=DIFF-148 for live_execution_enabled=true"
+    ],
+    "max_jobs": 1,
+    "default_mode_mutates_runtime_data": false,
+    "actual_side_effects_executed": [],
+    "side_effects_planned_only": [
+      "PostgreSQL work item claim",
+      "PostgreSQL job-family writes",
+      "audit_events writes",
+      "artifact store reads",
+      "Qdrant collection ensure and point upserts"
+    ],
+    "structured_result_states": [
+      "claimed",
+      "skipped",
+      "completed",
+      "failed",
+      "unsupported"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "cutover_readiness": "canary_gate_ready_side_effect_executor_not_implemented",
+    "remaining_blockers": [
+      "live PostgreSQL executor is not implemented",
+      "live artifact-store read executor is not implemented",
+      "live audit writer is not implemented",
+      "live Qdrant HTTP executor is not implemented",
+      "Rust worker Docker/Compose canary service is not wired",
+      "beat/scheduler replacement or retirement is not decided"
+    ],
+    "next_recommended_diff": "DIFF-149 Rust worker live side-effect executor implementation"
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
@@ -324,7 +370,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-147 adds a safe Rust worker CLI/runtime harness, but live execution remains disabled and Rust still does not own DB/audit writes, artifact reads, Qdrant side effects, or beat posture."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-148 adds an explicit one-job Rust canary gate and side-effect verification plan, but actual DB/audit writes, artifact reads, Qdrant side effects, and beat posture are still not owned by Rust."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -487,8 +533,11 @@
     },
     "worker": {
       "status": "complete",
-      "diff": "DIFF-147",
+      "diff": "DIFF-148",
       "verification": [
+        "DIFF-148 adds an explicit one-job canary gate requiring --once --canary-live --canary-work-item ID. IGY6_WORKER_LIVE_CANARY=DIFF-148 is required before the status reports live_execution_enabled=true.",
+        "DIFF-148 reports structured canary result states and side-effect verification planning for PostgreSQL claim/writes, audit writes, artifact reads, and Qdrant collection/point work.",
+        "DIFF-148 executes no real DB, audit, artifact, or Qdrant side effects; those remain planned-only and Python/Celery remains required for production worker execution.",
         "DIFF-147 adds the igy6-worker binary with --help, --check, --dry-run, and --once modes. The default mode is safe and non-mutating; live execution is not enabled.",
         "DIFF-147 validates DATABASE_URL, QDRANT_URL, IGY6_DATA_ROOT, Qdrant collection/vector settings, bounded claim limits, and bounded modeled poll intervals without printing secrets.",
         "DIFF-147 plans queue polling and one-job claim flow only; it does not connect to PostgreSQL, read artifacts, write audit events, execute Qdrant requests, control Celery, remove worker, remove beat, or claim Rust-only runtime.",
@@ -729,7 +778,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-147 because Rust worker live execution remains disabled and beat/scheduler posture is not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-148 because Rust canary side effects are planned-only and beat/scheduler posture is not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

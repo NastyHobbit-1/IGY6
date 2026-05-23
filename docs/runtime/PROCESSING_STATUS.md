@@ -47,6 +47,14 @@ without connecting to PostgreSQL, mutating queue rows, reading artifacts,
 writing audits, calling Qdrant, controlling Celery, or replacing beat. Live
 execution is not enabled by DIFF-147.
 
+DIFF-148 adds an explicit one-job canary gate:
+`--once --canary-live --canary-work-item ID`. Reporting
+`live_execution_enabled=true` additionally requires
+`IGY6_WORKER_LIVE_CANARY=DIFF-148`. The canary emits structured states and
+side-effect verification planning for DB writes, audit writes, artifact reads,
+and Qdrant calls. DIFF-148 does not execute those side effects; they remain
+planned-only, so Python/Celery remains the production worker path.
+
 ## Pipeline
 
 ```text
@@ -102,6 +110,12 @@ Rust worker harness check:
 
 ```bash
 cargo run -p igy6-worker -- --check
+```
+
+Rust worker canary plan:
+
+```bash
+cargo run -p igy6-worker -- --once --canary-live --canary-work-item example-work-item
 ```
 
 API logs:

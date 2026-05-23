@@ -92,6 +92,14 @@ non-mutating. It does not connect to PostgreSQL, mutate runtime queue rows,
 read artifacts, write audit events, call Qdrant, control Celery, replace beat,
 or claim full Rust-only runtime.
 
+DIFF-148 adds an opt-in one-job canary gate:
+`--once --canary-live --canary-work-item ID`. The canary also requires the
+runtime acknowledgement `IGY6_WORKER_LIVE_CANARY=DIFF-148` before reporting
+`live_execution_enabled=true`. It adds structured canary states and
+side-effect verification planning for PostgreSQL claim/writes, audit writes,
+artifact reads, and Qdrant collection/point work. DIFF-148 still executes no
+real side effects; Python/Celery `worker` and `beat` remain active.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

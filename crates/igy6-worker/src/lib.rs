@@ -230,6 +230,7 @@ impl WorkerRuntimeMode {
 pub enum WorkerRuntimeError {
     UnknownArgument(String),
     MissingArgumentValue(&'static str),
+    InvalidCanaryMode(String),
     InvalidClaimLimit(String),
     InvalidPollInterval(String),
     InvalidDatabaseUrl(String),
@@ -246,7 +247,8 @@ impl fmt::Display for WorkerRuntimeError {
             Self::MissingArgumentValue(argument) => {
                 write!(formatter, "missing value for argument: {argument}")
             }
-            Self::InvalidClaimLimit(message)
+            Self::InvalidCanaryMode(message)
+            | Self::InvalidClaimLimit(message)
             | Self::InvalidPollInterval(message)
             | Self::InvalidDatabaseUrl(message)
             | Self::InvalidQdrantUrl(message)
@@ -265,6 +267,8 @@ pub struct WorkerRuntimeArgs {
     pub claim_limit: usize,
     pub poll_interval_ms: u64,
     pub explicit_live_execution: bool,
+    pub canary_live: bool,
+    pub canary_work_item_id: Option<String>,
 }
 
 impl Default for WorkerRuntimeArgs {
@@ -274,6 +278,8 @@ impl Default for WorkerRuntimeArgs {
             claim_limit: DEFAULT_WORKER_CLAIM_LIMIT,
             poll_interval_ms: DEFAULT_WORKER_POLL_INTERVAL_MS,
             explicit_live_execution: false,
+            canary_live: false,
+            canary_work_item_id: None,
         }
     }
 }
@@ -315,10 +321,29 @@ pub struct WorkerRuntimePlan {
     pub allowed_work_types: Vec<&'static str>,
     pub planned_steps: Vec<String>,
     pub blocked_side_effects: Vec<String>,
+    pub canary_plan: Option<WorkerCanaryPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerCanaryPlan {
+    pub work_item_id: String,
+    pub status: String,
+    pub max_jobs: usize,
+    pub supported_result_states: Vec<&'static str>,
+    pub side_effects_executed: Vec<&'static str>,
+    pub side_effects_planned: Vec<WorkerSideEffectPlan>,
+    pub rollback_posture: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerSideEffectPlan {
+    pub name: &'static str,
+    pub execution_status: &'static str,
+    pub verification: &'static str,
 }
 
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-147 safety: no live execution is enabled by this harness, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --once --canary-live --canary-work-item ID\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-live      Opt-in DIFF-148 canary gate; bounded to one named work item and still blocks side effects in this DIFF.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-148 safety: default mode is non-mutating, canary-live is explicit and one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -334,6 +359,24 @@ where
             "--check" => parsed.mode = WorkerRuntimeMode::Check,
             "--dry-run" => parsed.mode = WorkerRuntimeMode::DryRun,
             "--once" => parsed.mode = WorkerRuntimeMode::Once,
+            "--canary-live" => {
+                parsed.canary_live = true;
+                parsed.explicit_live_execution = true;
+            }
+            "--canary-work-item" => {
+                let value = iterator
+                    .next()
+                    .ok_or(WorkerRuntimeError::MissingArgumentValue(
+                        "--canary-work-item",
+                    ))?;
+                let value = value.as_ref().trim();
+                if value.is_empty() || value.contains(char::is_whitespace) {
+                    return Err(WorkerRuntimeError::InvalidCanaryMode(
+                        "--canary-work-item must be a non-empty single token".to_string(),
+                    ));
+                }
+                parsed.canary_work_item_id = Some(value.to_string());
+            }
             "--claim-limit" => {
                 let value = iterator
                     .next()
@@ -356,11 +399,32 @@ where
             "--once requires claim limit 1".to_string(),
         ));
     }
+    if parsed.canary_live {
+        if !matches!(parsed.mode, WorkerRuntimeMode::Once) {
+            return Err(WorkerRuntimeError::InvalidCanaryMode(
+                "--canary-live requires --once".to_string(),
+            ));
+        }
+        if parsed.claim_limit != 1 {
+            return Err(WorkerRuntimeError::InvalidCanaryMode(
+                "--canary-live is bounded to claim limit 1".to_string(),
+            ));
+        }
+        if parsed.canary_work_item_id.is_none() {
+            return Err(WorkerRuntimeError::InvalidCanaryMode(
+                "--canary-live requires --canary-work-item".to_string(),
+            ));
+        }
+    } else if parsed.canary_work_item_id.is_some() {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "--canary-work-item requires --canary-live".to_string(),
+        ));
+    }
     Ok(parsed)
 }
 
 pub fn validate_worker_runtime_config(
-    mut config: WorkerRuntimeConfig,
+    config: WorkerRuntimeConfig,
 ) -> Result<WorkerRuntimeConfig, WorkerRuntimeError> {
     validate_database_url(&config.database_url)?;
     validate_qdrant_url(&config.qdrant_url)?;
@@ -383,7 +447,6 @@ pub fn validate_worker_runtime_config(
             "WORKER_POLL_INTERVAL_MS must be between {MIN_WORKER_POLL_INTERVAL_MS} and {MAX_WORKER_POLL_INTERVAL_MS}"
         )));
     }
-    config.live_execution_enabled = false;
     Ok(config)
 }
 
@@ -412,9 +475,23 @@ pub fn plan_worker_runtime(
             "stop before DB, artifact, audit, or Qdrant side effects".to_string(),
         ],
     };
+    let canary_plan = if args.canary_live {
+        let work_item_id = args.canary_work_item_id.clone().ok_or_else(|| {
+            WorkerRuntimeError::InvalidCanaryMode(
+                "--canary-live requires --canary-work-item".to_string(),
+            )
+        })?;
+        Some(plan_worker_canary(&work_item_id))
+    } else {
+        None
+    };
     Ok(WorkerRuntimePlan {
         mode: args.mode,
-        status: "planned_without_execution".to_string(),
+        status: if args.canary_live {
+            "canary_ready_side_effects_planned".to_string()
+        } else {
+            "planned_without_execution".to_string()
+        },
         mutates_runtime_data: false,
         live_execution_enabled: config.live_execution_enabled && args.explicit_live_execution,
         allowed_work_types: claim_query.allowed_work_types.clone(),
@@ -429,7 +506,48 @@ pub fn plan_worker_runtime(
             "Celery or beat control".to_string(),
             "arbitrary shell command execution".to_string(),
         ],
+        canary_plan,
     })
+}
+
+pub fn plan_worker_canary(work_item_id: &str) -> WorkerCanaryPlan {
+    WorkerCanaryPlan {
+        work_item_id: work_item_id.to_string(),
+        status: "side_effects_planned_not_executed".to_string(),
+        max_jobs: 1,
+        supported_result_states: vec!["claimed", "skipped", "completed", "failed", "unsupported"],
+        side_effects_executed: Vec::new(),
+        side_effects_planned: vec![
+            WorkerSideEffectPlan {
+                name: "postgres_work_item_claim",
+                execution_status: "planned",
+                verification: "work_items row transitions queued to running for one canary id",
+            },
+            WorkerSideEffectPlan {
+                name: "postgres_job_family_writes",
+                execution_status: "planned",
+                verification: "normalized_documents/chunks/evidence_items/chained work_items match parity contract",
+            },
+            WorkerSideEffectPlan {
+                name: "audit_events",
+                execution_status: "planned",
+                verification: "audit_events contains claimed/completed/failed event for canary correlation id",
+            },
+            WorkerSideEffectPlan {
+                name: "artifact_store_read",
+                execution_status: "planned",
+                verification: "artifact path remains relative and resolves under IGY6_DATA_ROOT artifact store",
+            },
+            WorkerSideEffectPlan {
+                name: "qdrant_collection_and_points",
+                execution_status: "planned",
+                verification: "Qdrant collection exists and point ids match canary chunk ids",
+            },
+        ],
+        rollback_posture:
+            "Do not remove Python/Celery; inspect canary work item and audit trail before any retry"
+                .to_string(),
+    }
 }
 
 pub fn render_worker_runtime_status(
@@ -438,7 +556,7 @@ pub fn render_worker_runtime_status(
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-147",
+        "diff": "DIFF-148",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
@@ -456,6 +574,19 @@ pub fn render_worker_runtime_status(
         "allowed_work_types": plan.allowed_work_types,
         "planned_steps": plan.planned_steps,
         "blocked_side_effects": plan.blocked_side_effects,
+        "canary": plan.canary_plan.as_ref().map(|canary| json!({
+            "work_item_id": canary.work_item_id,
+            "status": canary.status,
+            "max_jobs": canary.max_jobs,
+            "supported_result_states": canary.supported_result_states,
+            "side_effects_executed": canary.side_effects_executed,
+            "side_effects_planned": canary.side_effects_planned.iter().map(|effect| json!({
+                "name": effect.name,
+                "execution_status": effect.execution_status,
+                "verification": effect.verification,
+            })).collect::<Vec<Value>>(),
+            "rollback_posture": canary.rollback_posture,
+        })),
     })
 }
 
@@ -1959,6 +2090,31 @@ mod tests {
     }
 
     #[test]
+    fn canary_live_requires_explicit_once_and_work_item() {
+        assert!(matches!(
+            parse_worker_runtime_args(["--canary-live", "--canary-work-item", "work-1"]),
+            Err(WorkerRuntimeError::InvalidCanaryMode(_))
+        ));
+        assert!(matches!(
+            parse_worker_runtime_args(["--once", "--canary-live"]),
+            Err(WorkerRuntimeError::InvalidCanaryMode(_))
+        ));
+        assert!(matches!(
+            parse_worker_runtime_args(["--once", "--canary-work-item", "work-1"]),
+            Err(WorkerRuntimeError::InvalidCanaryMode(_))
+        ));
+
+        let args =
+            parse_worker_runtime_args(["--once", "--canary-live", "--canary-work-item", "work-1"])
+                .expect("canary");
+        assert_eq!(args.mode, WorkerRuntimeMode::Once);
+        assert!(args.canary_live);
+        assert!(args.explicit_live_execution);
+        assert_eq!(args.canary_work_item_id.as_deref(), Some("work-1"));
+        assert_eq!(args.claim_limit, 1);
+    }
+
+    #[test]
     fn runtime_config_validation_rejects_unsafe_values() {
         assert!(validate_worker_runtime_config(WorkerRuntimeConfig::safe_default()).is_ok());
 
@@ -2008,6 +2164,36 @@ mod tests {
             .contains(&"Qdrant HTTP calls".to_string()));
         assert_eq!(status["rust_only_runtime_claimed"], json!(false));
         assert_eq!(status["python_celery_worker_required"], json!(true));
+    }
+
+    #[test]
+    fn canary_plan_is_one_job_and_side_effects_are_planned_only() {
+        let args =
+            parse_worker_runtime_args(["--once", "--canary-live", "--canary-work-item", "work-1"])
+                .expect("canary args");
+        let mut config = WorkerRuntimeConfig::safe_default();
+        config.live_execution_enabled = true;
+        let plan = plan_worker_runtime(args, config.clone()).expect("plan");
+        let canary = plan.canary_plan.as_ref().expect("canary");
+        let status = render_worker_runtime_status(&plan, &config);
+
+        assert_eq!(plan.status, "canary_ready_side_effects_planned");
+        assert!(!plan.mutates_runtime_data);
+        assert!(plan.live_execution_enabled);
+        assert_eq!(canary.max_jobs, 1);
+        assert_eq!(canary.work_item_id, "work-1");
+        assert!(canary.side_effects_executed.is_empty());
+        assert!(canary.supported_result_states.contains(&"claimed"));
+        assert!(canary.supported_result_states.contains(&"unsupported"));
+        assert!(canary
+            .side_effects_planned
+            .iter()
+            .any(|effect| effect.name == "audit_events"));
+        assert_eq!(
+            status["canary"]["status"],
+            json!("side_effects_planned_not_executed")
+        );
+        assert_eq!(status["canary"]["side_effects_executed"], json!([]));
     }
 
     fn input(bytes: Vec<u8>) -> WorkerPlanInput {
