@@ -137,6 +137,17 @@ default and can emit deterministic seed SQL plus the artifact storage path for a
 future live canary DIFF. DIFF-152 does not run the live Rust canary and does not
 change Python/Celery worker or beat ownership.
 
+DIFF-153 decision: A, controlled live Rust worker canary run completed. The
+DIFF-152 fixture was applied to an isolated local PostgreSQL canary container
+and `/tmp/igy6-diff153-canary` data root, then Rust ran exactly one selected
+work item: `diff-152-canary-work-item`. Observed side effects include
+`work_items` completion, claim/start/success audit events, scoped synthetic
+artifact read, one `normalized_documents` write, and one chained
+`document_chunking` work item. Qdrant side effects were not expected for this
+`collection_normalization` canary. Worker process cutover is still not claimed:
+live `document_chunking`, live `chunk_vector_upsert`/Qdrant, broad queue
+ownership, Compose worker replacement, and beat posture remain unresolved.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

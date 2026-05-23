@@ -88,6 +88,17 @@ and synthetic artifact plan needed for a later controlled canary. DIFF-152 does
 not run the live Rust worker canary, does not process broad queues, and does
 not change Docker Compose worker or beat ownership.
 
+DIFF-153 chooses Decision A and runs exactly one gated live Rust canary against
+the DIFF-152 selected fixture in an isolated local PostgreSQL canary container
+and `/tmp/igy6-diff153-canary` data root. Observed side effects: the selected
+work item moved to `completed`, claim/start/success audit rows were written,
+the synthetic artifact under `IGY6_DATA_ROOT/artifacts` was read, one
+`normalized_documents` row was written, and one chained `document_chunking` work
+item was queued. Qdrant side effects were not expected because the selected
+canary was `collection_normalization`. Python/Celery `worker` and `beat` remain
+active because live `document_chunking`, live `chunk_vector_upsert`, broad Rust
+worker ownership, and scheduler posture are still not replaced.
+
 ## Pipeline
 
 ```text

@@ -43,7 +43,12 @@ decision because no explicitly selected safe queued work item ID was available;
 it records the exact preparation steps for a later controlled canary. DIFF-152
 adds a deterministic safe canary fixture helper and selects
 `diff-152-canary-work-item` for a future one-item Rust canary; it does not run
-the live canary or change worker ownership.
+the live canary or change worker ownership. DIFF-153 applies that fixture to an
+isolated local canary PostgreSQL container and runs exactly one gated Rust
+canary for `diff-152-canary-work-item`; it verifies collection normalization
+DB/audit/artifact side effects only. Python/Celery `worker` and `beat` still
+remain active because live `document_chunking`, live `chunk_vector_upsert` with
+Qdrant, broad worker ownership, and scheduler posture are not replaced.
 
 Current web-used route parity is tracked by:
 
@@ -269,6 +274,10 @@ single Rust canary side effects. DIFF-152 adds
 `scripts/rust-worker-canary-fixture.py`, which emits the selected synthetic
 canary metadata and seed SQL for `diff-152-canary-work-item`; a later DIFF must
 apply the fixture in a safe test stack and run the gated live canary once.
+DIFF-153 performed that one isolated collection-normalization canary and
+observed the selected work item complete, expected audit rows, one normalized
+document, a chained `document_chunking` work item, and the expected synthetic
+artifact hash. Qdrant work was not expected for this canary type.
 
 Check worker/processing status:
 
