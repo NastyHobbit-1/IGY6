@@ -40,6 +40,13 @@ PostgreSQL in a runtime loop, read artifacts during execution, apply DB/audit
 writes, execute Qdrant HTTP requests, or provide worker health/shutdown/retry
 behavior. `worker` and `beat` therefore remain in Docker Compose.
 
+DIFF-147 adds the `igy6-worker` binary as a safe runtime harness. Its default
+mode is `--check`, and it also supports `--dry-run`, `--once`, and `--help`.
+These modes validate configuration and plan bounded queue/claim behavior
+without connecting to PostgreSQL, mutating queue rows, reading artifacts,
+writing audits, calling Qdrant, controlling Celery, or replacing beat. Live
+execution is not enabled by DIFF-147.
+
 ## Pipeline
 
 ```text
@@ -89,6 +96,12 @@ Worker logs:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 worker
+```
+
+Rust worker harness check:
+
+```bash
+cargo run -p igy6-worker -- --check
 ```
 
 API logs:

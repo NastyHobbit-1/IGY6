@@ -85,6 +85,13 @@ ownership: no Rust worker binary/container currently polls queued work,
 atomically claims jobs, performs the DB/audit writes, reads artifacts, executes
 Qdrant side effects, or replaces/retire scheduled work.
 
+DIFF-147 adds the Rust `igy6-worker` binary and a cutover readiness harness with
+`--check`, `--dry-run`, `--once`, and `--help`. The harness validates safe
+configuration and plans bounded queue/claim behavior, but it remains
+non-mutating. It does not connect to PostgreSQL, mutate runtime queue rows,
+read artifacts, write audit events, call Qdrant, control Celery, replace beat,
+or claim full Rust-only runtime.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

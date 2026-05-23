@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-147"
+    "next_required_diff": "DIFF-148"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
+    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
+    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -262,6 +262,57 @@
     },
     "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
   },
+  "rust_worker_runtime_harness_cutover_readiness": {
+    "diff": "DIFF-147",
+    "status": "complete",
+    "scope": "Rust worker CLI/runtime harness and non-mutating cutover readiness gate",
+    "rust_worker_binary_added": true,
+    "binary": "igy6-worker",
+    "runtime_modes": [
+      "--help",
+      "--check",
+      "--dry-run",
+      "--once"
+    ],
+    "default_mode": "--check",
+    "default_mode_mutates_runtime_data": false,
+    "live_execution_enabled": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "config_validation": [
+      "DATABASE_URL must be PostgreSQL-shaped",
+      "QDRANT_URL must be http(s) and must not include credentials",
+      "IGY6_DATA_ROOT must be a non-root local path",
+      "QDRANT_CHUNK_COLLECTION must be bounded to safe ASCII name characters",
+      "QDRANT_CHUNK_VECTOR_SIZE must be at least 1",
+      "claim limit is bounded to 1 through 16",
+      "poll interval is bounded to 100 through 60000 milliseconds"
+    ],
+    "safety_defaults": [
+      "no PostgreSQL connection is opened",
+      "no runtime queue row is mutated",
+      "no artifact bytes are read",
+      "no audit event is written",
+      "no Qdrant HTTP request is executed",
+      "no Celery or beat control is attempted",
+      "no arbitrary shell command execution exists",
+      "secrets are not printed in status output"
+    ],
+    "cutover_readiness": "not_ready_for_python_celery_removal",
+    "remaining_blockers": [
+      "live PostgreSQL queue claim execution is still not implemented",
+      "live job-family executors that apply planned DB writes are still not implemented",
+      "live artifact-store reads during Rust job execution are still not implemented",
+      "live Qdrant side-effect execution is still not implemented",
+      "Rust worker Docker/Compose canary service is still not wired",
+      "beat/scheduler replacement or retirement is still undecided"
+    ],
+    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
@@ -273,7 +324,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-146 decides cutover is not ready because Rust worker contracts cover the three queued job families but no Rust worker runtime yet polls, claims, executes DB/audit writes, executes Qdrant side effects, or resolves beat posture."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-147 adds a safe Rust worker CLI/runtime harness, but live execution remains disabled and Rust still does not own DB/audit writes, artifact reads, Qdrant side effects, or beat posture."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -436,8 +487,11 @@
     },
     "worker": {
       "status": "complete",
-      "diff": "DIFF-145",
+      "diff": "DIFF-147",
       "verification": [
+        "DIFF-147 adds the igy6-worker binary with --help, --check, --dry-run, and --once modes. The default mode is safe and non-mutating; live execution is not enabled.",
+        "DIFF-147 validates DATABASE_URL, QDRANT_URL, IGY6_DATA_ROOT, Qdrant collection/vector settings, bounded claim limits, and bounded modeled poll intervals without printing secrets.",
+        "DIFF-147 plans queue polling and one-job claim flow only; it does not connect to PostgreSQL, read artifacts, write audit events, execute Qdrant requests, control Celery, remove worker, remove beat, or claim Rust-only runtime.",
         "DIFF-145 adds Rust chunk_vector_upsert execution planning and SQL/audit/status/Qdrant request executor contracts matching Python/Celery behavior, including chunk selection, deterministic local vectors, Qdrant request plans, chunk metadata/status updates, completion audit events, and failure handling.",
         "DIFF-144 adds Rust document_chunking execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including chunks inserts, evidence_items inserts, duplicate document skips, failure handling, completion audit events, and chained chunk_vector_upsert work-item creation.",
         "DIFF-143 adds Rust collection_normalization execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including normalized_documents inserts, duplicate skips, failure handling, completion audit events, and chained document_chunking work-item creation.",
@@ -675,7 +729,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-146 because Rust worker process cutover is not ready; Rust still needs a live worker runtime and beat/scheduler decision"
+                "reason": "Python/Celery workers remain required after DIFF-147 because Rust worker live execution remains disabled and beat/scheduler posture is not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

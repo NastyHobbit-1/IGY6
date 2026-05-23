@@ -26,7 +26,10 @@ DIFF-143 through DIFF-145 add Rust `collection_normalization`,
 executor contracts. DIFF-146 decides the worker process cutover is not ready:
 beat posture and live worker process ownership remain Python/Celery-backed
 until a Rust worker runtime actually polls, claims, executes DB/audit writes,
-executes Qdrant side effects, and resolves scheduler posture.
+executes Qdrant side effects, and resolves scheduler posture. DIFF-147 adds a
+safe Rust worker CLI/runtime harness with `--check`, `--dry-run`, and `--once`
+modes, but live execution remains disabled and Python/Celery still owns live
+worker side effects.
 
 Current web-used route parity is tracked by:
 
@@ -235,8 +238,10 @@ end-to-end processing is still owned by the Python/Celery worker. The Rust
 worker crate has DIFF-143 collection normalization, DIFF-144 document chunking,
 and DIFF-145 chunk vector upsert parity planning and executor contracts, and
 DIFF-146 retains Python/Celery because there is not yet a Rust worker process
-that polls, claims, and executes queued jobs. The Rust gateway dispatch route
-records safe dispatch metadata without invoking Celery directly.
+that polls, claims, and executes queued jobs. DIFF-147 adds the safe
+`igy6-worker` harness for check/dry-run/once planning, but it is non-mutating
+and does not replace Celery. The Rust gateway dispatch route records safe
+dispatch metadata without invoking Celery directly.
 
 Check worker/processing status:
 

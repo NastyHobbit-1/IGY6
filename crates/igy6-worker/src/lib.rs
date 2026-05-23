@@ -47,6 +47,17 @@ impl From<VectorMemoryError> for WorkerError {
 
 pub const WORKER_EMBEDDING_METHOD: &str = "local_hash_v1";
 pub const WORKER_VECTOR_GENERATED_BY: &str = "DIFF-053";
+pub const DEFAULT_DATABASE_URL: &str =
+    "postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence";
+pub const DEFAULT_QDRANT_URL: &str = "http://qdrant:6333";
+pub const DEFAULT_IGY6_DATA_ROOT: &str = "../IGY6_Data";
+pub const DEFAULT_QDRANT_CHUNK_COLLECTION: &str = "igy6_chunks";
+pub const DEFAULT_QDRANT_CHUNK_VECTOR_SIZE: usize = 384;
+pub const DEFAULT_WORKER_CLAIM_LIMIT: usize = 1;
+pub const DEFAULT_WORKER_POLL_INTERVAL_MS: u64 = 1000;
+pub const MAX_WORKER_CLAIM_LIMIT: usize = 16;
+pub const MIN_WORKER_POLL_INTERVAL_MS: u64 = 100;
+pub const MAX_WORKER_POLL_INTERVAL_MS: u64 = 60000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerTaskKind {
@@ -194,6 +205,361 @@ pub fn plan_queue_claim(
         audit_decision: "running".to_string(),
         execution_status: "claimed_without_execution".to_string(),
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerRuntimeMode {
+    Check,
+    DryRun,
+    Once,
+    Help,
+}
+
+impl WorkerRuntimeMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::DryRun => "dry-run",
+            Self::Once => "once",
+            Self::Help => "help",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerRuntimeError {
+    UnknownArgument(String),
+    MissingArgumentValue(&'static str),
+    InvalidClaimLimit(String),
+    InvalidPollInterval(String),
+    InvalidDatabaseUrl(String),
+    InvalidQdrantUrl(String),
+    InvalidDataRoot(String),
+    InvalidVectorSize(String),
+    InvalidCollectionName(String),
+}
+
+impl fmt::Display for WorkerRuntimeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownArgument(argument) => write!(formatter, "unknown argument: {argument}"),
+            Self::MissingArgumentValue(argument) => {
+                write!(formatter, "missing value for argument: {argument}")
+            }
+            Self::InvalidClaimLimit(message)
+            | Self::InvalidPollInterval(message)
+            | Self::InvalidDatabaseUrl(message)
+            | Self::InvalidQdrantUrl(message)
+            | Self::InvalidDataRoot(message)
+            | Self::InvalidVectorSize(message)
+            | Self::InvalidCollectionName(message) => write!(formatter, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for WorkerRuntimeError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerRuntimeArgs {
+    pub mode: WorkerRuntimeMode,
+    pub claim_limit: usize,
+    pub poll_interval_ms: u64,
+    pub explicit_live_execution: bool,
+}
+
+impl Default for WorkerRuntimeArgs {
+    fn default() -> Self {
+        Self {
+            mode: WorkerRuntimeMode::Check,
+            claim_limit: DEFAULT_WORKER_CLAIM_LIMIT,
+            poll_interval_ms: DEFAULT_WORKER_POLL_INTERVAL_MS,
+            explicit_live_execution: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerRuntimeConfig {
+    pub database_url: String,
+    pub qdrant_url: String,
+    pub igy6_data_root: String,
+    pub qdrant_chunk_collection: String,
+    pub qdrant_chunk_vector_size: usize,
+    pub claim_limit: usize,
+    pub poll_interval_ms: u64,
+    pub live_execution_enabled: bool,
+}
+
+impl WorkerRuntimeConfig {
+    pub fn safe_default() -> Self {
+        Self {
+            database_url: DEFAULT_DATABASE_URL.to_string(),
+            qdrant_url: DEFAULT_QDRANT_URL.to_string(),
+            igy6_data_root: DEFAULT_IGY6_DATA_ROOT.to_string(),
+            qdrant_chunk_collection: DEFAULT_QDRANT_CHUNK_COLLECTION.to_string(),
+            qdrant_chunk_vector_size: DEFAULT_QDRANT_CHUNK_VECTOR_SIZE,
+            claim_limit: DEFAULT_WORKER_CLAIM_LIMIT,
+            poll_interval_ms: DEFAULT_WORKER_POLL_INTERVAL_MS,
+            live_execution_enabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerRuntimePlan {
+    pub mode: WorkerRuntimeMode,
+    pub status: String,
+    pub mutates_runtime_data: bool,
+    pub live_execution_enabled: bool,
+    pub claim_query: QueueClaimQueryPlan,
+    pub allowed_work_types: Vec<&'static str>,
+    pub planned_steps: Vec<String>,
+    pub blocked_side_effects: Vec<String>,
+}
+
+pub fn worker_runtime_help() -> &'static str {
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-147 safety: no live execution is enabled by this harness, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+}
+
+pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut parsed = WorkerRuntimeArgs::default();
+    let mut iterator = args.into_iter();
+    while let Some(argument) = iterator.next() {
+        match argument.as_ref() {
+            "--help" | "-h" => parsed.mode = WorkerRuntimeMode::Help,
+            "--check" => parsed.mode = WorkerRuntimeMode::Check,
+            "--dry-run" => parsed.mode = WorkerRuntimeMode::DryRun,
+            "--once" => parsed.mode = WorkerRuntimeMode::Once,
+            "--claim-limit" => {
+                let value = iterator
+                    .next()
+                    .ok_or(WorkerRuntimeError::MissingArgumentValue("--claim-limit"))?;
+                parsed.claim_limit = parse_claim_limit(value.as_ref())?;
+            }
+            "--poll-interval-ms" => {
+                let value = iterator
+                    .next()
+                    .ok_or(WorkerRuntimeError::MissingArgumentValue(
+                        "--poll-interval-ms",
+                    ))?;
+                parsed.poll_interval_ms = parse_poll_interval_ms(value.as_ref())?;
+            }
+            other => return Err(WorkerRuntimeError::UnknownArgument(other.to_string())),
+        }
+    }
+    if matches!(parsed.mode, WorkerRuntimeMode::Once) && parsed.claim_limit != 1 {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(
+            "--once requires claim limit 1".to_string(),
+        ));
+    }
+    Ok(parsed)
+}
+
+pub fn validate_worker_runtime_config(
+    mut config: WorkerRuntimeConfig,
+) -> Result<WorkerRuntimeConfig, WorkerRuntimeError> {
+    validate_database_url(&config.database_url)?;
+    validate_qdrant_url(&config.qdrant_url)?;
+    validate_data_root(&config.igy6_data_root)?;
+    validate_collection_name(&config.qdrant_chunk_collection)?;
+    if config.qdrant_chunk_vector_size == 0 {
+        return Err(WorkerRuntimeError::InvalidVectorSize(
+            "QDRANT_CHUNK_VECTOR_SIZE must be at least 1".to_string(),
+        ));
+    }
+    if !(1..=MAX_WORKER_CLAIM_LIMIT).contains(&config.claim_limit) {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "WORKER_CLAIM_LIMIT must be between 1 and {MAX_WORKER_CLAIM_LIMIT}"
+        )));
+    }
+    if !(MIN_WORKER_POLL_INTERVAL_MS..=MAX_WORKER_POLL_INTERVAL_MS)
+        .contains(&config.poll_interval_ms)
+    {
+        return Err(WorkerRuntimeError::InvalidPollInterval(format!(
+            "WORKER_POLL_INTERVAL_MS must be between {MIN_WORKER_POLL_INTERVAL_MS} and {MAX_WORKER_POLL_INTERVAL_MS}"
+        )));
+    }
+    config.live_execution_enabled = false;
+    Ok(config)
+}
+
+pub fn plan_worker_runtime(
+    args: WorkerRuntimeArgs,
+    config: WorkerRuntimeConfig,
+) -> Result<WorkerRuntimePlan, WorkerRuntimeError> {
+    let config = validate_worker_runtime_config(config)?;
+    let claim_query = queue_claim_query_plan(args.claim_limit).map_err(|error| {
+        WorkerRuntimeError::InvalidClaimLimit(format!("invalid claim limit: {error}"))
+    })?;
+    let planned_steps = match args.mode {
+        WorkerRuntimeMode::Help => vec!["render help text".to_string()],
+        WorkerRuntimeMode::Check => vec![
+            "validate DATABASE_URL, QDRANT_URL, IGY6_DATA_ROOT, Qdrant collection, vector size, claim limit, and poll interval".to_string(),
+            "render non-mutating status output".to_string(),
+        ],
+        WorkerRuntimeMode::DryRun => vec![
+            "build bounded queued-work SELECT plan".to_string(),
+            "build bounded claim UPDATE plan".to_string(),
+            "report supported job families without executing them".to_string(),
+        ],
+        WorkerRuntimeMode::Once => vec![
+            "build one-job queued-work SELECT plan".to_string(),
+            "build one-job claim UPDATE plan".to_string(),
+            "stop before DB, artifact, audit, or Qdrant side effects".to_string(),
+        ],
+    };
+    Ok(WorkerRuntimePlan {
+        mode: args.mode,
+        status: "planned_without_execution".to_string(),
+        mutates_runtime_data: false,
+        live_execution_enabled: config.live_execution_enabled && args.explicit_live_execution,
+        allowed_work_types: claim_query.allowed_work_types.clone(),
+        claim_query,
+        planned_steps,
+        blocked_side_effects: vec![
+            "PostgreSQL connection".to_string(),
+            "runtime queue mutation".to_string(),
+            "artifact store reads".to_string(),
+            "audit writes".to_string(),
+            "Qdrant HTTP calls".to_string(),
+            "Celery or beat control".to_string(),
+            "arbitrary shell command execution".to_string(),
+        ],
+    })
+}
+
+pub fn render_worker_runtime_status(
+    plan: &WorkerRuntimePlan,
+    config: &WorkerRuntimeConfig,
+) -> Value {
+    json!({
+        "service": "igy6-worker",
+        "diff": "DIFF-147",
+        "mode": plan.mode.as_str(),
+        "status": plan.status,
+        "mutates_runtime_data": plan.mutates_runtime_data,
+        "live_execution_enabled": plan.live_execution_enabled,
+        "python_celery_worker_required": true,
+        "python_celery_beat_required": true,
+        "rust_only_runtime_claimed": false,
+        "claim_limit": config.claim_limit,
+        "poll_interval_ms": config.poll_interval_ms,
+        "qdrant_chunk_collection": config.qdrant_chunk_collection,
+        "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
+        "database_url_configured": !config.database_url.trim().is_empty(),
+        "qdrant_url_configured": !config.qdrant_url.trim().is_empty(),
+        "igy6_data_root_configured": !config.igy6_data_root.trim().is_empty(),
+        "allowed_work_types": plan.allowed_work_types,
+        "planned_steps": plan.planned_steps,
+        "blocked_side_effects": plan.blocked_side_effects,
+    })
+}
+
+pub fn parse_usize_setting(value: Option<&str>, default: usize) -> Result<usize, String> {
+    match value {
+        Some(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| format!("invalid usize setting: {raw}")),
+        _ => Ok(default),
+    }
+}
+
+pub fn parse_u64_setting(value: Option<&str>, default: u64) -> Result<u64, String> {
+    match value {
+        Some(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| format!("invalid u64 setting: {raw}")),
+        _ => Ok(default),
+    }
+}
+
+fn parse_claim_limit(value: &str) -> Result<usize, WorkerRuntimeError> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        WorkerRuntimeError::InvalidClaimLimit(format!("invalid claim limit: {value}"))
+    })?;
+    if !(1..=MAX_WORKER_CLAIM_LIMIT).contains(&parsed) {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "claim limit must be between 1 and {MAX_WORKER_CLAIM_LIMIT}, got {parsed}"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_poll_interval_ms(value: &str) -> Result<u64, WorkerRuntimeError> {
+    let parsed = value.parse::<u64>().map_err(|_| {
+        WorkerRuntimeError::InvalidPollInterval(format!("invalid poll interval: {value}"))
+    })?;
+    if !(MIN_WORKER_POLL_INTERVAL_MS..=MAX_WORKER_POLL_INTERVAL_MS).contains(&parsed) {
+        return Err(WorkerRuntimeError::InvalidPollInterval(format!(
+            "poll interval must be between {MIN_WORKER_POLL_INTERVAL_MS} and {MAX_WORKER_POLL_INTERVAL_MS}, got {parsed}"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn validate_database_url(value: &str) -> Result<(), WorkerRuntimeError> {
+    let trimmed = value.trim();
+    if trimmed.starts_with("postgresql://")
+        || trimmed.starts_with("postgresql+")
+        || trimmed.starts_with("postgres://")
+    {
+        Ok(())
+    } else {
+        Err(WorkerRuntimeError::InvalidDatabaseUrl(
+            "DATABASE_URL must be a PostgreSQL URL".to_string(),
+        ))
+    }
+}
+
+fn validate_qdrant_url(value: &str) -> Result<(), WorkerRuntimeError> {
+    let trimmed = value.trim();
+    if (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+        && !trimmed.contains('@')
+        && !trimmed.contains(char::is_whitespace)
+    {
+        Ok(())
+    } else {
+        Err(WorkerRuntimeError::InvalidQdrantUrl(
+            "QDRANT_URL must be an http(s) URL without credentials".to_string(),
+        ))
+    }
+}
+
+fn validate_data_root(value: &str) -> Result<(), WorkerRuntimeError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "/" || trimmed.contains('\0') {
+        return Err(WorkerRuntimeError::InvalidDataRoot(
+            "IGY6_DATA_ROOT must be a non-root local path".to_string(),
+        ));
+    }
+    if trimmed.contains("..") && trimmed != DEFAULT_IGY6_DATA_ROOT {
+        return Err(WorkerRuntimeError::InvalidDataRoot(
+            "IGY6_DATA_ROOT must not contain parent traversal".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_collection_name(value: &str) -> Result<(), WorkerRuntimeError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || !trimmed.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    {
+        Err(WorkerRuntimeError::InvalidCollectionName(
+            "QDRANT_CHUNK_COLLECTION must contain only ASCII letters, numbers, underscore, or dash"
+                .to_string(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1566,6 +1932,83 @@ fn with_worker_evidence_ids(chunks: &[ChunkPlan], evidence: &[EvidencePlan]) -> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn runtime_args_default_to_safe_check_mode() {
+        let args = parse_worker_runtime_args(Vec::<String>::new()).expect("args");
+        assert_eq!(args.mode, WorkerRuntimeMode::Check);
+        assert_eq!(args.claim_limit, 1);
+        assert!(!args.explicit_live_execution);
+    }
+
+    #[test]
+    fn runtime_args_validate_modes_and_bounds() {
+        let args =
+            parse_worker_runtime_args(["--dry-run", "--claim-limit", "4"]).expect("dry run args");
+        assert_eq!(args.mode, WorkerRuntimeMode::DryRun);
+        assert_eq!(args.claim_limit, 4);
+
+        let once = parse_worker_runtime_args(["--once"]).expect("once");
+        assert_eq!(once.mode, WorkerRuntimeMode::Once);
+        assert_eq!(
+            parse_worker_runtime_args(["--once", "--claim-limit", "2"]).expect_err("limit"),
+            WorkerRuntimeError::InvalidClaimLimit("--once requires claim limit 1".to_string())
+        );
+        assert!(parse_worker_runtime_args(["--claim-limit", "0"]).is_err());
+        assert!(parse_worker_runtime_args(["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn runtime_config_validation_rejects_unsafe_values() {
+        assert!(validate_worker_runtime_config(WorkerRuntimeConfig::safe_default()).is_ok());
+
+        let mut invalid_database = WorkerRuntimeConfig::safe_default();
+        invalid_database.database_url = "sqlite:///tmp.db".to_string();
+        assert!(matches!(
+            validate_worker_runtime_config(invalid_database),
+            Err(WorkerRuntimeError::InvalidDatabaseUrl(_))
+        ));
+
+        let mut invalid_qdrant = WorkerRuntimeConfig::safe_default();
+        invalid_qdrant.qdrant_url = "http://user:secret@qdrant:6333".to_string();
+        assert!(matches!(
+            validate_worker_runtime_config(invalid_qdrant),
+            Err(WorkerRuntimeError::InvalidQdrantUrl(_))
+        ));
+
+        let mut invalid_root = WorkerRuntimeConfig::safe_default();
+        invalid_root.igy6_data_root = "/".to_string();
+        assert!(matches!(
+            validate_worker_runtime_config(invalid_root),
+            Err(WorkerRuntimeError::InvalidDataRoot(_))
+        ));
+    }
+
+    #[test]
+    fn runtime_plan_is_non_mutating_and_blocks_side_effects() {
+        let args = parse_worker_runtime_args(["--once"]).expect("args");
+        let config = WorkerRuntimeConfig::safe_default();
+        let plan = plan_worker_runtime(args, config.clone()).expect("plan");
+        let status = render_worker_runtime_status(&plan, &config);
+
+        assert_eq!(plan.status, "planned_without_execution");
+        assert!(!plan.mutates_runtime_data);
+        assert!(!plan.live_execution_enabled);
+        assert!(plan
+            .claim_query
+            .select_sql
+            .contains("FOR UPDATE SKIP LOCKED"));
+        assert!(plan
+            .allowed_work_types
+            .contains(&"collection_normalization"));
+        assert!(plan.allowed_work_types.contains(&"document_chunking"));
+        assert!(plan.allowed_work_types.contains(&"chunk_vector_upsert"));
+        assert!(plan
+            .blocked_side_effects
+            .contains(&"Qdrant HTTP calls".to_string()));
+        assert_eq!(status["rust_only_runtime_claimed"], json!(false));
+        assert_eq!(status["python_celery_worker_required"], json!(true));
+    }
 
     fn input(bytes: Vec<u8>) -> WorkerPlanInput {
         let mut metadata = BTreeMap::new();
