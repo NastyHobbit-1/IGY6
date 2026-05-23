@@ -33,6 +33,13 @@ contracts. DIFF-145 adds `chunk_vector_upsert` execution parity planning,
 including deterministic local vector and Qdrant request contracts. Live worker
 process ownership and beat/scheduled-work posture remain Python/Celery-backed.
 
+DIFF-146 decides the worker process cutover is not ready. `crates/igy6-worker`
+is still a library crate with contracts and tests, not a long-running worker
+binary or container. It does not poll queued work, atomically claim jobs from
+PostgreSQL in a runtime loop, read artifacts during execution, apply DB/audit
+writes, execute Qdrant HTTP requests, or provide worker health/shutdown/retry
+behavior. `worker` and `beat` therefore remain in Docker Compose.
+
 ## Pipeline
 
 ```text

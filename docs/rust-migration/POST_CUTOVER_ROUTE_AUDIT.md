@@ -77,6 +77,14 @@ This is not a worker runtime cutover. Python/Celery `worker` and `beat` remain
 active until a later DIFF replaces live worker process ownership and decides
 the scheduler/beat posture.
 
+DIFF-146 makes that decision explicit: choose Decision B, keep Python/Celery
+`worker` and `beat`, and do not claim full Rust-only runtime. The blocker is
+not job-family parity contracts; those exist for `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`. The blocker is runtime
+ownership: no Rust worker binary/container currently polls queued work,
+atomically claims jobs, performs the DB/audit writes, reads artifacts, executes
+Qdrant side effects, or replaces/retire scheduled work.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

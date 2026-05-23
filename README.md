@@ -23,8 +23,10 @@ retention. DIFF-141 recommends migrating worker execution to Rust one job family
 at a time while retaining Python/Celery until execution parity is complete.
 DIFF-143 through DIFF-145 add Rust `collection_normalization`,
 `document_chunking`, and `chunk_vector_upsert` execution parity planning and
-executor contracts, but beat posture and live worker process ownership remain
-Python/Celery-backed.
+executor contracts. DIFF-146 decides the worker process cutover is not ready:
+beat posture and live worker process ownership remain Python/Celery-backed
+until a Rust worker runtime actually polls, claims, executes DB/audit writes,
+executes Qdrant side effects, and resolves scheduler posture.
 
 Current web-used route parity is tracked by:
 
@@ -232,8 +234,9 @@ Manual upload creates raw artifact metadata and queued processing work. Live
 end-to-end processing is still owned by the Python/Celery worker. The Rust
 worker crate has DIFF-143 collection normalization, DIFF-144 document chunking,
 and DIFF-145 chunk vector upsert parity planning and executor contracts, and
-the Rust gateway dispatch route records safe dispatch metadata without invoking
-Celery directly.
+DIFF-146 retains Python/Celery because there is not yet a Rust worker process
+that polls, claims, and executes queued jobs. The Rust gateway dispatch route
+records safe dispatch metadata without invoking Celery directly.
 
 Check worker/processing status:
 

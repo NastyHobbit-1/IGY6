@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-146"
+    "next_required_diff": "DIFF-147"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
+    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
+    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -228,6 +228,40 @@
     ],
     "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
   },
+  "worker_process_cutover_scheduler_beat_decision": {
+    "diff": "DIFF-146",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Rust worker process cutover is not ready; retain Python/Celery worker and beat until a real Rust worker runtime executes queued jobs and scheduler posture is resolved.",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "rust_worker_contracts_complete_for_job_families": [
+      "collection_normalization",
+      "document_chunking",
+      "chunk_vector_upsert"
+    ],
+    "rust_worker_live_runtime_ready": false,
+    "blockers": [
+      "crates/igy6-worker is a library crate only and has no long-running worker binary or Docker image",
+      "no Rust runtime polls or subscribes to queued work items",
+      "no Rust runtime atomically claims queued jobs from PostgreSQL with live FOR UPDATE SKIP LOCKED execution",
+      "no Rust runtime reads artifact bytes from the configured artifact store during job execution",
+      "no Rust runtime applies planned normalized_documents, chunks, evidence_items, work_items, or audit_events writes to PostgreSQL",
+      "no Rust runtime executes planned Qdrant collection ensure or point upsert HTTP requests",
+      "no Rust runtime has retry/backoff, shutdown, logging, or health behavior equivalent to the current worker service",
+      "beat/scheduled-work posture has not been replaced or formally retired"
+    ],
+    "compose_decision": {
+      "worker": "retained",
+      "beat": "retained",
+      "reason": "Docker Compose still needs Python/Celery worker for live end-to-end processing; beat remains until scheduler posture is resolved even though no repo-defined beat schedule was found in DIFF-141."
+    },
+    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
@@ -239,7 +273,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity contracts cover the three queued job families after DIFF-145, but Rust has not yet replaced live worker process ownership or beat posture."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-146 decides cutover is not ready because Rust worker contracts cover the three queued job families but no Rust worker runtime yet polls, claims, executes DB/audit writes, executes Qdrant side effects, or resolves beat posture."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -641,7 +675,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-145 until Rust replaces live worker process ownership and beat/scheduler posture"
+                "reason": "Python/Celery workers remain required after DIFF-146 because Rust worker process cutover is not ready; Rust still needs a live worker runtime and beat/scheduler decision"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
