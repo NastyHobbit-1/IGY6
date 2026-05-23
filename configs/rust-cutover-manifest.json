@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-145"
+    "next_required_diff": "DIFF-146"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -31,9 +31,9 @@
       "services/worker worker service",
       "services/worker beat service"
     ],
-    "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 and DIFF-144 add Rust collection_normalization and document_chunking planning/executor contracts, but Rust does not yet replace chunk_vector_upsert execution, live process ownership, beat posture, or Qdrant worker work.",
+    "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
+    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
+    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -200,6 +200,34 @@
     ],
     "next_recommended_diff": "DIFF-145 Rust chunk_vector_upsert execution parity"
   },
+  "chunk_vector_upsert_execution_parity": {
+    "diff": "DIFF-145",
+    "status": "complete",
+    "scope": "Rust worker chunk_vector_upsert execution planner and SQL/audit/status/Qdrant request executor contract only",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "chunk_vector_upsert_parity_status": "planner_and_executor_contract_complete",
+    "behavior_covered": [
+      "validates chunk_vector_upsert work item payload and limit bounds from 1 to 1000",
+      "supports optional chunk_ids payload scoping",
+      "selects uncompleted chunks ordered by id and bounded by limit",
+      "skips chunks whose embedding_status is already completed",
+      "plans deterministic local chunk vectors",
+      "plans Qdrant collection status, ensure, and point upsert requests",
+      "plans chunk embedding_status completed updates",
+      "plans chunk metadata merge with embedding_method and vector_collection",
+      "plans originating work_item completed or failed status updates",
+      "plans chunk_vectors.upserted and chunk_vectors.failed audit events"
+    ],
+    "out_of_scope": [
+      "Rust worker process cutover",
+      "beat or scheduler replacement",
+      "Python/Celery worker or beat removal",
+      "full Rust-only repository or runtime claim"
+    ],
+    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
@@ -211,7 +239,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity is partial after DIFF-144 and does not yet replace chunk_vector_upsert, live process ownership, or beat posture."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; Rust worker execution parity contracts cover the three queued job families after DIFF-145, but Rust has not yet replaced live worker process ownership or beat posture."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -374,14 +402,15 @@
     },
     "worker": {
       "status": "complete",
-      "diff": "DIFF-144",
+      "diff": "DIFF-145",
       "verification": [
+        "DIFF-145 adds Rust chunk_vector_upsert execution planning and SQL/audit/status/Qdrant request executor contracts matching Python/Celery behavior, including chunk selection, deterministic local vectors, Qdrant request plans, chunk metadata/status updates, completion audit events, and failure handling.",
         "DIFF-144 adds Rust document_chunking execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including chunks inserts, evidence_items inserts, duplicate document skips, failure handling, completion audit events, and chained chunk_vector_upsert work-item creation.",
         "DIFF-143 adds Rust collection_normalization execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including normalized_documents inserts, duplicate skips, failure handling, completion audit events, and chained document_chunking work-item creation.",
         "DIFF-142 adds a Rust worker queue-claim contract and bounded claim query planning without executing normalization, chunking, vector upsert, database writes, audit writes, artifact reads, Qdrant calls, or Neo4j calls.",
         "DIFF-141 audits Python/Celery worker and beat usage and recommends migrating worker execution to Rust one job family at a time while retaining Python/Celery until execution parity is complete.",
         "DIFF-095 adds a Rust worker MVP planning crate in crates/igy6-worker.",
-        "Python/Celery worker execution remains active for chunk_vector_upsert, beat posture, and live process ownership until later parity DIFFs explicitly replace them.",
+        "Python/Celery worker and beat remain active until a later cutover DIFF replaces live worker process ownership and decides beat/scheduler posture.",
         "Rust worker planning composes normalization, chunking, and vector-upsert request planning without live runtime side effects.",
         "git status --short checked DIFF-095 scoped files only",
         "git diff --check passed",
@@ -612,7 +641,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required until Rust worker execution parity covers chunk_vector_upsert, live process ownership, and beat/scheduler posture"
+                "reason": "Python/Celery workers remain required after DIFF-145 until Rust replaces live worker process ownership and beat/scheduler posture"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

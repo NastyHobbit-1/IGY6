@@ -41,8 +41,10 @@ the route classification remains recorded in
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
 The legacy FastAPI source is archived at
 `archive/legacy-python/services-api`. Python/Celery `worker` and `beat` remain
-active runtime services from `services/worker` because Rust worker execution
-parity is not implemented or verified.
+active runtime services from `services/worker`. DIFF-143 through DIFF-145 add
+Rust worker planning and executor contracts for `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`, but live worker process
+ownership and beat/scheduled-work posture are not cut over.
 
 ## Runtime Topology
 
@@ -59,6 +61,21 @@ FastAPI routes missing from Rust and zero web-used routes requiring fallback.
 Unsupported gateway routes now return Rust 404 responses instead of proxying to
 FastAPI. Full Rust-only repository or runtime operation is not claimed while
 Python/Celery `worker` and `beat` remain active.
+
+## Worker Execution Parity
+
+DIFF-141 audits Python/Celery worker and beat usage and recommends migrating
+worker execution to Rust one job family at a time. DIFF-142 adds the Rust
+queue-claim contract. DIFF-143 adds `collection_normalization` parity
+contracts. DIFF-144 adds `document_chunking` parity contracts. DIFF-145 adds
+`chunk_vector_upsert` parity contracts, including uncompleted chunk selection,
+deterministic local vector planning, Qdrant collection/status/upsert request
+planning, chunk metadata/status update planning, and `chunk_vectors.*` audit
+events.
+
+This is not a worker runtime cutover. Python/Celery `worker` and `beat` remain
+active until a later DIFF replaces live worker process ownership and decides
+the scheduler/beat posture.
 
 ## Rust-Native Gateway Routes
 

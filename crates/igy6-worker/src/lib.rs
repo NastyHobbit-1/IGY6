@@ -6,7 +6,8 @@ use igy6_normalization::{
     build_normalized_document_ref, NormalizedDocumentInput, NormalizedDocumentRef, RawArtifactRef,
 };
 use igy6_vector_memory::{
-    upsert_points_request, ChunkVectorPoint, HttpRequestPlan, QdrantSettings, VectorMemoryError,
+    collection_status_request, embed_text_local, ensure_collection_request, upsert_points_request,
+    ChunkVectorPoint, HttpRequestPlan, QdrantSettings, VectorMemoryError,
 };
 use serde_json::{json, Value};
 
@@ -43,6 +44,9 @@ impl From<VectorMemoryError> for WorkerError {
         Self::VectorMemory(error)
     }
 }
+
+pub const WORKER_EMBEDDING_METHOD: &str = "local_hash_v1";
+pub const WORKER_VECTOR_GENERATED_BY: &str = "DIFF-053";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerTaskKind {
@@ -298,6 +302,42 @@ impl From<ChunkingError> for DocumentChunkingError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChunkVectorUpsertError {
+    InvalidLimit(usize),
+    WorkItemNotFound,
+    WrongWorkType(String),
+    InvalidPayload(String),
+    VectorMemory(VectorMemoryError),
+}
+
+impl fmt::Display for ChunkVectorUpsertError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLimit(limit) => {
+                write!(formatter, "limit must be between 1 and 1000, got {limit}")
+            }
+            Self::WorkItemNotFound => write!(formatter, "Work item not found"),
+            Self::WrongWorkType(work_type) => {
+                write!(
+                    formatter,
+                    "Work item is not a chunk_vector_upsert item: {work_type}"
+                )
+            }
+            Self::InvalidPayload(message) => write!(formatter, "{message}"),
+            Self::VectorMemory(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for ChunkVectorUpsertError {}
+
+impl From<VectorMemoryError> for ChunkVectorUpsertError {
+    fn from(error: VectorMemoryError) -> Self {
+        Self::VectorMemory(error)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectionNormalizationWorkItem {
     pub id: String,
@@ -469,6 +509,93 @@ pub struct DocumentChunkingExecutionPlan {
     pub completion_status_update: WorkItemStatusDraft,
     pub chunk_vector_upsert_work_item: Option<ChainedWorkItemDraft>,
     pub completion_audit_event: AuditEventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkVectorUpsertWorkItem {
+    pub id: String,
+    pub work_type: String,
+    pub status: String,
+    pub requested_by_actor_id: String,
+    pub payload_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkForVectorRecord {
+    pub id: String,
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub text_content: String,
+    pub embedding_status: String,
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkVectorUpsertExecutionInput {
+    pub work_item: Option<ChunkVectorUpsertWorkItem>,
+    pub limit: usize,
+    pub candidate_chunks: Vec<ChunkForVectorRecord>,
+    pub qdrant_settings: QdrantSettings,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkVectorPointDraft {
+    pub id: String,
+    pub vector: Vec<f64>,
+    pub payload_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkMetadataUpdateDraft {
+    pub chunk_id: String,
+    pub embedding_status: String,
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkVectorUpsertExecutionPlan {
+    pub status: String,
+    pub actor_id: String,
+    pub work_item_id: String,
+    pub requested_chunk_ids: Option<Vec<String>>,
+    pub selected_chunk_ids: Vec<String>,
+    pub points: Vec<ChunkVectorPointDraft>,
+    pub collection_status_request: HttpRequestPlan,
+    pub ensure_collection_request: Option<HttpRequestPlan>,
+    pub upsert_points_request: Option<HttpRequestPlan>,
+    pub chunk_updates: Vec<ChunkMetadataUpdateDraft>,
+    pub completion_status_update: WorkItemStatusDraft,
+    pub completion_audit_event: AuditEventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkVectorUpsertSqlPlan {
+    pub mark_running_sql: &'static str,
+    pub select_chunks_sql: &'static str,
+    pub select_requested_chunks_sql: &'static str,
+    pub update_chunk_completed_sql: &'static str,
+    pub mark_completed_sql: &'static str,
+    pub mark_failed_sql: &'static str,
+    pub insert_audit_event_sql: &'static str,
+}
+
+pub fn chunk_vector_upsert_sql_plan() -> ChunkVectorUpsertSqlPlan {
+    ChunkVectorUpsertSqlPlan {
+        mark_running_sql:
+            "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1",
+        select_chunks_sql:
+            "SELECT id, document_id, chunk_index, text_content, embedding_status, metadata_json FROM chunks WHERE embedding_status != 'completed' ORDER BY id ASC LIMIT $1",
+        select_requested_chunks_sql:
+            "SELECT id, document_id, chunk_index, text_content, embedding_status, metadata_json FROM chunks WHERE embedding_status != 'completed' AND id = ANY($1) ORDER BY id ASC LIMIT $2",
+        update_chunk_completed_sql:
+            "UPDATE chunks SET embedding_status = 'completed', metadata_json = $2 WHERE id = $1",
+        mark_completed_sql:
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+        mark_failed_sql:
+            "UPDATE work_items SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1",
+        insert_audit_event_sql:
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -714,6 +841,150 @@ pub fn plan_document_chunking_failure(
             correlation_id: work_item_id.to_string(),
             details_json: json!({
                 "document_ids": document_ids,
+                "error_message": error_message,
+            }),
+        },
+    )
+}
+
+pub fn plan_chunk_vector_upsert_execution(
+    input: ChunkVectorUpsertExecutionInput,
+) -> Result<ChunkVectorUpsertExecutionPlan, ChunkVectorUpsertError> {
+    if !(1..=1000).contains(&input.limit) {
+        return Err(ChunkVectorUpsertError::InvalidLimit(input.limit));
+    }
+    let work_item = input
+        .work_item
+        .ok_or(ChunkVectorUpsertError::WorkItemNotFound)?;
+    if work_item.work_type != WorkerTaskKind::ChunkVectorUpsert.work_type() {
+        return Err(ChunkVectorUpsertError::WrongWorkType(work_item.work_type));
+    }
+    let requested_chunk_ids = validate_chunk_vector_upsert_payload(&work_item.payload_json)?;
+    let requested_chunk_set: Option<BTreeSet<String>> = requested_chunk_ids
+        .as_ref()
+        .map(|ids| ids.iter().cloned().collect());
+
+    let mut selectable_chunks: Vec<ChunkForVectorRecord> = input
+        .candidate_chunks
+        .into_iter()
+        .filter(|chunk| chunk.embedding_status != "completed")
+        .filter(|chunk| {
+            requested_chunk_set
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&chunk.id))
+        })
+        .collect();
+    selectable_chunks.sort_by(|left, right| left.id.cmp(&right.id));
+    selectable_chunks.truncate(input.limit);
+
+    let collection_status_request = collection_status_request(&input.qdrant_settings)?;
+    let ensure_collection_request = if selectable_chunks.is_empty() {
+        None
+    } else {
+        Some(ensure_collection_request(&input.qdrant_settings)?)
+    };
+
+    let mut points = Vec::with_capacity(selectable_chunks.len());
+    let mut vector_points = Vec::with_capacity(selectable_chunks.len());
+    let mut chunk_updates = Vec::with_capacity(selectable_chunks.len());
+    for chunk in &selectable_chunks {
+        let vector = embed_text_local(&chunk.text_content, input.qdrant_settings.vector_size)?;
+        points.push(ChunkVectorPointDraft {
+            id: chunk.id.clone(),
+            vector: vector.clone(),
+            payload_json: json!({
+                "chunk_id": chunk.id,
+                "document_id": chunk.document_id,
+                "chunk_index": chunk.chunk_index,
+                "embedding_method": WORKER_EMBEDDING_METHOD,
+                "generated_by": WORKER_VECTOR_GENERATED_BY,
+            }),
+        });
+        vector_points.push(ChunkVectorPoint {
+            id: chunk.id.clone(),
+            vector,
+            chunk_id: chunk.id.clone(),
+            document_id: chunk.document_id.clone(),
+            chunk_index: chunk.chunk_index,
+            embedding_method: WORKER_EMBEDDING_METHOD.to_string(),
+        });
+        chunk_updates.push(ChunkMetadataUpdateDraft {
+            chunk_id: chunk.id.clone(),
+            embedding_status: "completed".to_string(),
+            metadata_json: merge_chunk_vector_metadata(
+                &chunk.metadata_json,
+                &input.qdrant_settings.collection_name,
+            ),
+        });
+    }
+    let upsert_points_request = if vector_points.is_empty() {
+        None
+    } else {
+        Some(upsert_points_request(
+            &input.qdrant_settings,
+            &vector_points,
+        )?)
+    };
+    let selected_chunk_ids: Vec<String> = selectable_chunks
+        .iter()
+        .map(|chunk| chunk.id.clone())
+        .collect();
+
+    Ok(ChunkVectorUpsertExecutionPlan {
+        status: "completed".to_string(),
+        actor_id: work_item.requested_by_actor_id.clone(),
+        work_item_id: work_item.id.clone(),
+        requested_chunk_ids,
+        selected_chunk_ids: selected_chunk_ids.clone(),
+        points,
+        collection_status_request,
+        ensure_collection_request,
+        upsert_points_request,
+        chunk_updates,
+        completion_status_update: WorkItemStatusDraft {
+            work_item_id: work_item.id.clone(),
+            status: "completed".to_string(),
+            error_message: None,
+        },
+        completion_audit_event: AuditEventDraft {
+            actor_id: work_item.requested_by_actor_id,
+            event_type: "chunk_vectors.upserted".to_string(),
+            decision: "completed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item.id.clone(),
+            correlation_id: work_item.id,
+            details_json: json!({
+                "chunks_selected": selected_chunk_ids.len(),
+                "chunks_upserted": selected_chunk_ids.len(),
+                "chunk_ids": selected_chunk_ids,
+                "vector_collection": input.qdrant_settings.collection_name,
+                "embedding_method": WORKER_EMBEDDING_METHOD,
+            }),
+        },
+    })
+}
+
+pub fn plan_chunk_vector_upsert_failure(
+    work_item_id: &str,
+    limit: usize,
+    actor_id: &str,
+    error_message: &str,
+) -> (WorkItemStatusDraft, AuditEventDraft) {
+    (
+        WorkItemStatusDraft {
+            work_item_id: work_item_id.to_string(),
+            status: "failed".to_string(),
+            error_message: Some(error_message.to_string()),
+        },
+        AuditEventDraft {
+            actor_id: actor_id.to_string(),
+            event_type: "chunk_vectors.failed".to_string(),
+            decision: "failed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item_id.to_string(),
+            correlation_id: work_item_id.to_string(),
+            details_json: json!({
+                "limit": limit,
                 "error_message": error_message,
             }),
         },
@@ -995,6 +1266,52 @@ fn validate_document_chunking_payload(
         ));
     }
     Ok(())
+}
+
+fn validate_chunk_vector_upsert_payload(
+    payload_json: &Value,
+) -> Result<Option<Vec<String>>, ChunkVectorUpsertError> {
+    if let Some(limit) = payload_json.get("limit").and_then(Value::as_i64) {
+        if !(1..=1000).contains(&limit) {
+            return Err(ChunkVectorUpsertError::InvalidPayload(
+                "chunk_vector_upsert limit must be between 1 and 1000".to_string(),
+            ));
+        }
+    }
+    let Some(chunk_ids) = payload_json.get("chunk_ids") else {
+        return Ok(None);
+    };
+    let Some(values) = chunk_ids.as_array() else {
+        return Err(ChunkVectorUpsertError::InvalidPayload(
+            "chunk_vector_upsert chunk_ids must be an array".to_string(),
+        ));
+    };
+    let ids: Option<Vec<String>> = values
+        .iter()
+        .map(|value| value.as_str().map(ToString::to_string))
+        .collect();
+    ids.ok_or_else(|| {
+        ChunkVectorUpsertError::InvalidPayload(
+            "chunk_vector_upsert chunk_ids must contain only strings".to_string(),
+        )
+    })
+    .map(Some)
+}
+
+fn merge_chunk_vector_metadata(metadata_json: &Value, collection_name: &str) -> Value {
+    let mut metadata = match metadata_json {
+        Value::Object(map) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    metadata.insert(
+        "embedding_method".to_string(),
+        Value::String(WORKER_EMBEDDING_METHOD.to_string()),
+    );
+    metadata.insert(
+        "vector_collection".to_string(),
+        Value::String(collection_name.to_string()),
+    );
+    Value::Object(metadata)
 }
 
 fn chained_document_chunking_payload(document_ids: &[String], parent_work_item_id: &str) -> Value {
@@ -2029,6 +2346,244 @@ mod tests {
         assert!(sql
             .insert_chained_work_item_sql
             .contains("'chunk_vector_upsert'"));
+        assert!(sql.insert_audit_event_sql.contains("audit_events"));
+    }
+
+    fn vector_work_item(payload_json: Value) -> ChunkVectorUpsertWorkItem {
+        ChunkVectorUpsertWorkItem {
+            id: "vector-work-1".to_string(),
+            work_type: "chunk_vector_upsert".to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: "local-owner".to_string(),
+            payload_json,
+        }
+    }
+
+    fn vector_settings() -> QdrantSettings {
+        QdrantSettings {
+            base_url: "http://qdrant:6333".to_string(),
+            collection_name: "igy6_chunks".to_string(),
+            vector_size: 8,
+        }
+    }
+
+    fn chunk_for_vector(id: &str, embedding_status: &str) -> ChunkForVectorRecord {
+        ChunkForVectorRecord {
+            id: id.to_string(),
+            document_id: format!("doc-{id}"),
+            chunk_index: 0,
+            text_content: format!("alpha beta {id}"),
+            embedding_status: embedding_status.to_string(),
+            metadata_json: json!({"generated_by": "DIFF-052", "chunk_size": 100}),
+        }
+    }
+
+    fn vector_input() -> ChunkVectorUpsertExecutionInput {
+        ChunkVectorUpsertExecutionInput {
+            work_item: Some(vector_work_item(json!({
+                "chunk_ids": ["chunk-2", "chunk-1"],
+                "limit": 2,
+                "intent_verification_recorded": true
+            }))),
+            limit: 2,
+            candidate_chunks: vec![
+                chunk_for_vector("chunk-3", "not_started"),
+                chunk_for_vector("chunk-1", "not_started"),
+                chunk_for_vector("chunk-2", "completed"),
+                chunk_for_vector("chunk-2", "not_started"),
+            ],
+            qdrant_settings: vector_settings(),
+        }
+    }
+
+    #[test]
+    fn chunk_vector_upsert_plans_python_equivalent_success() {
+        let plan = plan_chunk_vector_upsert_execution(vector_input()).expect("success");
+
+        assert_eq!(plan.status, "completed");
+        assert_eq!(plan.actor_id, "local-owner");
+        assert_eq!(plan.work_item_id, "vector-work-1");
+        assert_eq!(
+            plan.requested_chunk_ids,
+            Some(vec!["chunk-2".to_string(), "chunk-1".to_string()])
+        );
+        assert_eq!(plan.selected_chunk_ids, vec!["chunk-1", "chunk-2"]);
+        assert_eq!(plan.points.len(), 2);
+        assert_eq!(plan.points[0].id, "chunk-1");
+        assert_eq!(plan.points[0].vector.len(), 8);
+        assert_eq!(plan.points[0].payload_json["chunk_id"], json!("chunk-1"));
+        assert_eq!(
+            plan.points[0].payload_json["embedding_method"],
+            json!(WORKER_EMBEDDING_METHOD)
+        );
+        assert_eq!(
+            plan.points[0].payload_json["generated_by"],
+            json!(WORKER_VECTOR_GENERATED_BY)
+        );
+        assert_eq!(
+            plan.collection_status_request.path,
+            "/collections/igy6_chunks"
+        );
+        assert_eq!(
+            plan.ensure_collection_request
+                .as_ref()
+                .expect("ensure")
+                .path,
+            "/collections/igy6_chunks"
+        );
+        assert_eq!(
+            plan.upsert_points_request.as_ref().expect("upsert").path,
+            "/collections/igy6_chunks/points"
+        );
+        assert_eq!(plan.chunk_updates.len(), 2);
+        assert_eq!(plan.chunk_updates[0].chunk_id, "chunk-1");
+        assert_eq!(plan.chunk_updates[0].embedding_status, "completed");
+        assert_eq!(
+            plan.chunk_updates[0].metadata_json["embedding_method"],
+            json!(WORKER_EMBEDDING_METHOD)
+        );
+        assert_eq!(
+            plan.chunk_updates[0].metadata_json["vector_collection"],
+            json!("igy6_chunks")
+        );
+        assert_eq!(plan.completion_status_update.status, "completed");
+        assert_eq!(
+            plan.completion_audit_event.event_type,
+            "chunk_vectors.upserted"
+        );
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunks_selected"],
+            json!(2)
+        );
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunks_upserted"],
+            json!(2)
+        );
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunk_ids"],
+            json!(["chunk-1", "chunk-2"])
+        );
+    }
+
+    #[test]
+    fn chunk_vector_upsert_without_requested_ids_selects_oldest_uncompleted_to_limit() {
+        let mut input = vector_input();
+        input.work_item = Some(vector_work_item(json!({
+            "limit": 1,
+            "intent_verification_recorded": true
+        })));
+        input.limit = 1;
+
+        let plan = plan_chunk_vector_upsert_execution(input).expect("success");
+
+        assert_eq!(plan.requested_chunk_ids, None);
+        assert_eq!(plan.selected_chunk_ids, vec!["chunk-1"]);
+        assert_eq!(plan.points.len(), 1);
+    }
+
+    #[test]
+    fn chunk_vector_upsert_empty_selection_completes_without_upsert_request() {
+        let mut input = vector_input();
+        input.candidate_chunks = vec![chunk_for_vector("chunk-1", "completed")];
+
+        let plan = plan_chunk_vector_upsert_execution(input).expect("empty");
+
+        assert!(plan.selected_chunk_ids.is_empty());
+        assert!(plan.points.is_empty());
+        assert!(plan.ensure_collection_request.is_none());
+        assert!(plan.upsert_points_request.is_none());
+        assert!(plan.chunk_updates.is_empty());
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunks_selected"],
+            json!(0)
+        );
+    }
+
+    #[test]
+    fn chunk_vector_upsert_rejects_invalid_limit_payload_type_and_settings() {
+        let mut invalid_limit = vector_input();
+        invalid_limit.limit = 0;
+        assert_eq!(
+            plan_chunk_vector_upsert_execution(invalid_limit).expect_err("limit"),
+            ChunkVectorUpsertError::InvalidLimit(0)
+        );
+
+        let mut invalid_payload = vector_input();
+        invalid_payload.work_item = Some(vector_work_item(json!({
+            "chunk_ids": "chunk-1",
+            "intent_verification_recorded": true
+        })));
+        assert_eq!(
+            plan_chunk_vector_upsert_execution(invalid_payload).expect_err("payload"),
+            ChunkVectorUpsertError::InvalidPayload(
+                "chunk_vector_upsert chunk_ids must be an array".to_string()
+            )
+        );
+
+        let mut invalid_settings = vector_input();
+        invalid_settings.qdrant_settings.vector_size = 0;
+        assert_eq!(
+            plan_chunk_vector_upsert_execution(invalid_settings).expect_err("settings"),
+            ChunkVectorUpsertError::VectorMemory(VectorMemoryError::InvalidVectorSize)
+        );
+    }
+
+    #[test]
+    fn chunk_vector_upsert_rejects_missing_or_wrong_work_item() {
+        let mut missing = vector_input();
+        missing.work_item = None;
+        assert_eq!(
+            plan_chunk_vector_upsert_execution(missing).expect_err("missing"),
+            ChunkVectorUpsertError::WorkItemNotFound
+        );
+
+        let mut wrong = vector_input();
+        wrong.work_item = Some(ChunkVectorUpsertWorkItem {
+            work_type: "document_chunking".to_string(),
+            ..vector_work_item(json!({"intent_verification_recorded": true}))
+        });
+        assert_eq!(
+            plan_chunk_vector_upsert_execution(wrong).expect_err("wrong"),
+            ChunkVectorUpsertError::WrongWorkType("document_chunking".to_string())
+        );
+    }
+
+    #[test]
+    fn chunk_vector_upsert_failure_plan_matches_python_audit_shape() {
+        let (status, audit) = plan_chunk_vector_upsert_failure(
+            "vector-work-1",
+            100,
+            "local-owner",
+            "qdrant unavailable",
+        );
+
+        assert_eq!(status.status, "failed");
+        assert_eq!(status.error_message.as_deref(), Some("qdrant unavailable"));
+        assert_eq!(audit.event_type, "chunk_vectors.failed");
+        assert_eq!(audit.decision, "failed");
+        assert_eq!(audit.resource_type, "work_item");
+        assert_eq!(audit.resource_id, "vector-work-1");
+        assert_eq!(audit.correlation_id, "vector-work-1");
+        assert_eq!(audit.details_json["limit"], json!(100));
+        assert_eq!(
+            audit.details_json["error_message"],
+            json!("qdrant unavailable")
+        );
+    }
+
+    #[test]
+    fn chunk_vector_upsert_sql_plan_covers_selection_updates_and_audit() {
+        let sql = chunk_vector_upsert_sql_plan();
+        assert!(sql.mark_running_sql.contains("status = 'running'"));
+        assert!(sql
+            .select_chunks_sql
+            .contains("embedding_status != 'completed'"));
+        assert!(sql.select_requested_chunks_sql.contains("id = ANY($1)"));
+        assert!(sql
+            .update_chunk_completed_sql
+            .contains("embedding_status = 'completed'"));
+        assert!(sql.mark_completed_sql.contains("status = 'completed'"));
+        assert!(sql.mark_failed_sql.contains("status = 'failed'"));
         assert!(sql.insert_audit_event_sql.contains("audit_events"));
     }
 }

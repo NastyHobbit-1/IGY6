@@ -8,16 +8,17 @@ Manual upload processing currently has two paths:
   processing from raw artifacts to normalized documents, chunks, evidence, and
   Qdrant vector memory.
 
-The Rust worker crate now has DIFF-143 `collection_normalization` and DIFF-144
-`document_chunking` execution planners plus SQL/audit/status executor
-contracts. It preserves Python/Celery semantics for UTF-8 raw artifact
-normalization, `normalized_documents` insert shape, deterministic chunk and
-evidence item inserts, duplicate skips, originating work-item status,
-completion/failure audit events, and chained work-item creation through
-`chunk_vector_upsert`. It does not yet replace the live Python/Celery worker
-process. The Rust gateway dispatch route is safe-limited: it records dispatch
-metadata and audit events but does not invoke Celery or arbitrary runtime
-execution.
+The Rust worker crate now has DIFF-143 `collection_normalization`, DIFF-144
+`document_chunking`, and DIFF-145 `chunk_vector_upsert` execution planners plus
+SQL/audit/status executor contracts. It preserves Python/Celery semantics for
+UTF-8 raw artifact normalization, `normalized_documents` insert shape,
+deterministic chunk and evidence item inserts, duplicate skips, deterministic
+local chunk vectors, Qdrant collection/status/upsert request planning,
+originating work-item status, completion/failure audit events, and chained
+work-item creation through the processing pipeline. It does not yet replace
+the live Python/Celery worker process. The Rust gateway dispatch route is
+safe-limited: it records dispatch metadata and audit events but does not invoke
+Celery or arbitrary runtime execution.
 
 DIFF-141 audits worker execution parity and recommends migrating worker
 execution to Rust one job family at a time. Until that parity is implemented and
@@ -28,8 +29,9 @@ scheduled-work retirement or replacement requires a later DIFF.
 DIFF-142 adds the Rust queue-claim contract only. DIFF-143 adds
 `collection_normalization` execution parity planning and executor contracts.
 DIFF-144 adds `document_chunking` execution parity planning and executor
-contracts. `chunk_vector_upsert` execution remains Python/Celery-backed, and
-DIFF-144 does not call Qdrant or replace Celery.
+contracts. DIFF-145 adds `chunk_vector_upsert` execution parity planning,
+including deterministic local vector and Qdrant request contracts. Live worker
+process ownership and beat/scheduled-work posture remain Python/Celery-backed.
 
 ## Pipeline
 
