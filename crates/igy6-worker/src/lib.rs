@@ -231,6 +231,73 @@ impl fmt::Display for CollectionNormalizationError {
 
 impl std::error::Error for CollectionNormalizationError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentChunkingError {
+    InvalidChunkSize(usize),
+    WorkItemNotFound,
+    WrongWorkType(String),
+    PayloadMismatch(String),
+    MissingDocuments(Vec<String>),
+    EmptyDocumentText(String),
+    MissingGeneratedChunkId {
+        document_id: String,
+        chunk_index: usize,
+    },
+    MissingGeneratedEvidenceId {
+        document_id: String,
+        chunk_index: usize,
+    },
+    Chunking(ChunkingError),
+}
+
+impl fmt::Display for DocumentChunkingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChunkSize(size) => {
+                write!(
+                    formatter,
+                    "Chunk size must be between 100 and 5000, got {size}"
+                )
+            }
+            Self::WorkItemNotFound => write!(formatter, "Work item not found"),
+            Self::WrongWorkType(work_type) => {
+                write!(
+                    formatter,
+                    "Work item is not a document_chunking item: {work_type}"
+                )
+            }
+            Self::PayloadMismatch(message) => write!(formatter, "{message}"),
+            Self::MissingDocuments(ids) => {
+                write!(formatter, "Documents not found: {}", ids.join(", "))
+            }
+            Self::EmptyDocumentText(id) => write!(formatter, "Document text is empty: {id}"),
+            Self::MissingGeneratedChunkId {
+                document_id,
+                chunk_index,
+            } => write!(
+                formatter,
+                "missing generated chunk id for document {document_id} chunk {chunk_index}"
+            ),
+            Self::MissingGeneratedEvidenceId {
+                document_id,
+                chunk_index,
+            } => write!(
+                formatter,
+                "missing generated evidence id for document {document_id} chunk {chunk_index}"
+            ),
+            Self::Chunking(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for DocumentChunkingError {}
+
+impl From<ChunkingError> for DocumentChunkingError {
+    fn from(error: ChunkingError) -> Self {
+        Self::Chunking(error)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectionNormalizationWorkItem {
     pub id: String,
@@ -317,6 +384,340 @@ pub struct AuditEventDraft {
     pub resource_id: String,
     pub correlation_id: String,
     pub details_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentChunkingWorkItem {
+    pub id: String,
+    pub work_type: String,
+    pub status: String,
+    pub requested_by_actor_id: String,
+    pub payload_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedDocumentRecord {
+    pub id: String,
+    pub source_id: Option<String>,
+    pub text_content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingChunkRecord {
+    pub id: String,
+    pub document_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedChunkId {
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub chunk_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedEvidenceId {
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub evidence_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentChunkingExecutionInput {
+    pub work_item: Option<DocumentChunkingWorkItem>,
+    pub requested_document_ids: Vec<String>,
+    pub chunk_size: usize,
+    pub documents: Vec<NormalizedDocumentRecord>,
+    pub existing_chunks: Vec<ExistingChunkRecord>,
+    pub generated_chunk_ids: Vec<GeneratedChunkId>,
+    pub generated_evidence_ids: Vec<GeneratedEvidenceId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkRecordDraft {
+    pub id: String,
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub text_content: String,
+    pub location_json: Value,
+    pub embedding_status: String,
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvidenceItemDraft {
+    pub id: String,
+    pub source_id: Option<String>,
+    pub document_id: String,
+    pub chunk_id: String,
+    pub evidence_type: String,
+    pub statement: String,
+    pub observed_at: Option<String>,
+    pub confidence: Option<i32>,
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentChunkingExecutionPlan {
+    pub status: String,
+    pub actor_id: String,
+    pub work_item_id: String,
+    pub document_ids: Vec<String>,
+    pub chunks: Vec<ChunkRecordDraft>,
+    pub evidence_items: Vec<EvidenceItemDraft>,
+    pub skipped_document_ids: Vec<String>,
+    pub completion_status_update: WorkItemStatusDraft,
+    pub chunk_vector_upsert_work_item: Option<ChainedWorkItemDraft>,
+    pub completion_audit_event: AuditEventDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentChunkingSqlPlan {
+    pub mark_running_sql: &'static str,
+    pub insert_chunk_sql: &'static str,
+    pub insert_evidence_item_sql: &'static str,
+    pub mark_completed_sql: &'static str,
+    pub mark_failed_sql: &'static str,
+    pub insert_chained_work_item_sql: &'static str,
+    pub insert_audit_event_sql: &'static str,
+}
+
+pub fn document_chunking_sql_plan() -> DocumentChunkingSqlPlan {
+    DocumentChunkingSqlPlan {
+        mark_running_sql:
+            "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1",
+        insert_chunk_sql:
+            "INSERT INTO chunks (id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json) VALUES ($1, $2, $3, $4, $5, 'not_started', $6)",
+        insert_evidence_item_sql:
+            "INSERT INTO evidence_items (id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json) VALUES ($1, $2, $3, $4, 'document_chunk', $5, NULL, NULL, $6)",
+        mark_completed_sql:
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+        mark_failed_sql:
+            "UPDATE work_items SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1",
+        insert_chained_work_item_sql:
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json) VALUES ($1, 'chunk_vector_upsert', 'queued', $2, $3)",
+        insert_audit_event_sql:
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    }
+}
+
+pub fn plan_document_chunking_execution(
+    input: DocumentChunkingExecutionInput,
+) -> Result<DocumentChunkingExecutionPlan, DocumentChunkingError> {
+    if !(100..=5000).contains(&input.chunk_size) {
+        return Err(DocumentChunkingError::InvalidChunkSize(input.chunk_size));
+    }
+    let work_item = input
+        .work_item
+        .ok_or(DocumentChunkingError::WorkItemNotFound)?;
+    if work_item.work_type != WorkerTaskKind::DocumentChunking.work_type() {
+        return Err(DocumentChunkingError::WrongWorkType(work_item.work_type));
+    }
+    validate_document_chunking_payload(&work_item.payload_json, &input.requested_document_ids)?;
+
+    let documents_by_id: BTreeMap<String, NormalizedDocumentRecord> = input
+        .documents
+        .into_iter()
+        .map(|document| (document.id.clone(), document))
+        .collect();
+    let missing_document_ids: Vec<String> = input
+        .requested_document_ids
+        .iter()
+        .filter(|id| !documents_by_id.contains_key(*id))
+        .cloned()
+        .collect();
+    if !missing_document_ids.is_empty() {
+        return Err(DocumentChunkingError::MissingDocuments(
+            missing_document_ids,
+        ));
+    }
+
+    let documents_with_chunks: BTreeSet<String> = input
+        .existing_chunks
+        .iter()
+        .map(|chunk| chunk.document_id.clone())
+        .collect();
+    let generated_chunk_ids: BTreeMap<(String, usize), String> = input
+        .generated_chunk_ids
+        .into_iter()
+        .map(|generated| {
+            (
+                (generated.document_id, generated.chunk_index),
+                generated.chunk_id,
+            )
+        })
+        .collect();
+    let generated_evidence_ids: BTreeMap<(String, usize), String> = input
+        .generated_evidence_ids
+        .into_iter()
+        .map(|generated| {
+            (
+                (generated.document_id, generated.chunk_index),
+                generated.evidence_id,
+            )
+        })
+        .collect();
+
+    let mut chunks = Vec::new();
+    let mut evidence_items = Vec::new();
+    let mut skipped_document_ids = Vec::new();
+    for document_id in &input.requested_document_ids {
+        if documents_with_chunks.contains(document_id) {
+            skipped_document_ids.push(document_id.clone());
+            continue;
+        }
+        let document = documents_by_id.get(document_id).expect("validated above");
+        if document.text_content.is_empty() {
+            return Err(DocumentChunkingError::EmptyDocumentText(
+                document_id.clone(),
+            ));
+        }
+        let chunking_plan = plan_document_chunks(
+            document_id,
+            document.source_id.as_deref(),
+            &document.text_content,
+            input.chunk_size,
+        )?;
+        for chunk in chunking_plan.chunks {
+            let key = (document_id.clone(), chunk.chunk_index);
+            let chunk_id = generated_chunk_ids
+                .get(&key)
+                .ok_or_else(|| DocumentChunkingError::MissingGeneratedChunkId {
+                    document_id: document_id.clone(),
+                    chunk_index: chunk.chunk_index,
+                })?
+                .clone();
+            chunks.push(ChunkRecordDraft {
+                id: chunk_id.clone(),
+                document_id: document_id.clone(),
+                chunk_index: chunk.chunk_index,
+                text_content: chunk.text_content.clone(),
+                location_json: json!({
+                    "char_start": chunk.char_start,
+                    "char_end": chunk.char_end,
+                }),
+                embedding_status: "not_started".to_string(),
+                metadata_json: json!({
+                    "generated_by": "DIFF-052",
+                    "chunk_size": input.chunk_size,
+                    "work_item_id": work_item.id,
+                }),
+            });
+            let evidence_id = generated_evidence_ids
+                .get(&key)
+                .ok_or_else(|| DocumentChunkingError::MissingGeneratedEvidenceId {
+                    document_id: document_id.clone(),
+                    chunk_index: chunk.chunk_index,
+                })?
+                .clone();
+            evidence_items.push(EvidenceItemDraft {
+                id: evidence_id,
+                source_id: document.source_id.clone(),
+                document_id: document_id.clone(),
+                chunk_id,
+                evidence_type: "document_chunk".to_string(),
+                statement: chunk.text_content,
+                observed_at: None,
+                confidence: None,
+                metadata_json: json!({
+                    "generated_by": "DIFF-052",
+                    "chunk_index": chunk.chunk_index,
+                    "work_item_id": work_item.id,
+                }),
+            });
+        }
+    }
+
+    let created_chunk_ids: Vec<String> = chunks.iter().map(|chunk| chunk.id.clone()).collect();
+    let created_evidence_ids: Vec<String> = evidence_items
+        .iter()
+        .map(|evidence| evidence.id.clone())
+        .collect();
+    let chunk_vector_upsert_work_item = if created_chunk_ids.is_empty() {
+        None
+    } else {
+        Some(ChainedWorkItemDraft {
+            work_type: "chunk_vector_upsert".to_string(),
+            status: "queued".to_string(),
+            requested_by_actor_id: work_item.requested_by_actor_id.clone(),
+            payload_json: chained_vector_upsert_payload(&created_chunk_ids, Some(&work_item.id)),
+            audit_event: AuditEventDraft {
+                actor_id: work_item.requested_by_actor_id.clone(),
+                event_type: "work_item.created".to_string(),
+                decision: "queued".to_string(),
+                resource_type: "work_item".to_string(),
+                resource_id: "<generated-chunk-vector-upsert-work-item-id>".to_string(),
+                correlation_id: work_item.id.clone(),
+                details_json: json!({
+                    "work_type": "chunk_vector_upsert",
+                    "parent_work_item_id": work_item.id,
+                    "generated_by": "DIFF-066",
+                }),
+            },
+        })
+    };
+
+    Ok(DocumentChunkingExecutionPlan {
+        status: "completed".to_string(),
+        actor_id: work_item.requested_by_actor_id.clone(),
+        work_item_id: work_item.id.clone(),
+        document_ids: input.requested_document_ids.clone(),
+        chunks,
+        evidence_items,
+        skipped_document_ids: skipped_document_ids.clone(),
+        completion_status_update: WorkItemStatusDraft {
+            work_item_id: work_item.id.clone(),
+            status: "completed".to_string(),
+            error_message: None,
+        },
+        completion_audit_event: AuditEventDraft {
+            actor_id: work_item.requested_by_actor_id,
+            event_type: "document_chunks.generated".to_string(),
+            decision: "completed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item.id.clone(),
+            correlation_id: work_item.id,
+            details_json: json!({
+                "document_ids": input.requested_document_ids,
+                "chunk_count": created_chunk_ids.len(),
+                "evidence_count": created_evidence_ids.len(),
+                "skipped_document_ids": skipped_document_ids,
+                "chunk_vector_upsert_work_item_id": if chunk_vector_upsert_work_item.is_some() {
+                    Value::String("<generated-chunk-vector-upsert-work-item-id>".to_string())
+                } else {
+                    Value::Null
+                },
+            }),
+        },
+        chunk_vector_upsert_work_item,
+    })
+}
+
+pub fn plan_document_chunking_failure(
+    work_item_id: &str,
+    document_ids: &[String],
+    actor_id: &str,
+    error_message: &str,
+) -> (WorkItemStatusDraft, AuditEventDraft) {
+    (
+        WorkItemStatusDraft {
+            work_item_id: work_item_id.to_string(),
+            status: "failed".to_string(),
+            error_message: Some(error_message.to_string()),
+        },
+        AuditEventDraft {
+            actor_id: actor_id.to_string(),
+            event_type: "document_chunks.failed".to_string(),
+            decision: "failed".to_string(),
+            resource_type: "work_item".to_string(),
+            resource_id: work_item_id.to_string(),
+            correlation_id: work_item_id.to_string(),
+            details_json: json!({
+                "document_ids": document_ids,
+                "error_message": error_message,
+            }),
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -572,6 +973,30 @@ fn validate_collection_normalization_payload(
     Ok(())
 }
 
+fn validate_document_chunking_payload(
+    payload_json: &Value,
+    document_ids: &[String],
+) -> Result<(), DocumentChunkingError> {
+    let expected_document_ids =
+        if let Some(values) = payload_json.get("document_ids").and_then(Value::as_array) {
+            values
+                .iter()
+                .map(|value| value.as_str().map(ToString::to_string))
+                .collect::<Option<Vec<String>>>()
+        } else {
+            payload_json
+                .get("document_id")
+                .and_then(Value::as_str)
+                .map(|document_id| vec![document_id.to_string()])
+        };
+    if expected_document_ids.as_deref() != Some(document_ids) {
+        return Err(DocumentChunkingError::PayloadMismatch(
+            "Work item document IDs do not match task request".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn chained_document_chunking_payload(document_ids: &[String], parent_work_item_id: &str) -> Value {
     json!({
         "document_ids": document_ids,
@@ -591,6 +1016,31 @@ fn chained_document_chunking_payload(document_ids: &[String], parent_work_item_i
                 "Do not perform external model calls or system-changing actions."
             ],
             "assumptions": ["Parent normalization work item completed successfully."],
+            "missing_information": [],
+            "recorded_by": "DIFF-074 worker chained governance"
+        }
+    })
+}
+
+fn chained_vector_upsert_payload(chunk_ids: &[String], parent_work_item_id: Option<&str>) -> Value {
+    json!({
+        "chunk_ids": chunk_ids,
+        "limit": chunk_ids.len().max(1),
+        "parent_work_item_id": parent_work_item_id,
+        "worker_task_name": "memory.vector.upsert_chunks",
+        "generated_by": "DIFF-066",
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": "Continue deterministic post-chunking vector memory processing.",
+            "interpretation": "Upsert local deterministic embeddings for chunks created by the approved pipeline.",
+            "proposed_work_type": "chunk_vector_upsert",
+            "sources_likely_used": [],
+            "expected_output": "Qdrant points for local chunk embeddings.",
+            "safety_requirements": [
+                "Use only local chunk text from the parent work item.",
+                "Do not perform external model calls or system-changing actions."
+            ],
+            "assumptions": ["Parent chunking work item completed successfully."],
             "missing_information": [],
             "recorded_by": "DIFF-074 worker chained governance"
         }
@@ -1289,6 +1739,296 @@ mod tests {
         assert!(sql
             .insert_chained_work_item_sql
             .contains("'document_chunking'"));
+        assert!(sql.insert_audit_event_sql.contains("audit_events"));
+    }
+
+    fn chunking_work_item(payload_json: Value) -> DocumentChunkingWorkItem {
+        DocumentChunkingWorkItem {
+            id: "chunk-work-1".to_string(),
+            work_type: "document_chunking".to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: "local-owner".to_string(),
+            payload_json,
+        }
+    }
+
+    fn chunking_input() -> DocumentChunkingExecutionInput {
+        DocumentChunkingExecutionInput {
+            work_item: Some(chunking_work_item(json!({
+                "document_ids": ["doc-1"],
+                "chunk_size": 100,
+                "intent_verification_recorded": true
+            }))),
+            requested_document_ids: vec!["doc-1".to_string()],
+            chunk_size: 100,
+            documents: vec![NormalizedDocumentRecord {
+                id: "doc-1".to_string(),
+                source_id: Some("source-1".to_string()),
+                text_content: "a".repeat(205),
+            }],
+            existing_chunks: Vec::new(),
+            generated_chunk_ids: vec![
+                GeneratedChunkId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 0,
+                    chunk_id: "chunk-1".to_string(),
+                },
+                GeneratedChunkId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 1,
+                    chunk_id: "chunk-2".to_string(),
+                },
+                GeneratedChunkId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 2,
+                    chunk_id: "chunk-3".to_string(),
+                },
+            ],
+            generated_evidence_ids: vec![
+                GeneratedEvidenceId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 0,
+                    evidence_id: "evidence-1".to_string(),
+                },
+                GeneratedEvidenceId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 1,
+                    evidence_id: "evidence-2".to_string(),
+                },
+                GeneratedEvidenceId {
+                    document_id: "doc-1".to_string(),
+                    chunk_index: 2,
+                    evidence_id: "evidence-3".to_string(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn document_chunking_plans_python_equivalent_success() {
+        let plan = plan_document_chunking_execution(chunking_input()).expect("success");
+
+        assert_eq!(plan.status, "completed");
+        assert_eq!(plan.actor_id, "local-owner");
+        assert_eq!(plan.work_item_id, "chunk-work-1");
+        assert_eq!(plan.chunks.len(), 3);
+        assert_eq!(plan.evidence_items.len(), 3);
+        assert_eq!(plan.chunks[0].id, "chunk-1");
+        assert_eq!(plan.chunks[0].document_id, "doc-1");
+        assert_eq!(plan.chunks[0].chunk_index, 0);
+        assert_eq!(plan.chunks[0].text_content.len(), 100);
+        assert_eq!(
+            plan.chunks[0].location_json,
+            json!({"char_start": 0, "char_end": 100})
+        );
+        assert_eq!(plan.chunks[0].embedding_status, "not_started");
+        assert_eq!(
+            plan.chunks[0].metadata_json,
+            json!({
+                "generated_by": "DIFF-052",
+                "chunk_size": 100,
+                "work_item_id": "chunk-work-1"
+            })
+        );
+        assert_eq!(plan.evidence_items[0].id, "evidence-1");
+        assert_eq!(
+            plan.evidence_items[0].source_id.as_deref(),
+            Some("source-1")
+        );
+        assert_eq!(plan.evidence_items[0].chunk_id, "chunk-1");
+        assert_eq!(plan.evidence_items[0].evidence_type, "document_chunk");
+        assert_eq!(plan.evidence_items[0].observed_at, None);
+        assert_eq!(plan.evidence_items[0].confidence, None);
+        assert_eq!(
+            plan.evidence_items[0].metadata_json,
+            json!({
+                "generated_by": "DIFF-052",
+                "chunk_index": 0,
+                "work_item_id": "chunk-work-1"
+            })
+        );
+        assert_eq!(plan.completion_status_update.status, "completed");
+        assert_eq!(plan.completion_status_update.error_message, None);
+        assert_eq!(
+            plan.completion_audit_event.event_type,
+            "document_chunks.generated"
+        );
+        assert_eq!(plan.completion_audit_event.decision, "completed");
+        assert_eq!(plan.completion_audit_event.resource_type, "work_item");
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunk_count"],
+            json!(3)
+        );
+        assert_eq!(
+            plan.completion_audit_event.details_json["evidence_count"],
+            json!(3)
+        );
+    }
+
+    #[test]
+    fn document_chunking_creates_chained_vector_work_item_without_qdrant_work() {
+        let plan = plan_document_chunking_execution(chunking_input()).expect("success");
+        let chained = plan
+            .chunk_vector_upsert_work_item
+            .expect("chunk vector work item");
+
+        assert_eq!(chained.work_type, "chunk_vector_upsert");
+        assert_eq!(chained.status, "queued");
+        assert_eq!(chained.requested_by_actor_id, "local-owner");
+        assert_eq!(
+            chained.payload_json["chunk_ids"],
+            json!(["chunk-1", "chunk-2", "chunk-3"])
+        );
+        assert_eq!(chained.payload_json["limit"], json!(3));
+        assert_eq!(
+            chained.payload_json["worker_task_name"],
+            json!("memory.vector.upsert_chunks")
+        );
+        assert_eq!(
+            chained.payload_json["intent_verification"]["recorded_by"],
+            json!("DIFF-074 worker chained governance")
+        );
+        assert_eq!(chained.audit_event.event_type, "work_item.created");
+        assert_eq!(chained.audit_event.decision, "queued");
+        assert_eq!(
+            chained.audit_event.details_json["work_type"],
+            json!("chunk_vector_upsert")
+        );
+    }
+
+    #[test]
+    fn document_chunking_skips_documents_with_existing_chunks() {
+        let mut input = chunking_input();
+        input.existing_chunks = vec![ExistingChunkRecord {
+            id: "existing-chunk".to_string(),
+            document_id: "doc-1".to_string(),
+        }];
+
+        let plan = plan_document_chunking_execution(input).expect("skip");
+
+        assert!(plan.chunks.is_empty());
+        assert!(plan.evidence_items.is_empty());
+        assert_eq!(plan.skipped_document_ids, vec!["doc-1"]);
+        assert!(plan.chunk_vector_upsert_work_item.is_none());
+        assert_eq!(
+            plan.completion_audit_event.details_json["chunk_vector_upsert_work_item_id"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn document_chunking_rejects_missing_document_invalid_payload_and_empty_text() {
+        let mut missing = chunking_input();
+        missing.documents.clear();
+        assert_eq!(
+            plan_document_chunking_execution(missing).expect_err("missing"),
+            DocumentChunkingError::MissingDocuments(vec!["doc-1".to_string()])
+        );
+
+        let mut invalid_payload = chunking_input();
+        invalid_payload.work_item = Some(chunking_work_item(json!({
+            "document_ids": ["doc-2"],
+            "intent_verification_recorded": true
+        })));
+        assert_eq!(
+            plan_document_chunking_execution(invalid_payload).expect_err("payload"),
+            DocumentChunkingError::PayloadMismatch(
+                "Work item document IDs do not match task request".to_string()
+            )
+        );
+
+        let mut empty = chunking_input();
+        empty.documents[0].text_content = String::new();
+        assert_eq!(
+            plan_document_chunking_execution(empty).expect_err("empty"),
+            DocumentChunkingError::EmptyDocumentText("doc-1".to_string())
+        );
+    }
+
+    #[test]
+    fn document_chunking_rejects_invalid_chunk_size_and_missing_generated_ids() {
+        let mut invalid_size = chunking_input();
+        invalid_size.chunk_size = 99;
+        assert_eq!(
+            plan_document_chunking_execution(invalid_size).expect_err("size"),
+            DocumentChunkingError::InvalidChunkSize(99)
+        );
+
+        let mut missing_chunk_id = chunking_input();
+        missing_chunk_id.generated_chunk_ids.pop();
+        assert_eq!(
+            plan_document_chunking_execution(missing_chunk_id).expect_err("chunk id"),
+            DocumentChunkingError::MissingGeneratedChunkId {
+                document_id: "doc-1".to_string(),
+                chunk_index: 2
+            }
+        );
+
+        let mut missing_evidence_id = chunking_input();
+        missing_evidence_id.generated_evidence_ids.pop();
+        assert_eq!(
+            plan_document_chunking_execution(missing_evidence_id).expect_err("evidence id"),
+            DocumentChunkingError::MissingGeneratedEvidenceId {
+                document_id: "doc-1".to_string(),
+                chunk_index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn document_chunking_single_document_id_payload_is_supported() {
+        let mut input = chunking_input();
+        input.work_item = Some(chunking_work_item(json!({
+            "document_id": "doc-1",
+            "intent_verification_recorded": true
+        })));
+
+        let plan = plan_document_chunking_execution(input).expect("single id");
+
+        assert_eq!(plan.document_ids, vec!["doc-1"]);
+        assert_eq!(plan.chunks.len(), 3);
+    }
+
+    #[test]
+    fn document_chunking_failure_plan_matches_python_audit_shape() {
+        let document_ids = vec!["doc-1".to_string()];
+        let (status, audit) = plan_document_chunking_failure(
+            "chunk-work-1",
+            &document_ids,
+            "local-owner",
+            "Documents not found: doc-1",
+        );
+
+        assert_eq!(status.status, "failed");
+        assert_eq!(
+            status.error_message.as_deref(),
+            Some("Documents not found: doc-1")
+        );
+        assert_eq!(audit.event_type, "document_chunks.failed");
+        assert_eq!(audit.decision, "failed");
+        assert_eq!(audit.resource_type, "work_item");
+        assert_eq!(audit.resource_id, "chunk-work-1");
+        assert_eq!(audit.correlation_id, "chunk-work-1");
+        assert_eq!(audit.details_json["document_ids"], json!(document_ids));
+        assert_eq!(
+            audit.details_json["error_message"],
+            json!("Documents not found: doc-1")
+        );
+    }
+
+    #[test]
+    fn document_chunking_sql_plan_covers_status_inserts_and_audit() {
+        let sql = document_chunking_sql_plan();
+        assert!(sql.mark_running_sql.contains("status = 'running'"));
+        assert!(sql.insert_chunk_sql.contains("INSERT INTO chunks"));
+        assert!(sql
+            .insert_evidence_item_sql
+            .contains("INSERT INTO evidence_items"));
+        assert!(sql.mark_completed_sql.contains("status = 'completed'"));
+        assert!(sql.mark_failed_sql.contains("status = 'failed'"));
+        assert!(sql
+            .insert_chained_work_item_sql
+            .contains("'chunk_vector_upsert'"));
         assert!(sql.insert_audit_event_sql.contains("audit_events"));
     }
 }

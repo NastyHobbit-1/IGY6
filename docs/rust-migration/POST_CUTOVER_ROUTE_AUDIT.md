@@ -344,15 +344,15 @@ from Rust. DIFF-139 moves the tracked FastAPI API tree to
 - `worker`: `celery -A app.celery_app:celery_app worker --loglevel=INFO`
 - `beat`: `celery -A app.celery_app:celery_app beat --loglevel=INFO`
 
-The Rust worker crate now includes DIFF-143 `collection_normalization`
-execution planning and SQL/audit/status executor contracts. It preserves the
-Python/Celery normalization behavior for UTF-8 artifact normalization,
-`normalized_documents` insert shape, duplicate skips, originating work-item
-status, completion/failure audit events, and chained `document_chunking`
-work-item creation. It does not replace live Celery process ownership, execute
-`document_chunking`, execute `chunk_vector_upsert`, call Qdrant, or remove
-Python/Celery. Full Rust-only repository/runtime operation is therefore not
-claimed.
+The Rust worker crate now includes DIFF-143 `collection_normalization` and
+DIFF-144 `document_chunking` execution planning plus SQL/audit/status executor
+contracts. It preserves Python/Celery normalization behavior for UTF-8 artifact
+normalization, `normalized_documents` insert shape, deterministic chunk and
+evidence item inserts, duplicate skips, originating work-item status,
+completion/failure audit events, and chained work-item creation through
+`chunk_vector_upsert`. It does not replace live Celery process ownership,
+execute `chunk_vector_upsert`, call Qdrant, or remove Python/Celery. Full
+Rust-only repository/runtime operation is therefore not claimed.
 
 DIFF-141 audits the active Python/Celery worker and beat services. It finds five
 registered Celery tasks, no repo-defined beat schedule, and no Python/Celery
@@ -374,6 +374,14 @@ normalization DB writes, status transitions, audit events, duplicate skip
 behavior, UTF-8 failure handling, and chained `document_chunking` work-item
 creation that the Python/Celery worker performs. The next required parity work
 is DIFF-144 for `document_chunking`; until that and later vector/scheduler
+parity work complete, Python/Celery `worker` and `beat` remain active.
+
+DIFF-144 adds the second worker job-family parity layer for
+`document_chunking`. The Rust worker crate can now plan the same chunk and
+evidence-item DB writes, status transitions, audit events, duplicate skip
+behavior, empty-document failure handling, and chained `chunk_vector_upsert`
+work-item creation that the Python/Celery worker performs. The next required
+parity work is DIFF-145 for `chunk_vector_upsert`; until vector and scheduler
 parity work complete, Python/Celery `worker` and `beat` remain active.
 
 ## Web-Used Route Matrix
@@ -665,4 +673,7 @@ then drove unsupported non-web route migration or retirement through DIFF-138:
     without job execution.
 26. DIFF-143: add Rust `collection_normalization` execution parity planning
     and executor contracts without migrating chunking or vector upsert.
-27. Recommended next DIFF: DIFF-144 Rust `document_chunking` execution parity.
+27. DIFF-144: add Rust `document_chunking` execution parity planning and
+    executor contracts without migrating vector upsert.
+28. Recommended next DIFF: DIFF-145 Rust `chunk_vector_upsert` execution
+    parity.
