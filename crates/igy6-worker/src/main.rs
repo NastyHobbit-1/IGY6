@@ -2,10 +2,10 @@ use std::env;
 use std::process;
 
 use igy6_worker::{
-    parse_usize_setting, parse_worker_runtime_args, plan_worker_runtime,
-    render_worker_runtime_status, worker_runtime_help, WorkerRuntimeConfig, DEFAULT_DATABASE_URL,
-    DEFAULT_IGY6_DATA_ROOT, DEFAULT_QDRANT_CHUNK_COLLECTION, DEFAULT_QDRANT_CHUNK_VECTOR_SIZE,
-    DEFAULT_QDRANT_URL,
+    execute_worker_live_canary, parse_usize_setting, parse_worker_runtime_args,
+    plan_worker_runtime, render_worker_live_canary_result, render_worker_runtime_status,
+    worker_runtime_help, WorkerRuntimeConfig, DEFAULT_DATABASE_URL, DEFAULT_IGY6_DATA_ROOT,
+    DEFAULT_QDRANT_CHUNK_COLLECTION, DEFAULT_QDRANT_CHUNK_VECTOR_SIZE, DEFAULT_QDRANT_URL,
 };
 
 fn main() {
@@ -23,8 +23,15 @@ fn run() -> Result<(), String> {
     }
 
     let config = config_from_env(&args)?;
-    let plan = plan_worker_runtime(args, config.clone()).map_err(|error| error.to_string())?;
-    println!("{}", render_worker_runtime_status(&plan, &config));
+    let plan =
+        plan_worker_runtime(args.clone(), config.clone()).map_err(|error| error.to_string())?;
+    if args.canary_live && plan.live_execution_enabled {
+        let result =
+            execute_worker_live_canary(&args, &config).map_err(|error| error.to_string())?;
+        println!("{}", render_worker_live_canary_result(&result, &config));
+    } else {
+        println!("{}", render_worker_runtime_status(&plan, &config));
+    }
     Ok(())
 }
 

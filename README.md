@@ -31,8 +31,11 @@ safe Rust worker CLI/runtime harness with `--check`, `--dry-run`, and `--once`
 modes, but live execution remains disabled and Python/Celery still owns live
 worker side effects. DIFF-148 adds an explicit one-job canary gate with
 `--once --canary-live --canary-work-item ID`, plus side-effect verification
-planning. It still does not execute DB/audit/artifact/Qdrant side effects or
-replace Python/Celery.
+planning. DIFF-149 implements the gated one-job Rust live side-effect executor
+for the selected canary work item only: PostgreSQL claim/status writes,
+worker audit events, scoped artifact reads, parity DB writes, and Qdrant
+collection/point work for `chunk_vector_upsert`. It does not enable broad queue
+polling, Compose Rust worker ownership, beat replacement, or Rust-only runtime.
 
 Current web-used route parity is tracked by:
 
@@ -244,8 +247,11 @@ DIFF-146 retains Python/Celery because there is not yet a Rust worker process
 that polls, claims, and executes queued jobs. DIFF-147 adds the safe
 `igy6-worker` harness for check/dry-run/once planning, but it is non-mutating
 and does not replace Celery. DIFF-148 adds an opt-in one-job canary gate and
-verification plan, but side effects remain planned-only. The Rust gateway
-dispatch route records safe dispatch metadata without invoking Celery directly.
+verification plan. DIFF-149 adds the gated live side-effect executor for one
+explicitly selected canary work item, but Python/Celery remains the production
+worker path until process ownership and beat posture are cut over. The Rust
+gateway dispatch route records safe dispatch metadata without invoking Celery
+directly.
 
 Check worker/processing status:
 

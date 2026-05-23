@@ -1,5 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_chunking::{plan_document_chunks, ChunkPlan, ChunkingError, EvidencePlan};
 use igy6_normalization::{
@@ -7,8 +13,9 @@ use igy6_normalization::{
 };
 use igy6_vector_memory::{
     collection_status_request, embed_text_local, ensure_collection_request, upsert_points_request,
-    ChunkVectorPoint, HttpRequestPlan, QdrantSettings, VectorMemoryError,
+    ChunkVectorPoint, HttpMethod, HttpRequestPlan, QdrantSettings, VectorMemoryError,
 };
+use postgres::{Client, NoTls};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +65,7 @@ pub const DEFAULT_WORKER_POLL_INTERVAL_MS: u64 = 1000;
 pub const MAX_WORKER_CLAIM_LIMIT: usize = 16;
 pub const MIN_WORKER_POLL_INTERVAL_MS: u64 = 100;
 pub const MAX_WORKER_POLL_INTERVAL_MS: u64 = 60000;
+static GENERATED_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerTaskKind {
@@ -238,6 +246,7 @@ pub enum WorkerRuntimeError {
     InvalidDataRoot(String),
     InvalidVectorSize(String),
     InvalidCollectionName(String),
+    LiveExecution(String),
 }
 
 impl fmt::Display for WorkerRuntimeError {
@@ -254,7 +263,8 @@ impl fmt::Display for WorkerRuntimeError {
             | Self::InvalidQdrantUrl(message)
             | Self::InvalidDataRoot(message)
             | Self::InvalidVectorSize(message)
-            | Self::InvalidCollectionName(message) => write!(formatter, "{message}"),
+            | Self::InvalidCollectionName(message)
+            | Self::LiveExecution(message) => write!(formatter, "{message}"),
         }
     }
 }
@@ -324,6 +334,23 @@ pub struct WorkerRuntimePlan {
     pub canary_plan: Option<WorkerCanaryPlan>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerLiveCanaryResult {
+    pub service: &'static str,
+    pub diff: &'static str,
+    pub mode: &'static str,
+    pub status: String,
+    pub work_item_id: String,
+    pub work_type: Option<String>,
+    pub result_state: String,
+    pub mutates_runtime_data: bool,
+    pub live_execution_enabled: bool,
+    pub side_effects_executed: Vec<String>,
+    pub side_effects_planned: Vec<String>,
+    pub error_message: Option<String>,
+    pub output_json: Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerCanaryPlan {
     pub work_item_id: String,
@@ -343,7 +370,7 @@ pub struct WorkerSideEffectPlan {
 }
 
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --once --canary-live --canary-work-item ID\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-live      Opt-in DIFF-148 canary gate; bounded to one named work item and still blocks side effects in this DIFF.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-148 safety: default mode is non-mutating, canary-live is explicit and one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-149 safety: default mode is non-mutating, canary-live is explicit and one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -487,7 +514,9 @@ pub fn plan_worker_runtime(
     };
     Ok(WorkerRuntimePlan {
         mode: args.mode,
-        status: if args.canary_live {
+        status: if args.canary_live && config.live_execution_enabled {
+            "canary_live_ready".to_string()
+        } else if args.canary_live {
             "canary_ready_side_effects_planned".to_string()
         } else {
             "planned_without_execution".to_string()
@@ -556,7 +585,7 @@ pub fn render_worker_runtime_status(
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-148",
+        "diff": "DIFF-149",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
@@ -588,6 +617,936 @@ pub fn render_worker_runtime_status(
             "rollback_posture": canary.rollback_posture,
         })),
     })
+}
+
+pub fn render_worker_live_canary_result(
+    result: &WorkerLiveCanaryResult,
+    config: &WorkerRuntimeConfig,
+) -> Value {
+    json!({
+        "service": result.service,
+        "diff": result.diff,
+        "mode": result.mode,
+        "status": result.status,
+        "work_item_id": result.work_item_id,
+        "work_type": result.work_type,
+        "result_state": result.result_state,
+        "mutates_runtime_data": result.mutates_runtime_data,
+        "live_execution_enabled": result.live_execution_enabled,
+        "python_celery_worker_required": true,
+        "python_celery_beat_required": true,
+        "rust_only_runtime_claimed": false,
+        "qdrant_chunk_collection": config.qdrant_chunk_collection,
+        "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
+        "database_url_configured": !config.database_url.trim().is_empty(),
+        "qdrant_url_configured": !config.qdrant_url.trim().is_empty(),
+        "igy6_data_root_configured": !config.igy6_data_root.trim().is_empty(),
+        "side_effects_executed": result.side_effects_executed,
+        "side_effects_planned": result.side_effects_planned,
+        "error_message": result.error_message,
+        "output": result.output_json,
+    })
+}
+
+pub fn execute_worker_live_canary(
+    args: &WorkerRuntimeArgs,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    if !args.canary_live || !matches!(args.mode, WorkerRuntimeMode::Once) || args.claim_limit != 1 {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "live execution requires --once --canary-live with claim limit 1".to_string(),
+        ));
+    }
+    if !config.live_execution_enabled {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "live execution requires IGY6_WORKER_LIVE_CANARY=DIFF-148".to_string(),
+        ));
+    }
+    let work_item_id = args.canary_work_item_id.as_deref().ok_or_else(|| {
+        WorkerRuntimeError::InvalidCanaryMode(
+            "live execution requires --canary-work-item".to_string(),
+        )
+    })?;
+    let validated_config = validate_worker_runtime_config(config.clone())?;
+    execute_worker_live_canary_inner(work_item_id, &validated_config)
+}
+
+fn execute_worker_live_canary_inner(
+    work_item_id: &str,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    let postgres_url = postgres_client_url(&config.database_url);
+    let mut client = Client::connect(&postgres_url, NoTls).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("failed to connect to PostgreSQL: {error}"))
+    })?;
+
+    let Some(claimed) = claim_one_canary_work_item(&mut client, work_item_id)? else {
+        return Ok(live_result(
+            work_item_id,
+            None,
+            "skipped",
+            false,
+            vec![],
+            vec![],
+            Some("work item was not found, was locked, or was not queued".to_string()),
+            json!({}),
+        ));
+    };
+
+    let execution = match claimed.task_kind {
+        WorkerTaskKind::CollectionNormalization => {
+            execute_collection_normalization_canary(&mut client, &claimed, config)
+        }
+        WorkerTaskKind::DocumentChunking => {
+            execute_document_chunking_canary(&mut client, &claimed, config)
+        }
+        WorkerTaskKind::ChunkVectorUpsert => {
+            execute_chunk_vector_upsert_canary(&mut client, &claimed, config)
+        }
+    };
+
+    match execution {
+        Ok(mut result) => {
+            result
+                .side_effects_executed
+                .insert(0, "audit_work_item_started".to_string());
+            result
+                .side_effects_executed
+                .insert(0, "audit_work_item_claimed".to_string());
+            result
+                .side_effects_executed
+                .insert(0, "postgres_work_item_claim".to_string());
+            Ok(result)
+        }
+        Err(error) => {
+            let error_message = error.to_string();
+            mark_canary_failed(&mut client, &claimed, &error_message)?;
+            Ok(live_result(
+                &claimed.work_item_id,
+                Some(claimed.task_kind.work_type().to_string()),
+                "failed",
+                true,
+                vec![
+                    "postgres_work_item_claim".to_string(),
+                    "audit_work_item_claimed".to_string(),
+                    "audit_work_item_started".to_string(),
+                    "postgres_work_item_failed".to_string(),
+                    "audit_worker_failure".to_string(),
+                ],
+                vec![],
+                Some(error_message),
+                json!({}),
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ClaimedWorkItem {
+    work_item_id: String,
+    task_kind: WorkerTaskKind,
+    requested_by_actor_id: String,
+    payload_json: Value,
+}
+
+fn claim_one_canary_work_item(
+    client: &mut Client,
+    work_item_id: &str,
+) -> Result<Option<ClaimedWorkItem>, WorkerRuntimeError> {
+    let mut transaction = client.transaction().map_err(live_error)?;
+    let row = transaction
+        .query_opt(
+            "SELECT id, work_type, status, requested_by_actor_id, payload_json FROM work_items WHERE id = $1 FOR UPDATE SKIP LOCKED",
+            &[&work_item_id],
+        )
+        .map_err(live_error)?;
+    let Some(row) = row else {
+        transaction.commit().map_err(live_error)?;
+        return Ok(None);
+    };
+    let candidate = QueueClaimCandidate {
+        id: row.get("id"),
+        work_type: row.get("work_type"),
+        status: row.get("status"),
+        requested_by_actor_id: row.get("requested_by_actor_id"),
+        payload_json: row.get("payload_json"),
+    };
+    if candidate.status != "queued" {
+        transaction.commit().map_err(live_error)?;
+        return Ok(None);
+    }
+    let claim_plan = plan_queue_claim(candidate.clone(), &candidate.requested_by_actor_id)
+        .map_err(|error| {
+            WorkerRuntimeError::LiveExecution(format!("canary claim rejected: {error}"))
+        })?;
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1 AND status = 'queued'",
+            &[&claim_plan.work_item_id],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &candidate.requested_by_actor_id,
+        "work_item.claimed",
+        "running",
+        "work_item",
+        &claim_plan.work_item_id,
+        &claim_plan.work_item_id,
+        json!({
+            "work_type": claim_plan.work_type,
+            "task_name": claim_plan.task_name,
+            "generated_by": "DIFF-149",
+        }),
+    )?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &candidate.requested_by_actor_id,
+        "work_item.started",
+        "running",
+        "work_item",
+        &claim_plan.work_item_id,
+        &claim_plan.work_item_id,
+        json!({
+            "work_type": claim_plan.work_type,
+            "generated_by": "DIFF-149",
+        }),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    Ok(Some(ClaimedWorkItem {
+        work_item_id: claim_plan.work_item_id,
+        task_kind: WorkerTaskKind::from_work_type(&claim_plan.work_type).expect("validated"),
+        requested_by_actor_id: candidate.requested_by_actor_id,
+        payload_json: candidate.payload_json,
+    }))
+}
+
+fn execute_collection_normalization_canary(
+    client: &mut Client,
+    claimed: &ClaimedWorkItem,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    let collection_run_id = required_payload_string(&claimed.payload_json, "collection_run_id")?;
+    let raw_artifact_ids =
+        required_payload_string_array(&claimed.payload_json, "raw_artifact_ids")?;
+    let rows = client
+        .query(
+            "SELECT id, source_id, collection_run_id, content_hash, storage_path, metadata_json FROM raw_artifacts WHERE id = ANY($1)",
+            &[&raw_artifact_ids],
+        )
+        .map_err(live_error)?;
+    let mut raw_artifacts = Vec::new();
+    for row in rows {
+        let storage_path: String = row.get("storage_path");
+        raw_artifacts.push(RawArtifactRecord {
+            id: row.get("id"),
+            source_id: row
+                .get::<_, Option<String>>("source_id")
+                .unwrap_or_default(),
+            collection_run_id: row
+                .get::<_, Option<String>>("collection_run_id")
+                .unwrap_or_default(),
+            content_hash: row.get("content_hash"),
+            storage_path: storage_path.clone(),
+            metadata_json: row.get("metadata_json"),
+            bytes: read_artifact_bytes_under_data_root(&config.igy6_data_root, &storage_path)?,
+        });
+    }
+    let collection_run = client
+        .query_opt(
+            "SELECT id FROM collection_runs WHERE id = $1",
+            &[&collection_run_id],
+        )
+        .map_err(live_error)?
+        .map(|row| CollectionRunRecord { id: row.get("id") });
+    let existing_documents = client
+        .query(
+            "SELECT id, raw_artifact_id FROM normalized_documents WHERE raw_artifact_id = ANY($1)",
+            &[&raw_artifact_ids],
+        )
+        .map_err(live_error)?
+        .into_iter()
+        .map(|row| ExistingNormalizedDocument {
+            id: row.get("id"),
+            raw_artifact_id: row.get("raw_artifact_id"),
+        })
+        .collect::<Vec<_>>();
+    let existing_raw_artifact_ids: BTreeSet<String> = existing_documents
+        .iter()
+        .map(|document| document.raw_artifact_id.clone())
+        .collect();
+    let generated_document_ids = raw_artifact_ids
+        .iter()
+        .filter(|id| !existing_raw_artifact_ids.contains(*id))
+        .map(|id| GeneratedDocumentId {
+            raw_artifact_id: id.clone(),
+            document_id: generated_id("document"),
+        })
+        .collect::<Vec<_>>();
+    let plan = plan_collection_normalization_execution(CollectionNormalizationExecutionInput {
+        work_item: Some(CollectionNormalizationWorkItem {
+            id: claimed.work_item_id.clone(),
+            work_type: claimed.task_kind.work_type().to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: claimed.requested_by_actor_id.clone(),
+            payload_json: claimed.payload_json.clone(),
+        }),
+        requested_collection_run_id: collection_run_id.clone(),
+        requested_raw_artifact_ids: raw_artifact_ids.clone(),
+        collection_run,
+        raw_artifacts,
+        existing_documents,
+        generated_document_ids,
+    })
+    .map_err(|error| WorkerRuntimeError::LiveExecution(error.to_string()))?;
+
+    let mut transaction = client.transaction().map_err(live_error)?;
+    for document in &plan.normalized_documents {
+        transaction.execute(
+            "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json) VALUES ($1, $2, $3, $4, 'text', NULL, $5, 'internal', $6)",
+            &[&document.id, &document.raw_artifact_id, &document.source_id, &document.title, &document.text_content, &document.metadata_json],
+        ).map_err(live_error)?;
+    }
+    let chained_id = if let Some(chained) = &plan.document_chunking_work_item {
+        let id = generated_id("work-item");
+        transaction.execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json) VALUES ($1, 'document_chunking', 'queued', $2, $3)",
+            &[&id, &chained.requested_by_actor_id, &chained.payload_json],
+        ).map_err(live_error)?;
+        insert_audit_event_tx(
+            &mut transaction,
+            &chained.audit_event.actor_id,
+            &chained.audit_event.event_type,
+            &chained.audit_event.decision,
+            &chained.audit_event.resource_type,
+            &id,
+            &chained.audit_event.correlation_id,
+            replace_placeholder_id(&chained.audit_event.details_json, &id),
+        )?;
+        Some(id)
+    } else {
+        None
+    };
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+            &[&claimed.work_item_id],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &plan.completion_audit_event.actor_id,
+        &plan.completion_audit_event.event_type,
+        &plan.completion_audit_event.decision,
+        &plan.completion_audit_event.resource_type,
+        &plan.completion_audit_event.resource_id,
+        &plan.completion_audit_event.correlation_id,
+        replace_placeholder_id(
+            &plan.completion_audit_event.details_json,
+            chained_id.as_deref().unwrap_or(""),
+        ),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    Ok(live_result(
+        &claimed.work_item_id,
+        Some(claimed.task_kind.work_type().to_string()),
+        "completed",
+        true,
+        vec![
+            "artifact_store_read".to_string(),
+            "postgres_normalized_document_writes".to_string(),
+            "postgres_chained_work_item_write".to_string(),
+            "postgres_work_item_completed".to_string(),
+            "audit_worker_success".to_string(),
+        ],
+        vec!["qdrant_collection_and_points".to_string()],
+        None,
+        json!({
+            "created_document_ids": plan.normalized_documents.iter().map(|document| document.id.clone()).collect::<Vec<_>>(),
+            "skipped_raw_artifact_ids": plan.skipped_raw_artifact_ids,
+            "document_chunking_work_item_id": chained_id,
+        }),
+    ))
+}
+
+fn execute_document_chunking_canary(
+    client: &mut Client,
+    claimed: &ClaimedWorkItem,
+    _config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    let document_ids = payload_document_ids(&claimed.payload_json)?;
+    let chunk_size = claimed
+        .payload_json
+        .get("chunk_size")
+        .and_then(Value::as_u64)
+        .unwrap_or(1000) as usize;
+    let documents = client
+        .query(
+            "SELECT id, source_id, text_content FROM normalized_documents WHERE id = ANY($1)",
+            &[&document_ids],
+        )
+        .map_err(live_error)?
+        .into_iter()
+        .map(|row| NormalizedDocumentRecord {
+            id: row.get("id"),
+            source_id: row.get("source_id"),
+            text_content: row.get("text_content"),
+        })
+        .collect::<Vec<_>>();
+    let existing_chunks = client
+        .query(
+            "SELECT id, document_id FROM chunks WHERE document_id = ANY($1)",
+            &[&document_ids],
+        )
+        .map_err(live_error)?
+        .into_iter()
+        .map(|row| ExistingChunkRecord {
+            id: row.get("id"),
+            document_id: row.get("document_id"),
+        })
+        .collect::<Vec<_>>();
+    let documents_with_chunks: BTreeSet<String> = existing_chunks
+        .iter()
+        .map(|chunk| chunk.document_id.clone())
+        .collect();
+    let mut generated_chunk_ids = Vec::new();
+    let mut generated_evidence_ids = Vec::new();
+    for document in &documents {
+        if documents_with_chunks.contains(&document.id) || document.text_content.is_empty() {
+            continue;
+        }
+        let chunking_plan = plan_document_chunks(
+            &document.id,
+            document.source_id.as_deref(),
+            &document.text_content,
+            chunk_size,
+        )
+        .map_err(|error| WorkerRuntimeError::LiveExecution(error.to_string()))?;
+        for chunk in chunking_plan.chunks {
+            generated_chunk_ids.push(GeneratedChunkId {
+                document_id: document.id.clone(),
+                chunk_index: chunk.chunk_index,
+                chunk_id: generated_id("chunk"),
+            });
+            generated_evidence_ids.push(GeneratedEvidenceId {
+                document_id: document.id.clone(),
+                chunk_index: chunk.chunk_index,
+                evidence_id: generated_id("evidence"),
+            });
+        }
+    }
+    let plan = plan_document_chunking_execution(DocumentChunkingExecutionInput {
+        work_item: Some(DocumentChunkingWorkItem {
+            id: claimed.work_item_id.clone(),
+            work_type: claimed.task_kind.work_type().to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: claimed.requested_by_actor_id.clone(),
+            payload_json: claimed.payload_json.clone(),
+        }),
+        requested_document_ids: document_ids.clone(),
+        chunk_size,
+        documents,
+        existing_chunks,
+        generated_chunk_ids,
+        generated_evidence_ids,
+    })
+    .map_err(|error| WorkerRuntimeError::LiveExecution(error.to_string()))?;
+
+    let mut transaction = client.transaction().map_err(live_error)?;
+    for chunk in &plan.chunks {
+        transaction.execute(
+            "INSERT INTO chunks (id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json) VALUES ($1, $2, $3, $4, $5, 'not_started', $6)",
+            &[&chunk.id, &chunk.document_id, &(chunk.chunk_index as i32), &chunk.text_content, &chunk.location_json, &chunk.metadata_json],
+        ).map_err(live_error)?;
+    }
+    for evidence in &plan.evidence_items {
+        transaction.execute(
+            "INSERT INTO evidence_items (id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json) VALUES ($1, $2, $3, $4, 'document_chunk', $5, NULL, NULL, $6)",
+            &[&evidence.id, &evidence.source_id, &evidence.document_id, &evidence.chunk_id, &evidence.statement, &evidence.metadata_json],
+        ).map_err(live_error)?;
+    }
+    let chained_id = if let Some(chained) = &plan.chunk_vector_upsert_work_item {
+        let id = generated_id("work-item");
+        transaction.execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json) VALUES ($1, 'chunk_vector_upsert', 'queued', $2, $3)",
+            &[&id, &chained.requested_by_actor_id, &chained.payload_json],
+        ).map_err(live_error)?;
+        insert_audit_event_tx(
+            &mut transaction,
+            &chained.audit_event.actor_id,
+            &chained.audit_event.event_type,
+            &chained.audit_event.decision,
+            &chained.audit_event.resource_type,
+            &id,
+            &chained.audit_event.correlation_id,
+            replace_placeholder_id(&chained.audit_event.details_json, &id),
+        )?;
+        Some(id)
+    } else {
+        None
+    };
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+            &[&claimed.work_item_id],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &plan.completion_audit_event.actor_id,
+        &plan.completion_audit_event.event_type,
+        &plan.completion_audit_event.decision,
+        &plan.completion_audit_event.resource_type,
+        &plan.completion_audit_event.resource_id,
+        &plan.completion_audit_event.correlation_id,
+        replace_placeholder_id(
+            &plan.completion_audit_event.details_json,
+            chained_id.as_deref().unwrap_or(""),
+        ),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    Ok(live_result(
+        &claimed.work_item_id,
+        Some(claimed.task_kind.work_type().to_string()),
+        "completed",
+        true,
+        vec![
+            "postgres_chunk_writes".to_string(),
+            "postgres_evidence_item_writes".to_string(),
+            "postgres_chained_work_item_write".to_string(),
+            "postgres_work_item_completed".to_string(),
+            "audit_worker_success".to_string(),
+        ],
+        vec![
+            "artifact_store_read".to_string(),
+            "qdrant_collection_and_points".to_string(),
+        ],
+        None,
+        json!({
+            "created_chunk_ids": plan.chunks.iter().map(|chunk| chunk.id.clone()).collect::<Vec<_>>(),
+            "created_evidence_ids": plan.evidence_items.iter().map(|evidence| evidence.id.clone()).collect::<Vec<_>>(),
+            "skipped_document_ids": plan.skipped_document_ids,
+            "chunk_vector_upsert_work_item_id": chained_id,
+        }),
+    ))
+}
+
+fn execute_chunk_vector_upsert_canary(
+    client: &mut Client,
+    claimed: &ClaimedWorkItem,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    let limit = claimed
+        .payload_json
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(100) as usize;
+    let requested_chunk_ids = validate_chunk_vector_upsert_payload(&claimed.payload_json)
+        .map_err(|error| WorkerRuntimeError::LiveExecution(error.to_string()))?;
+    let rows = if let Some(chunk_ids) = &requested_chunk_ids {
+        client.query(
+            "SELECT id, document_id, chunk_index, text_content, embedding_status, metadata_json FROM chunks WHERE embedding_status != 'completed' AND id = ANY($1) ORDER BY id ASC LIMIT $2",
+            &[chunk_ids, &(limit as i64)],
+        )
+    } else {
+        client.query(
+            "SELECT id, document_id, chunk_index, text_content, embedding_status, metadata_json FROM chunks WHERE embedding_status != 'completed' ORDER BY id ASC LIMIT $1",
+            &[&(limit as i64)],
+        )
+    }
+    .map_err(live_error)?;
+    let candidate_chunks = rows
+        .into_iter()
+        .map(|row| ChunkForVectorRecord {
+            id: row.get("id"),
+            document_id: row.get("document_id"),
+            chunk_index: row.get::<_, i32>("chunk_index") as usize,
+            text_content: row.get("text_content"),
+            embedding_status: row.get("embedding_status"),
+            metadata_json: row.get("metadata_json"),
+        })
+        .collect::<Vec<_>>();
+    let qdrant_settings = QdrantSettings {
+        base_url: config.qdrant_url.clone(),
+        collection_name: config.qdrant_chunk_collection.clone(),
+        vector_size: config.qdrant_chunk_vector_size,
+    };
+    let plan = plan_chunk_vector_upsert_execution(ChunkVectorUpsertExecutionInput {
+        work_item: Some(ChunkVectorUpsertWorkItem {
+            id: claimed.work_item_id.clone(),
+            work_type: claimed.task_kind.work_type().to_string(),
+            status: "running".to_string(),
+            requested_by_actor_id: claimed.requested_by_actor_id.clone(),
+            payload_json: claimed.payload_json.clone(),
+        }),
+        limit,
+        candidate_chunks,
+        qdrant_settings,
+    })
+    .map_err(|error| WorkerRuntimeError::LiveExecution(error.to_string()))?;
+
+    let mut qdrant_effects = Vec::new();
+    if !plan.points.is_empty() {
+        execute_qdrant_vector_plan(&plan)?;
+        qdrant_effects.push("qdrant_collection_ensure".to_string());
+        qdrant_effects.push("qdrant_points_upsert".to_string());
+    }
+
+    let mut transaction = client.transaction().map_err(live_error)?;
+    for update in &plan.chunk_updates {
+        transaction
+            .execute(
+                "UPDATE chunks SET embedding_status = 'completed', metadata_json = $2 WHERE id = $1",
+                &[&update.chunk_id, &update.metadata_json],
+            )
+            .map_err(live_error)?;
+    }
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+            &[&claimed.work_item_id],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &plan.completion_audit_event.actor_id,
+        &plan.completion_audit_event.event_type,
+        &plan.completion_audit_event.decision,
+        &plan.completion_audit_event.resource_type,
+        &plan.completion_audit_event.resource_id,
+        &plan.completion_audit_event.correlation_id,
+        plan.completion_audit_event.details_json.clone(),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    let mut side_effects = qdrant_effects;
+    side_effects.extend([
+        "postgres_chunk_embedding_updates".to_string(),
+        "postgres_work_item_completed".to_string(),
+        "audit_worker_success".to_string(),
+    ]);
+    Ok(live_result(
+        &claimed.work_item_id,
+        Some(claimed.task_kind.work_type().to_string()),
+        "completed",
+        true,
+        side_effects,
+        vec!["artifact_store_read".to_string()],
+        None,
+        json!({
+            "chunks_selected": plan.selected_chunk_ids.len(),
+            "chunks_upserted": plan.points.len(),
+            "chunk_ids": plan.selected_chunk_ids,
+        }),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn live_result(
+    work_item_id: &str,
+    work_type: Option<String>,
+    result_state: &str,
+    mutates_runtime_data: bool,
+    side_effects_executed: Vec<String>,
+    side_effects_planned: Vec<String>,
+    error_message: Option<String>,
+    output_json: Value,
+) -> WorkerLiveCanaryResult {
+    WorkerLiveCanaryResult {
+        service: "igy6-worker",
+        diff: "DIFF-149",
+        mode: "once",
+        status: format!("canary_{result_state}"),
+        work_item_id: work_item_id.to_string(),
+        work_type,
+        result_state: result_state.to_string(),
+        mutates_runtime_data,
+        live_execution_enabled: true,
+        side_effects_executed,
+        side_effects_planned,
+        error_message,
+        output_json,
+    }
+}
+
+fn mark_canary_failed(
+    client: &mut Client,
+    claimed: &ClaimedWorkItem,
+    error_message: &str,
+) -> Result<(), WorkerRuntimeError> {
+    let mut transaction = client.transaction().map_err(live_error)?;
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'failed', error_message = $2, updated_at = now() WHERE id = $1",
+            &[&claimed.work_item_id, &error_message],
+        )
+        .map_err(live_error)?;
+    let event_type = match claimed.task_kind {
+        WorkerTaskKind::CollectionNormalization => "collection_normalization.failed",
+        WorkerTaskKind::DocumentChunking => "document_chunks.failed",
+        WorkerTaskKind::ChunkVectorUpsert => "chunk_vectors.failed",
+    };
+    insert_audit_event_tx(
+        &mut transaction,
+        &claimed.requested_by_actor_id,
+        event_type,
+        "failed",
+        "work_item",
+        &claimed.work_item_id,
+        &claimed.work_item_id,
+        json!({
+            "work_type": claimed.task_kind.work_type(),
+            "error_message": error_message,
+            "generated_by": "DIFF-149",
+        }),
+    )?;
+    transaction.commit().map_err(live_error)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_audit_event_tx(
+    transaction: &mut postgres::Transaction<'_>,
+    actor_id: &str,
+    event_type: &str,
+    decision: &str,
+    resource_type: &str,
+    resource_id: &str,
+    correlation_id: &str,
+    details_json: Value,
+) -> Result<(), WorkerRuntimeError> {
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            &[&actor_id, &event_type, &decision, &resource_type, &resource_id, &correlation_id, &details_json],
+        )
+        .map_err(live_error)?;
+    Ok(())
+}
+
+fn required_payload_string(payload: &Value, key: &str) -> Result<String, WorkerRuntimeError> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| WorkerRuntimeError::LiveExecution(format!("payload requires {key}")))
+}
+
+fn required_payload_string_array(
+    payload: &Value,
+    key: &str,
+) -> Result<Vec<String>, WorkerRuntimeError> {
+    let values = payload
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| WorkerRuntimeError::LiveExecution(format!("payload requires {key}")))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .map(ToString::to_string)
+                .ok_or_else(|| {
+                    WorkerRuntimeError::LiveExecution(format!(
+                        "payload {key} must contain only non-empty strings"
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn payload_document_ids(payload: &Value) -> Result<Vec<String>, WorkerRuntimeError> {
+    if payload.get("document_ids").is_some() {
+        return required_payload_string_array(payload, "document_ids");
+    }
+    required_payload_string(payload, "document_id").map(|document_id| vec![document_id])
+}
+
+fn read_artifact_bytes_under_data_root(
+    data_root: &str,
+    storage_path: &str,
+) -> Result<Vec<u8>, WorkerRuntimeError> {
+    let relative_path = Path::new(storage_path);
+    if relative_path.is_absolute()
+        || storage_path.contains('\0')
+        || relative_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        })
+    {
+        return Err(WorkerRuntimeError::LiveExecution(
+            "artifact storage path must be relative and stay under IGY6_DATA_ROOT".to_string(),
+        ));
+    }
+    let root = PathBuf::from(data_root);
+    let artifact_root = root.join("artifacts");
+    let canonical_root = artifact_root.canonicalize().map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("artifact root is not readable: {error}"))
+    })?;
+    let target = artifact_root.join(relative_path);
+    let canonical_target = target.canonicalize().map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("artifact file is not readable: {error}"))
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(WorkerRuntimeError::LiveExecution(
+            "artifact storage path escapes IGY6_DATA_ROOT/artifacts".to_string(),
+        ));
+    }
+    fs::read(canonical_target).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("artifact file read failed: {error}"))
+    })
+}
+
+fn execute_qdrant_vector_plan(
+    plan: &ChunkVectorUpsertExecutionPlan,
+) -> Result<(), WorkerRuntimeError> {
+    let status = execute_http_request_plan(&plan.collection_status_request)?;
+    if status == 404 {
+        let Some(ensure_request) = &plan.ensure_collection_request else {
+            return Err(WorkerRuntimeError::LiveExecution(
+                "Qdrant collection is missing and no ensure request was planned".to_string(),
+            ));
+        };
+        let ensure_status = execute_http_request_plan(ensure_request)?;
+        if !(200..300).contains(&ensure_status) {
+            return Err(WorkerRuntimeError::LiveExecution(format!(
+                "Qdrant collection ensure failed with HTTP {ensure_status}"
+            )));
+        }
+    } else if !(200..300).contains(&status) {
+        return Err(WorkerRuntimeError::LiveExecution(format!(
+            "Qdrant collection status failed with HTTP {status}"
+        )));
+    }
+    if let Some(upsert_request) = &plan.upsert_points_request {
+        let upsert_status = execute_http_request_plan(upsert_request)?;
+        if !(200..300).contains(&upsert_status) {
+            return Err(WorkerRuntimeError::LiveExecution(format!(
+                "Qdrant point upsert failed with HTTP {upsert_status}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn execute_http_request_plan(request: &HttpRequestPlan) -> Result<u16, WorkerRuntimeError> {
+    let (host, port) = host_port_from_http_origin(&request.origin)?;
+    let mut stream = TcpStream::connect((host.as_str(), port)).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("Qdrant connection failed: {error}"))
+    })?;
+    let timeout = Duration::from_secs(request.timeout_seconds.clamp(1, 30));
+    stream.set_read_timeout(Some(timeout)).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("Qdrant timeout failed: {error}"))
+    })?;
+    stream.set_write_timeout(Some(timeout)).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("Qdrant timeout failed: {error}"))
+    })?;
+    let method = match request.method {
+        HttpMethod::Get => "GET",
+        HttpMethod::Put => "PUT",
+        HttpMethod::Post => "POST",
+    };
+    let body = request.body.as_deref().unwrap_or("");
+    let request_text = format!(
+        "{method} {} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        request.path,
+        body.len()
+    );
+    stream.write_all(request_text.as_bytes()).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("Qdrant request failed: {error}"))
+    })?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("Qdrant response failed: {error}"))
+    })?;
+    let status = response
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| {
+            WorkerRuntimeError::LiveExecution(
+                "Qdrant response did not include an HTTP status".to_string(),
+            )
+        })?;
+    Ok(status)
+}
+
+fn host_port_from_http_origin(origin: &str) -> Result<(String, u16), WorkerRuntimeError> {
+    let host_port = origin.strip_prefix("http://").ok_or_else(|| {
+        WorkerRuntimeError::LiveExecution("Qdrant live canary requires an http:// URL".to_string())
+    })?;
+    if host_port.contains('/') || host_port.contains('@') || host_port.contains("..") {
+        return Err(WorkerRuntimeError::LiveExecution(
+            "Qdrant URL must be a bare http://host[:port] origin".to_string(),
+        ));
+    }
+    let (host, port) = if let Some((host, port)) = host_port.rsplit_once(':') {
+        let port = port.parse::<u16>().map_err(|_| {
+            WorkerRuntimeError::LiveExecution("Qdrant URL port is invalid".to_string())
+        })?;
+        (host.to_string(), port)
+    } else {
+        (host_port.to_string(), 80)
+    };
+    if host.trim().is_empty() {
+        return Err(WorkerRuntimeError::LiveExecution(
+            "Qdrant URL host is required".to_string(),
+        ));
+    }
+    Ok((host, port))
+}
+
+fn replace_placeholder_id(details_json: &Value, id: &str) -> Value {
+    match details_json {
+        Value::Object(map) => {
+            let mut map = map.clone();
+            for value in map.values_mut() {
+                if value == "<generated-document-chunking-work-item-id>"
+                    || value == "<generated-chunk-vector-upsert-work-item-id>"
+                {
+                    *value = if id.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(id.to_string())
+                    };
+                }
+            }
+            Value::Object(map)
+        }
+        _ => details_json.clone(),
+    }
+}
+
+fn generated_id(prefix: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = GENERATED_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{nanos:x}-{sequence:x}")
+}
+
+fn postgres_client_url(database_url: &str) -> String {
+    for prefix in ["postgresql+", "postgres+"] {
+        if let Some(driver_url) = database_url.strip_prefix(prefix) {
+            if let Some((_, rest)) = driver_url.split_once("://") {
+                return format!("{}://{}", prefix.trim_end_matches('+'), rest);
+            }
+        }
+    }
+    database_url.to_string()
+}
+
+fn live_error(error: impl fmt::Display) -> WorkerRuntimeError {
+    WorkerRuntimeError::LiveExecution(error.to_string())
 }
 
 pub fn parse_usize_setting(value: Option<&str>, default: usize) -> Result<usize, String> {
@@ -2171,15 +3130,14 @@ mod tests {
         let args =
             parse_worker_runtime_args(["--once", "--canary-live", "--canary-work-item", "work-1"])
                 .expect("canary args");
-        let mut config = WorkerRuntimeConfig::safe_default();
-        config.live_execution_enabled = true;
+        let config = WorkerRuntimeConfig::safe_default();
         let plan = plan_worker_runtime(args, config.clone()).expect("plan");
         let canary = plan.canary_plan.as_ref().expect("canary");
         let status = render_worker_runtime_status(&plan, &config);
 
         assert_eq!(plan.status, "canary_ready_side_effects_planned");
         assert!(!plan.mutates_runtime_data);
-        assert!(plan.live_execution_enabled);
+        assert!(!plan.live_execution_enabled);
         assert_eq!(canary.max_jobs, 1);
         assert_eq!(canary.work_item_id, "work-1");
         assert!(canary.side_effects_executed.is_empty());
@@ -2194,6 +3152,77 @@ mod tests {
             json!("side_effects_planned_not_executed")
         );
         assert_eq!(status["canary"]["side_effects_executed"], json!([]));
+    }
+
+    #[test]
+    fn live_canary_requires_env_gate_before_executor_is_ready() {
+        let args =
+            parse_worker_runtime_args(["--once", "--canary-live", "--canary-work-item", "work-1"])
+                .expect("canary args");
+        let mut config = WorkerRuntimeConfig::safe_default();
+        config.live_execution_enabled = true;
+        let plan = plan_worker_runtime(args, config).expect("plan");
+
+        assert_eq!(plan.status, "canary_live_ready");
+        assert!(plan.live_execution_enabled);
+        assert!(!plan.mutates_runtime_data);
+    }
+
+    #[test]
+    fn live_canary_result_reports_real_side_effect_shape() {
+        let config = WorkerRuntimeConfig::safe_default();
+        let result = live_result(
+            "work-1",
+            Some("chunk_vector_upsert".to_string()),
+            "completed",
+            true,
+            vec![
+                "postgres_work_item_claim".to_string(),
+                "audit_work_item_started".to_string(),
+                "qdrant_points_upsert".to_string(),
+            ],
+            vec!["artifact_store_read".to_string()],
+            None,
+            json!({"chunks_upserted": 1}),
+        );
+        let rendered = render_worker_live_canary_result(&result, &config);
+
+        assert_eq!(rendered["diff"], json!("DIFF-149"));
+        assert_eq!(rendered["result_state"], json!("completed"));
+        assert_eq!(rendered["mutates_runtime_data"], json!(true));
+        assert_eq!(rendered["rust_only_runtime_claimed"], json!(false));
+        assert!(rendered["side_effects_executed"]
+            .as_array()
+            .expect("side effects")
+            .contains(&json!("qdrant_points_upsert")));
+    }
+
+    #[test]
+    fn artifact_path_safety_rejects_absolute_and_traversal_paths() {
+        assert!(matches!(
+            read_artifact_bytes_under_data_root("/tmp/igy6-test-root", "/etc/passwd"),
+            Err(WorkerRuntimeError::LiveExecution(_))
+        ));
+        assert!(matches!(
+            read_artifact_bytes_under_data_root("/tmp/igy6-test-root", "../escape.txt"),
+            Err(WorkerRuntimeError::LiveExecution(_))
+        ));
+    }
+
+    #[test]
+    fn qdrant_live_http_origin_is_bounded_to_http_origin() {
+        assert_eq!(
+            host_port_from_http_origin("http://qdrant:6333").expect("origin"),
+            ("qdrant".to_string(), 6333)
+        );
+        assert!(matches!(
+            host_port_from_http_origin("https://qdrant:6333"),
+            Err(WorkerRuntimeError::LiveExecution(_))
+        ));
+        assert!(matches!(
+            host_port_from_http_origin("http://qdrant:6333/collections/x"),
+            Err(WorkerRuntimeError::LiveExecution(_))
+        ));
     }
 
     fn input(bytes: Vec<u8>) -> WorkerPlanInput {

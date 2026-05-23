@@ -100,6 +100,18 @@ side-effect verification planning for PostgreSQL claim/writes, audit writes,
 artifact reads, and Qdrant collection/point work. DIFF-148 still executes no
 real side effects; Python/Celery `worker` and `beat` remain active.
 
+DIFF-149 implements the first live Rust worker side-effect executor behind the
+same explicit one-job canary gates. The selected canary work item can now be
+claimed with PostgreSQL row locking, marked running/completed/failed, audited,
+and executed through the existing Rust parity contracts. `collection_normalization`
+can read scoped artifact bytes and write normalized documents plus a chained
+chunking work item. `document_chunking` can write chunks, evidence items, and a
+chained vector work item. `chunk_vector_upsert` can generate deterministic local
+vectors, ensure the Qdrant collection, upsert points, and update chunk embedding
+metadata. This is still not a worker process cutover: broad queue polling,
+long-running Rust worker ownership, Compose worker replacement, and beat
+replacement remain out of scope.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

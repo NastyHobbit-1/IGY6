@@ -55,6 +55,16 @@ side-effect verification planning for DB writes, audit writes, artifact reads,
 and Qdrant calls. DIFF-148 does not execute those side effects; they remain
 planned-only, so Python/Celery remains the production worker path.
 
+DIFF-149 implements the live canary executor behind those same gates. When both
+the CLI canary flags and `IGY6_WORKER_LIVE_CANARY=DIFF-148` are present, Rust
+may claim and execute exactly one selected canary work item. Implemented live
+side effects are PostgreSQL claim/status writes, worker audit events, scoped
+artifact reads under `IGY6_DATA_ROOT/artifacts`, job-family DB writes, and Qdrant
+collection/point work only for `chunk_vector_upsert`. Broad queue polling,
+long-running process ownership, Docker Compose Rust worker wiring, and beat
+replacement remain out of scope, so Python/Celery remains the production worker
+path.
+
 ## Pipeline
 
 ```text
