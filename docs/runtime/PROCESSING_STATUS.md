@@ -65,6 +65,13 @@ long-running process ownership, Docker Compose Rust worker wiring, and beat
 replacement remain out of scope, so Python/Celery remains the production worker
 path.
 
+DIFF-150 audits that posture and chooses Decision B: worker process cutover is
+not ready. No controlled real canary was run because no explicitly selected safe
+runtime work item was provided. Static verification covers the canary gates,
+non-mutating defaults, SQL claim shape, artifact path safety, and Qdrant request
+boundaries, but live PostgreSQL/audit/artifact/Qdrant observations remain
+unverified. Docker Compose still runs Python/Celery `worker` and `beat`.
+
 ## Pipeline
 
 ```text

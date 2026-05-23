@@ -112,6 +112,15 @@ metadata. This is still not a worker process cutover: broad queue polling,
 long-running Rust worker ownership, Compose worker replacement, and beat
 replacement remain out of scope.
 
+DIFF-150 decision: B, Rust worker process cutover is not ready. No real canary
+was run because DIFF-150 did not have an explicitly selected safe runtime work
+item. Static verification covers the CLI gates, non-mutating default behavior,
+`FOR UPDATE SKIP LOCKED` claim shape, artifact path safety tests, Qdrant
+request-boundary tests, and retained Docker Compose `worker`/`beat` services.
+Live observations of PostgreSQL writes, audit rows, artifact reads, Qdrant
+upserts, and failure rollback remain required before process ownership can move
+from Python/Celery to Rust.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

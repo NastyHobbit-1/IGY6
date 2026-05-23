@@ -36,6 +36,9 @@ for the selected canary work item only: PostgreSQL claim/status writes,
 worker audit events, scoped artifact reads, parity DB writes, and Qdrant
 collection/point work for `chunk_vector_upsert`. It does not enable broad queue
 polling, Compose Rust worker ownership, beat replacement, or Rust-only runtime.
+DIFF-150 decides worker process cutover is not ready because no controlled real
+canary run has been executed and audited against safe runtime data; Python/Celery
+`worker` and `beat` remain active.
 
 Current web-used route parity is tracked by:
 
@@ -252,6 +255,9 @@ explicitly selected canary work item, but Python/Celery remains the production
 worker path until process ownership and beat posture are cut over. The Rust
 gateway dispatch route records safe dispatch metadata without invoking Celery
 directly.
+
+DIFF-150 keeps that posture: no real canary was run without an explicit safe
+work item, Docker Compose was not changed, and Rust-only runtime is not claimed.
 
 Check worker/processing status:
 

@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-150"
+    "next_required_diff": "DIFF-151"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-150 Rust worker canary verification and process cutover decision"
+    "next_recommended_diff": "DIFF-151 controlled Rust worker canary run and observed side-effect audit"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-150 Rust worker canary verification and process cutover decision"
+    "next_recommended_diff": "DIFF-151 controlled Rust worker canary run and observed side-effect audit"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -357,7 +357,7 @@
       "Rust worker Docker/Compose canary service is not wired",
       "beat/scheduler replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-150 Rust worker canary verification and process cutover decision"
+    "next_recommended_diff": "DIFF-151 controlled Rust worker canary run and observed side-effect audit"
   },
   "rust_worker_live_side_effect_executor": {
     "diff": "DIFF-149",
@@ -412,7 +412,57 @@
       "beat/scheduler replacement or retirement is not decided",
       "Python/Celery remains the production worker owner until a cutover DIFF removes or disables it"
     ],
-    "next_recommended_diff": "DIFF-150 Rust worker canary verification and process cutover decision"
+    "next_recommended_diff": "DIFF-151 controlled Rust worker canary run and observed side-effect audit"
+  },
+  "rust_worker_canary_verification_cutover_decision": {
+    "diff": "DIFF-150",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Rust worker process cutover is not ready; retain Python/Celery worker and beat.",
+    "real_canary_run": false,
+    "real_canary_reason_not_run": "No explicitly selected safe runtime work item was provided for DIFF-150, and the task prohibits touching runtime/private data except through scoped canary verification.",
+    "verified_by_static_audit": [
+      "DIFF-149 live executor remains gated by --once, --canary-live, --canary-work-item ID, and IGY6_WORKER_LIVE_CANARY=DIFF-148",
+      "default igy6-worker --check and dry-run modes remain non-mutating",
+      "DIFF-149 implements one selected canary work item only",
+      "Docker Compose still runs Python/Celery worker and beat",
+      "No Rust worker long-running Compose service is wired",
+      "No beat/scheduler replacement or retirement is implemented"
+    ],
+    "side_effects_verified_without_live_runtime_data": [
+      "CLI canary gates",
+      "safe non-mutating default status output",
+      "SQL claim plan includes FOR UPDATE SKIP LOCKED",
+      "artifact path safety tests reject absolute and traversal paths",
+      "Qdrant HTTP-origin boundary tests reject non-http and path-bearing origins",
+      "worker tests cover canary result side-effect shape"
+    ],
+    "side_effects_not_verified_against_real_canary": [
+      "PostgreSQL claim/write effects on a real selected work_items row",
+      "audit_events rows observed after a real selected canary",
+      "artifact bytes read from a real selected canary under IGY6_DATA_ROOT",
+      "normalized_documents writes from a real collection_normalization canary",
+      "chunks and evidence_items writes from a real document_chunking canary",
+      "Qdrant collection ensure and point upsert from a real chunk_vector_upsert canary",
+      "chunk embedding_status and metadata updates after a real Qdrant upsert",
+      "failure rollback posture against live runtime data"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "no controlled real canary work item has been run and audited",
+      "Rust worker is still not wired as a long-running worker process in Docker Compose",
+      "broad queue polling remains out of scope",
+      "only one explicitly selected canary work item is supported",
+      "beat/scheduler posture has not been replaced or formally retired",
+      "production rollback procedure after Rust worker ownership is not yet verified"
+    ],
+    "next_recommended_diff": "DIFF-151 controlled Rust worker canary run and observed side-effect audit"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -425,7 +475,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-149 adds a gated one-job Rust live side-effect canary, but broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-150 decides cutover is not ready because no controlled real Rust canary was run and broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -836,7 +886,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-149 because Rust live execution is limited to an explicit one-job canary and beat/scheduler posture is not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-150 because no controlled real Rust canary was run and beat/scheduler posture is not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
