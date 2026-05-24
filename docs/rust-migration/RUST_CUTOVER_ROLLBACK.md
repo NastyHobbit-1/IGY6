@@ -8,6 +8,10 @@ cutover audit: the active API path is Rust-native, FastAPI fallback is removed,
 and Python/Celery `worker` and `beat` remain active. The cutover checks remain
 non-destructive: they do not delete files, do not touch runtime/private data,
 and do not move `.env` files.
+DIFF-162 reviewed production worker replacement and decided not to replace the
+Python/Celery worker yet because the Rust worker live loop is still canary-only
+and intentionally bounded. The production worker rollback posture is therefore
+unchanged.
 
 ## Current Cutover State
 
@@ -17,8 +21,9 @@ and do not move `.env` files.
 - Legacy FastAPI API source is archived at
   `archive/legacy-python/services-api`.
 - Python/Celery worker services remain active from `services/worker`.
+- The DIFF-161 Rust worker Compose override is canary-only.
 - Full Rust-only repository or runtime operation is not claimed while worker
-  execution parity remains unimplemented and unverified.
+  production ownership remains unresolved.
 
 ## Rollback Expectations
 
@@ -38,6 +43,12 @@ The expected rollback path is:
 Do not move runtime data into the repository during rollback. Do not archive or
 delete governance files, `docs/diffs/`, `docs/agents/`, `.env`, storage roots,
 or external data roots.
+
+If a future DIFF replaces the production `worker` service with Rust, rollback
+must restore the Python/Celery `worker` service definition from
+`services/worker`, restore or explicitly retain the `beat` posture, validate
+Compose, and only then restart the stack. DIFF-162 performs no such production
+replacement, so the current rollback is to keep the base Compose file as-is.
 
 ## Manual Verification Points
 

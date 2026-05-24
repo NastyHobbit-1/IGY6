@@ -182,6 +182,14 @@ runs the bounded `--canary-loop` with `max_jobs=3`, `max_idle_polls=1`,
 wiring; scheduler/beat posture and production worker replacement remain
 deferred.
 
+DIFF-162 decides production worker cutover is not safe yet. The current Rust
+live loop is still a canary mode, requires `IGY6_WORKER_PROCESS_CANARY=DIFF-159`,
+and intentionally exits after bounded job or idle budgets. No production Rust
+daemon mode, retry/backoff posture, worker health/readiness posture, or
+production rollback verification exists yet. No repo-defined Celery beat
+schedule was found, but `beat` remains active because the Python/Celery worker
+runtime remains active. Full Rust-only runtime is not claimed.
+
 ## Pipeline
 
 ```text

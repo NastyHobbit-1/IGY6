@@ -95,6 +95,14 @@ local startup still runs the Python/Celery `worker` and `beat`. The canary
 service must be targeted explicitly with synthetic canary environment values,
 bounded `--canary-loop` flags, and `IGY6_WORKER_PROCESS_CANARY=DIFF-159`.
 Full Rust-only runtime is still not claimed.
+DIFF-162 decides production worker replacement is not safe yet. The current
+Rust worker live loop is still canary-only, requires
+`IGY6_WORKER_PROCESS_CANARY=DIFF-159`, and intentionally exits after bounded
+`max_jobs` or `max_idle_polls`. Replacing the production Celery worker with that
+bounded canary process would leave production worker ownership incomplete.
+`services/worker/app/celery_app.py` defines no repo beat schedule, but `beat`
+is retained because production worker ownership was not replaced. Full
+Rust-only runtime is still not claimed.
 
 Current web-used route parity is tracked by:
 

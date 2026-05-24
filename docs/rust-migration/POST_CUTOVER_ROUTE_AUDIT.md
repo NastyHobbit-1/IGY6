@@ -232,6 +232,16 @@ and Qdrant services plus an explicit synthetic data root. Base
 remain active. Rollback is to stop and remove only `rust-worker-canary`; full
 Rust-only runtime is not claimed.
 
+DIFF-162 decision: B, production Rust worker replacement is not safe yet.
+`infra/docker-compose.yml` remains unchanged: production `worker` still runs
+Celery from `services/worker`, and `beat` still runs Celery beat. The blocker is
+that the Rust live loop remains canary-only, requires
+`IGY6_WORKER_PROCESS_CANARY=DIFF-159`, and exits by design after bounded
+`max_jobs` or `max_idle_polls`; it is not a production daemon. No repo-defined
+Celery beat schedule was found, but beat is retained because production
+Python/Celery worker ownership was not replaced. Full Rust-only runtime is not
+claimed.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

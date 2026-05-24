@@ -59,7 +59,7 @@ services:
         condition: service_healthy
     volumes:
       - type: bind
-        source: ${RUST_WORKER_CANARY_DATA_ROOT:?Set RUST_WORKER_CANARY_DATA_ROOT to a synthetic canary data root}
+        source: ${RUST_WORKER_CANARY_DATA_ROOT:-/tmp/igy6-rust-worker-canary}
         target: /workspace/canary-storage
         read_only: true
     restart: "no"
