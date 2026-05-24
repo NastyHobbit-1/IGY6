@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-160"
+    "next_required_diff": "DIFF-161"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
+    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
+    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -861,7 +861,84 @@
       "scheduler/beat replacement or retirement must be decided",
       "rollback from Rust worker ownership back to Python/Celery must be documented"
     ],
-    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
+    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
+  },
+  "live_bounded_rust_worker_process_loop_canary": {
+    "diff": "DIFF-160",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A live bounded Rust --canary-loop process-loop canary was implemented and run against isolated synthetic PostgreSQL, synthetic IGY6_DATA_ROOT, and isolated local Qdrant. It processed three synthetic chained jobs and exited cleanly at max_jobs.",
+    "live_process_loop_canary_run": true,
+    "loop_command": "env DATABASE_URL=postgresql://igy6:diff160-local@127.0.0.1:55437/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff160-canary QDRANT_URL=http://127.0.0.1:16335 QDRANT_CHUNK_COLLECTION=igy6_diff160_chunks QDRANT_CHUNK_VECTOR_SIZE=384 IGY6_WORKER_PROCESS_CANARY=DIFF-159 cargo run -p igy6-worker -- --canary-loop --max-jobs 3 --max-idle-polls 1 --claim-limit 1 --poll-interval-ms 100",
+    "loop_bounds": {
+      "max_jobs": 3,
+      "max_idle_polls": 1,
+      "claim_limit": 1,
+      "poll_interval_ms": 100
+    },
+    "loop_result": {
+      "status": "process_canary_exited_cleanly",
+      "result_state": "completed",
+      "exit_reason": "max_jobs reached",
+      "jobs_attempted": 3,
+      "jobs_completed": 3,
+      "jobs_failed": 0,
+      "idle_polls": 0
+    },
+    "fixture": {
+      "type": "collection_normalization synthetic chain",
+      "sql_command": "scripts/rust-worker-canary-fixture.py --fixture collection_normalization --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff160-canary.sql",
+      "artifact_command": "scripts/rust-worker-canary-fixture.py --fixture collection_normalization --write-artifact --data-root /tmp/igy6-diff160-canary",
+      "postgres": "isolated docker postgres container igy6-diff160-postgres on 127.0.0.1:55437; stopped after observation",
+      "qdrant": "isolated docker qdrant container igy6-diff160-qdrant on 127.0.0.1:16335; stopped after observation"
+    },
+    "observed_work_items": [
+      "diff-152-canary-work-item collection_normalization completed",
+      "work-item-18b270d674236f6e-1 document_chunking completed",
+      "work-item-18b270d674cbd7a1-4 chunk_vector_upsert completed"
+    ],
+    "observed_audit_events": [
+      "rust_worker_canary_fixture.selected",
+      "work_item.claimed for each processed work item",
+      "work_item.started for each processed work item",
+      "work_item.created for chained work items",
+      "collection_normalization.completed",
+      "document_chunks.generated",
+      "chunk_vectors.upserted"
+    ],
+    "observed_postgresql_side_effects": [
+      "one normalized_documents row document-18b270d6741271aa-0",
+      "one chunks row chunk-18b270d674b4bf85-2 with embedding_status completed",
+      "one evidence_items row evidence-18b270d674b4c6f0-3",
+      "chunk metadata includes embedding_method local_hash_v1",
+      "chunk metadata includes vector_collection igy6_diff160_chunks"
+    ],
+    "observed_artifact_side_effects": [
+      "synthetic artifact read under /tmp/igy6-diff160-canary/artifacts"
+    ],
+    "observed_qdrant_side_effects": [
+      "collection igy6_diff160_chunks created",
+      "collection status green",
+      "vector size 384 and Cosine distance",
+      "points_count 1",
+      "point upsert returned HTTP 200",
+      "point scroll returned one point with chunk_id chunk-18b270d674b4bf85-2"
+    ],
+    "docker_compose_changed": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "Rust worker Dockerfile or Compose canary service is not added",
+      "side-by-side service-level canary without racing Python/Celery is not proven",
+      "Rust worker service health/readiness behavior is not defined",
+      "production rollback from Rust worker ownership to Python/Celery is not proven",
+      "scheduler/beat replacement or retirement is not decided"
+    ],
+    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -874,7 +951,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-159 adds only a non-mutating Rust --canary-loop process-ownership plan. Live process-loop execution, Compose worker replacement, and scheduler/beat replacement or retirement are still deferred."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-160 proves one isolated bounded Rust process-loop canary, but Compose worker replacement, service-level side-by-side canary, rollback, and scheduler/beat replacement or retirement are still deferred."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -1285,7 +1362,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-159 because the new Rust --canary-loop path is non-mutating planning only; live process-loop execution, Compose cutover, production retry/shutdown behavior, and beat/scheduler posture are not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-160 because the bounded Rust process-loop canary only ran in isolated synthetic services; Compose cutover, service-level side-by-side canary, rollback, and beat/scheduler posture are not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

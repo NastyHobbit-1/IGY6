@@ -368,6 +368,29 @@ pub struct WorkerLiveCanaryResult {
     pub output_json: Value,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerProcessCanaryResult {
+    pub service: &'static str,
+    pub diff: &'static str,
+    pub mode: &'static str,
+    pub status: String,
+    pub result_state: String,
+    pub mutates_runtime_data: bool,
+    pub live_execution_enabled: bool,
+    pub max_jobs: usize,
+    pub max_idle_polls: usize,
+    pub claim_limit: usize,
+    pub poll_interval_ms: u64,
+    pub jobs_attempted: usize,
+    pub jobs_completed: usize,
+    pub jobs_failed: usize,
+    pub idle_polls: usize,
+    pub exit_reason: String,
+    pub job_results: Vec<WorkerLiveCanaryResult>,
+    pub side_effects_executed: Vec<String>,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerCanaryPlan {
     pub work_item_id: String,
@@ -402,7 +425,7 @@ pub struct WorkerProcessCanaryPlan {
 }
 
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-loop      DIFF-159 process-ownership canary plan; bounded and non-mutating in this DIFF.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-159 safety: default mode is non-mutating, canary-loop is bounded and non-mutating, canary-live is one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-loop      DIFF-160 process-loop canary; live only with explicit env gate and bounded limits.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-160 safety: default mode is non-mutating, canary-loop requires IGY6_WORKER_PROCESS_CANARY=DIFF-159 and bounded limits, canary-live is one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -702,7 +725,7 @@ pub fn render_worker_runtime_status(
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-159",
+        "diff": "DIFF-160",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
@@ -780,6 +803,50 @@ pub fn render_worker_live_canary_result(
     })
 }
 
+pub fn render_worker_process_canary_result(
+    result: &WorkerProcessCanaryResult,
+    config: &WorkerRuntimeConfig,
+) -> Value {
+    json!({
+        "service": result.service,
+        "diff": result.diff,
+        "mode": result.mode,
+        "status": result.status,
+        "result_state": result.result_state,
+        "mutates_runtime_data": result.mutates_runtime_data,
+        "live_execution_enabled": result.live_execution_enabled,
+        "python_celery_worker_required": true,
+        "python_celery_beat_required": true,
+        "rust_only_runtime_claimed": false,
+        "max_jobs": result.max_jobs,
+        "max_idle_polls": result.max_idle_polls,
+        "claim_limit": result.claim_limit,
+        "poll_interval_ms": result.poll_interval_ms,
+        "jobs_attempted": result.jobs_attempted,
+        "jobs_completed": result.jobs_completed,
+        "jobs_failed": result.jobs_failed,
+        "idle_polls": result.idle_polls,
+        "exit_reason": result.exit_reason,
+        "qdrant_chunk_collection": config.qdrant_chunk_collection,
+        "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
+        "database_url_configured": !config.database_url.trim().is_empty(),
+        "qdrant_url_configured": !config.qdrant_url.trim().is_empty(),
+        "igy6_data_root_configured": !config.igy6_data_root.trim().is_empty(),
+        "side_effects_executed": result.side_effects_executed,
+        "error_message": result.error_message,
+        "jobs": result.job_results.iter().map(|job| json!({
+            "work_item_id": job.work_item_id,
+            "work_type": job.work_type,
+            "result_state": job.result_state,
+            "status": job.status,
+            "side_effects_executed": job.side_effects_executed,
+            "side_effects_planned": job.side_effects_planned,
+            "error_message": job.error_message,
+            "output": job.output_json,
+        })).collect::<Vec<Value>>(),
+    })
+}
+
 pub fn execute_worker_live_canary(
     args: &WorkerRuntimeArgs,
     config: &WorkerRuntimeConfig,
@@ -801,6 +868,108 @@ pub fn execute_worker_live_canary(
     })?;
     let validated_config = validate_worker_runtime_config(config.clone())?;
     execute_worker_live_canary_inner(work_item_id, &validated_config)
+}
+
+pub fn execute_worker_process_canary(
+    args: &WorkerRuntimeArgs,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerProcessCanaryResult, WorkerRuntimeError> {
+    if !matches!(args.mode, WorkerRuntimeMode::CanaryLoop) {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "process canary execution requires --canary-loop".to_string(),
+        ));
+    }
+    if args.canary_live || args.canary_work_item_id.is_some() {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "--canary-loop must not be combined with --canary-live or --canary-work-item"
+                .to_string(),
+        ));
+    }
+    if !config.process_canary_enabled {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "process canary execution requires IGY6_WORKER_PROCESS_CANARY=DIFF-159".to_string(),
+        ));
+    }
+    let validated_config = validate_worker_runtime_config(config.clone())?;
+    execute_worker_process_canary_inner(&validated_config)
+}
+
+fn execute_worker_process_canary_inner(
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerProcessCanaryResult, WorkerRuntimeError> {
+    let postgres_url = postgres_client_url(&config.database_url);
+    let mut client = Client::connect(&postgres_url, NoTls).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("failed to connect to PostgreSQL: {error}"))
+    })?;
+
+    let mut jobs = Vec::new();
+    let mut idle_polls = 0usize;
+    let mut exit_reason = "max_jobs reached".to_string();
+
+    while jobs.len() < config.max_jobs {
+        let Some(claimed) = claim_next_process_canary_work_item(&mut client, config.claim_limit)?
+        else {
+            idle_polls += 1;
+            if idle_polls >= config.max_idle_polls {
+                exit_reason = "max_idle_polls reached".to_string();
+                break;
+            }
+            continue;
+        };
+
+        let job = execute_claimed_work_item(&mut client, claimed, config)?;
+        let failed = job.result_state == "failed";
+        jobs.push(job);
+        if failed {
+            exit_reason = "job_failed".to_string();
+            break;
+        }
+    }
+
+    if jobs.len() >= config.max_jobs {
+        exit_reason = "max_jobs reached".to_string();
+    }
+
+    let jobs_completed = jobs
+        .iter()
+        .filter(|job| job.result_state == "completed")
+        .count();
+    let jobs_failed = jobs
+        .iter()
+        .filter(|job| job.result_state == "failed")
+        .count();
+    let mut side_effects = BTreeSet::new();
+    for job in &jobs {
+        for effect in &job.side_effects_executed {
+            side_effects.insert(effect.clone());
+        }
+    }
+
+    Ok(WorkerProcessCanaryResult {
+        service: "igy6-worker",
+        diff: "DIFF-160",
+        mode: "canary-loop",
+        status: "process_canary_exited_cleanly".to_string(),
+        result_state: if jobs_failed == 0 {
+            "completed".to_string()
+        } else {
+            "failed".to_string()
+        },
+        mutates_runtime_data: !jobs.is_empty(),
+        live_execution_enabled: true,
+        max_jobs: config.max_jobs,
+        max_idle_polls: config.max_idle_polls,
+        claim_limit: config.claim_limit,
+        poll_interval_ms: config.poll_interval_ms,
+        jobs_attempted: jobs.len(),
+        jobs_completed,
+        jobs_failed,
+        idle_polls,
+        exit_reason,
+        job_results: jobs,
+        side_effects_executed: side_effects.into_iter().collect(),
+        error_message: None,
+    })
 }
 
 fn execute_worker_live_canary_inner(
@@ -825,15 +994,23 @@ fn execute_worker_live_canary_inner(
         ));
     };
 
+    execute_claimed_work_item(&mut client, claimed, config)
+}
+
+fn execute_claimed_work_item(
+    client: &mut Client,
+    claimed: ClaimedWorkItem,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
     let execution = match claimed.task_kind {
         WorkerTaskKind::CollectionNormalization => {
-            execute_collection_normalization_canary(&mut client, &claimed, config)
+            execute_collection_normalization_canary(client, &claimed, config)
         }
         WorkerTaskKind::DocumentChunking => {
-            execute_document_chunking_canary(&mut client, &claimed, config)
+            execute_document_chunking_canary(client, &claimed, config)
         }
         WorkerTaskKind::ChunkVectorUpsert => {
-            execute_chunk_vector_upsert_canary(&mut client, &claimed, config)
+            execute_chunk_vector_upsert_canary(client, &claimed, config)
         }
     };
 
@@ -852,7 +1029,7 @@ fn execute_worker_live_canary_inner(
         }
         Err(error) => {
             let error_message = error.to_string();
-            mark_canary_failed(&mut client, &claimed, &error_message)?;
+            mark_canary_failed(client, &claimed, &error_message)?;
             Ok(live_result(
                 &claimed.work_item_id,
                 Some(claimed.task_kind.work_type().to_string()),
@@ -942,6 +1119,84 @@ fn claim_one_canary_work_item(
         json!({
             "work_type": claim_plan.work_type,
             "generated_by": "DIFF-149",
+        }),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    Ok(Some(ClaimedWorkItem {
+        work_item_id: claim_plan.work_item_id,
+        task_kind: WorkerTaskKind::from_work_type(&claim_plan.work_type).expect("validated"),
+        requested_by_actor_id: candidate.requested_by_actor_id,
+        payload_json: candidate.payload_json,
+    }))
+}
+
+fn claim_next_process_canary_work_item(
+    client: &mut Client,
+    claim_limit: usize,
+) -> Result<Option<ClaimedWorkItem>, WorkerRuntimeError> {
+    let query_plan = queue_claim_query_plan(claim_limit)
+        .map_err(|error| WorkerRuntimeError::InvalidClaimLimit(error.to_string()))?;
+    let allowed_work_types = query_plan
+        .allowed_work_types
+        .iter()
+        .map(|work_type| work_type.to_string())
+        .collect::<Vec<_>>();
+    let mut transaction = client.transaction().map_err(live_error)?;
+    let row = transaction
+        .query_opt(
+            "SELECT id, work_type, status, requested_by_actor_id, payload_json FROM work_items WHERE status = 'queued' AND work_type = ANY($1) ORDER BY created_at ASC, id ASC FOR UPDATE SKIP LOCKED LIMIT 1",
+            &[&allowed_work_types],
+        )
+        .map_err(live_error)?;
+    let Some(row) = row else {
+        transaction.commit().map_err(live_error)?;
+        return Ok(None);
+    };
+    let candidate = QueueClaimCandidate {
+        id: row.get("id"),
+        work_type: row.get("work_type"),
+        status: row.get("status"),
+        requested_by_actor_id: row.get("requested_by_actor_id"),
+        payload_json: row.get("payload_json"),
+    };
+    let claim_plan = plan_queue_claim(candidate.clone(), &candidate.requested_by_actor_id)
+        .map_err(|error| {
+            WorkerRuntimeError::LiveExecution(format!("process canary claim rejected: {error}"))
+        })?;
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1 AND status = 'queued'",
+            &[&claim_plan.work_item_id],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &candidate.requested_by_actor_id,
+        "work_item.claimed",
+        "running",
+        "work_item",
+        &claim_plan.work_item_id,
+        &claim_plan.work_item_id,
+        json!({
+            "work_type": claim_plan.work_type,
+            "task_name": claim_plan.task_name,
+            "generated_by": "DIFF-160",
+            "claim_mode": "process_canary_loop",
+        }),
+    )?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &candidate.requested_by_actor_id,
+        "work_item.started",
+        "running",
+        "work_item",
+        &claim_plan.work_item_id,
+        &claim_plan.work_item_id,
+        json!({
+            "work_type": claim_plan.work_type,
+            "generated_by": "DIFF-160",
+            "claim_mode": "process_canary_loop",
         }),
     )?;
     transaction.commit().map_err(live_error)?;
@@ -3356,6 +3611,50 @@ mod tests {
         assert_eq!(status["process_canary"]["max_jobs"], json!(4));
         assert_eq!(status["process_canary"]["side_effects_executed"], json!([]));
         assert_eq!(status["python_celery_beat_required"], json!(true));
+    }
+
+    #[test]
+    fn process_canary_result_reports_bounds_exit_and_jobs() {
+        let config = WorkerRuntimeConfig::safe_default();
+        let result = WorkerProcessCanaryResult {
+            service: "igy6-worker",
+            diff: "DIFF-160",
+            mode: "canary-loop",
+            status: "process_canary_exited_cleanly".to_string(),
+            result_state: "completed".to_string(),
+            mutates_runtime_data: true,
+            live_execution_enabled: true,
+            max_jobs: 3,
+            max_idle_polls: 1,
+            claim_limit: 1,
+            poll_interval_ms: 100,
+            jobs_attempted: 1,
+            jobs_completed: 1,
+            jobs_failed: 0,
+            idle_polls: 0,
+            exit_reason: "max_jobs reached".to_string(),
+            job_results: vec![live_result(
+                "work-1",
+                Some("collection_normalization".to_string()),
+                "completed",
+                true,
+                vec!["postgres_work_item_claim".to_string()],
+                vec![],
+                None,
+                json!({}),
+            )],
+            side_effects_executed: vec!["postgres_work_item_claim".to_string()],
+            error_message: None,
+        };
+        let rendered = render_worker_process_canary_result(&result, &config);
+
+        assert_eq!(rendered["diff"], json!("DIFF-160"));
+        assert_eq!(rendered["mode"], json!("canary-loop"));
+        assert_eq!(rendered["max_jobs"], json!(3));
+        assert_eq!(rendered["jobs_completed"], json!(1));
+        assert_eq!(rendered["exit_reason"], json!("max_jobs reached"));
+        assert_eq!(rendered["rust_only_runtime_claimed"], json!(false));
+        assert_eq!(rendered["jobs"][0]["work_item_id"], json!("work-1"));
     }
 
     #[test]

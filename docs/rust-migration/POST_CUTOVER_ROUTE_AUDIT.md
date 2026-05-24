@@ -209,6 +209,18 @@ does not change Docker Compose, and does not replace or retire beat. The next
 required step is an isolated live process-loop canary that proves repeated
 bounded claim/execution/shutdown behavior without racing Python/Celery.
 
+DIFF-160 decision: A, live bounded Rust worker process-loop canary was
+implemented and run against isolated synthetic PostgreSQL, synthetic
+`IGY6_DATA_ROOT=/tmp/igy6-diff160-canary`, and isolated local Qdrant. The exact
+loop bounds were `max_jobs=3`, `max_idle_polls=1`, `claim_limit=1`, and
+`poll_interval_ms=100`. The loop processed `collection_normalization`, chained
+`document_chunking`, and chained `chunk_vector_upsert`, then exited cleanly at
+`max_jobs`. Observed side effects include three completed work items,
+claim/start/success audit rows, one normalized document, one chunk, one
+evidence item, chunk embedding metadata, Qdrant collection ensure, and one
+Qdrant point. Docker Compose was not changed; Python/Celery `worker` and
+`beat` remain active, and full Rust-only runtime is not claimed.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

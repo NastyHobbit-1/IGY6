@@ -160,6 +160,17 @@ does not connect to PostgreSQL, claim queued jobs, read artifacts, write audit
 events, call Qdrant, control Celery, replace Docker Compose worker ownership, or
 replace/retire beat. Scheduler/beat posture remains deferred.
 
+DIFF-160 implements and runs the live bounded `--canary-loop` against isolated
+synthetic services only. With `max_jobs=3`, `max_idle_polls=1`, `claim_limit=1`,
+and `poll_interval_ms=100`, the loop processes the synthetic
+`collection_normalization`, chained `document_chunking`, and chained
+`chunk_vector_upsert` work items, then exits cleanly at `max_jobs`. Observed
+side effects include completed work items, claim/start/success audit events,
+one normalized document, one chunk, one evidence item, chunk embedding metadata,
+Qdrant collection ensure, and one Qdrant point. Python/Celery `worker` and
+`beat` remain active because Compose worker service ownership, rollback, and
+scheduler posture are not cut over.
+
 ## Pipeline
 
 ```text

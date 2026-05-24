@@ -79,6 +79,15 @@ and bounded `--max-jobs`, `--max-idle-polls`, `--claim-limit`, and
 `--poll-interval-ms` settings. The DIFF-159 loop mode is still non-mutating:
 it does not claim queued work, connect to PostgreSQL, write audits, call
 Qdrant, replace Compose worker ownership, or replace/retire beat.
+DIFF-160 implements and runs the live bounded `--canary-loop` against isolated
+synthetic PostgreSQL, synthetic `/tmp/igy6-diff160-canary`, and isolated local
+Qdrant. The loop uses `max_jobs=3`, `max_idle_polls=1`, `claim_limit=1`, and
+`poll_interval_ms=100`; it processes the synthetic
+`collection_normalization -> document_chunking -> chunk_vector_upsert` chain,
+writes DB/audit rows, reads the synthetic artifact, upserts one Qdrant point,
+and exits cleanly at `max_jobs`. Python/Celery `worker` and `beat` remain
+active because Compose service ownership, side-by-side canary deployment,
+rollback, and scheduler posture are not cut over.
 
 Current web-used route parity is tracked by:
 
@@ -325,6 +334,9 @@ scheduler replacement/retirement.
 DIFF-159 adds the bounded `--canary-loop` planning mode for a future process
 ownership canary, but live loop execution and scheduler/beat replacement remain
 for later DIFFs.
+DIFF-160 runs the bounded live process-loop canary once in isolated synthetic
+services and observes three completed work items, audit events, one normalized
+document, one chunk/evidence item, and one Qdrant point.
 
 Check worker/processing status:
 
