@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-159"
+    "next_required_diff": "DIFF-160"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-159 Rust worker process ownership canary and scheduler beat posture"
+    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-159 Rust worker process ownership canary and scheduler beat posture"
+    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -798,7 +798,70 @@
     ],
     "python_celery_worker_required_reason": "Production live processing still needs a long-running worker process that owns queue polling, retries, shutdown behavior, and repeated execution. Rust has proven only isolated one-item canary execution for covered job families.",
     "python_celery_beat_required_reason": "DIFF-141 found no repo-defined beat schedule, but scheduler posture has not been replaced or formally retired. Removing beat is deferred until a DIFF explicitly resolves scheduled work ownership.",
-    "next_recommended_diff": "DIFF-159 Rust worker process ownership canary and scheduler beat posture"
+    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
+  },
+  "rust_worker_process_ownership_canary_scheduler_beat_posture": {
+    "diff": "DIFF-159",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A non-default Rust process ownership canary planning mode was added. It is bounded, explicitly acknowledged, and non-mutating in DIFF-159; Python/Celery worker and beat remain active.",
+    "rust_process_ownership_canary_added": true,
+    "runtime_mode_added": "--canary-loop",
+    "runtime_mode_default": false,
+    "runtime_mode_mutates_runtime_data": false,
+    "live_loop_execution_enabled": false,
+    "safety_gates_required": [
+      "--canary-loop",
+      "IGY6_WORKER_PROCESS_CANARY=DIFF-159",
+      "bounded --max-jobs",
+      "bounded --max-idle-polls",
+      "bounded --claim-limit",
+      "bounded --poll-interval-ms"
+    ],
+    "bounds": {
+      "max_jobs": "1..16",
+      "max_idle_polls": "0..16",
+      "claim_limit": "1..16",
+      "poll_interval_ms": "100..60000"
+    },
+    "structured_output": [
+      "process_canary.mode",
+      "process_canary.status",
+      "process_canary.max_jobs",
+      "process_canary.claim_limit",
+      "process_canary.max_idle_polls",
+      "process_canary.poll_interval_ms",
+      "process_canary.stop_conditions",
+      "process_canary.safety_gates",
+      "process_canary.scheduler_beat_posture",
+      "process_canary.side_effects_executed",
+      "process_canary.side_effects_planned"
+    ],
+    "stop_conditions": [
+      "max_jobs reached",
+      "max_idle_polls reached",
+      "fatal validation error",
+      "external shutdown signal requested"
+    ],
+    "scheduler_beat_posture": "retained; replacement or retirement deferred",
+    "docker_compose_changed": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "live --canary-loop executor still needs to claim queued supported work without a named canary work item",
+      "bounded repeated processing must be proven against isolated synthetic data",
+      "graceful shutdown and in-flight job behavior must be observed",
+      "retry/backoff behavior must be implemented and observed",
+      "Rust worker Dockerfile or Compose canary service must be added before service replacement",
+      "side-by-side canary operation must avoid racing Python/Celery",
+      "scheduler/beat replacement or retirement must be decided",
+      "rollback from Rust worker ownership back to Python/Celery must be documented"
+    ],
+    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -811,7 +874,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-158 decides process cutover is not ready because Rust lacks a long-running worker daemon, generic live queue polling, production retry/shutdown posture, Compose worker wiring, and scheduler/beat replacement or retirement."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-159 adds only a non-mutating Rust --canary-loop process-ownership plan. Live process-loop execution, Compose worker replacement, and scheduler/beat replacement or retirement are still deferred."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -1222,7 +1285,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-158 because isolated one-item Rust canaries have succeeded but long-running Rust worker ownership, Compose cutover, production retry/shutdown behavior, and beat/scheduler posture are not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-159 because the new Rust --canary-loop path is non-mutating planning only; live process-loop execution, Compose cutover, production retry/shutdown behavior, and beat/scheduler posture are not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

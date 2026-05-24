@@ -73,6 +73,12 @@ one explicitly selected work item at a time, but there is no long-running Rust
 worker daemon, generic live queue polling loop, production retry/backoff and
 shutdown posture, Rust worker Compose service, or scheduler/beat replacement
 decision. Docker Compose still runs Python/Celery `worker` and `beat`.
+DIFF-159 adds a non-default `--canary-loop` Rust worker process-ownership
+canary plan with explicit `IGY6_WORKER_PROCESS_CANARY=DIFF-159` acknowledgement
+and bounded `--max-jobs`, `--max-idle-polls`, `--claim-limit`, and
+`--poll-interval-ms` settings. The DIFF-159 loop mode is still non-mutating:
+it does not claim queued work, connect to PostgreSQL, write audits, call
+Qdrant, replace Compose worker ownership, or replace/retire beat.
 
 Current web-used route parity is tracked by:
 
@@ -316,6 +322,9 @@ were stored, and chunk embedding metadata/status updates were observed.
 DIFF-158 retains Python/Celery worker and beat because Rust has not yet proven
 long-running worker process ownership, broad queue polling, Compose cutover, or
 scheduler replacement/retirement.
+DIFF-159 adds the bounded `--canary-loop` planning mode for a future process
+ownership canary, but live loop execution and scheduler/beat replacement remain
+for later DIFFs.
 
 Check worker/processing status:
 

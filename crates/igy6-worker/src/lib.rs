@@ -62,7 +62,11 @@ pub const DEFAULT_QDRANT_CHUNK_COLLECTION: &str = "igy6_chunks";
 pub const DEFAULT_QDRANT_CHUNK_VECTOR_SIZE: usize = 384;
 pub const DEFAULT_WORKER_CLAIM_LIMIT: usize = 1;
 pub const DEFAULT_WORKER_POLL_INTERVAL_MS: u64 = 1000;
+pub const DEFAULT_WORKER_MAX_JOBS: usize = 2;
+pub const DEFAULT_WORKER_MAX_IDLE_POLLS: usize = 1;
 pub const MAX_WORKER_CLAIM_LIMIT: usize = 16;
+pub const MAX_WORKER_PROCESS_CANARY_JOBS: usize = 16;
+pub const MAX_WORKER_IDLE_POLLS: usize = 16;
 pub const MIN_WORKER_POLL_INTERVAL_MS: u64 = 100;
 pub const MAX_WORKER_POLL_INTERVAL_MS: u64 = 60000;
 static GENERATED_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -215,11 +219,12 @@ pub fn plan_queue_claim(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerRuntimeMode {
     Check,
     DryRun,
     Once,
+    CanaryLoop,
     Help,
 }
 
@@ -229,6 +234,7 @@ impl WorkerRuntimeMode {
             Self::Check => "check",
             Self::DryRun => "dry-run",
             Self::Once => "once",
+            Self::CanaryLoop => "canary-loop",
             Self::Help => "help",
         }
     }
@@ -276,6 +282,8 @@ pub struct WorkerRuntimeArgs {
     pub mode: WorkerRuntimeMode,
     pub claim_limit: usize,
     pub poll_interval_ms: u64,
+    pub max_jobs: usize,
+    pub max_idle_polls: usize,
     pub explicit_live_execution: bool,
     pub canary_live: bool,
     pub canary_work_item_id: Option<String>,
@@ -287,6 +295,8 @@ impl Default for WorkerRuntimeArgs {
             mode: WorkerRuntimeMode::Check,
             claim_limit: DEFAULT_WORKER_CLAIM_LIMIT,
             poll_interval_ms: DEFAULT_WORKER_POLL_INTERVAL_MS,
+            max_jobs: DEFAULT_WORKER_MAX_JOBS,
+            max_idle_polls: DEFAULT_WORKER_MAX_IDLE_POLLS,
             explicit_live_execution: false,
             canary_live: false,
             canary_work_item_id: None,
@@ -303,7 +313,10 @@ pub struct WorkerRuntimeConfig {
     pub qdrant_chunk_vector_size: usize,
     pub claim_limit: usize,
     pub poll_interval_ms: u64,
+    pub max_jobs: usize,
+    pub max_idle_polls: usize,
     pub live_execution_enabled: bool,
+    pub process_canary_enabled: bool,
 }
 
 impl WorkerRuntimeConfig {
@@ -316,7 +329,10 @@ impl WorkerRuntimeConfig {
             qdrant_chunk_vector_size: DEFAULT_QDRANT_CHUNK_VECTOR_SIZE,
             claim_limit: DEFAULT_WORKER_CLAIM_LIMIT,
             poll_interval_ms: DEFAULT_WORKER_POLL_INTERVAL_MS,
+            max_jobs: DEFAULT_WORKER_MAX_JOBS,
+            max_idle_polls: DEFAULT_WORKER_MAX_IDLE_POLLS,
             live_execution_enabled: false,
+            process_canary_enabled: false,
         }
     }
 }
@@ -332,6 +348,7 @@ pub struct WorkerRuntimePlan {
     pub planned_steps: Vec<String>,
     pub blocked_side_effects: Vec<String>,
     pub canary_plan: Option<WorkerCanaryPlan>,
+    pub process_canary_plan: Option<WorkerProcessCanaryPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -369,8 +386,23 @@ pub struct WorkerSideEffectPlan {
     pub verification: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerProcessCanaryPlan {
+    pub mode: &'static str,
+    pub status: String,
+    pub max_jobs: usize,
+    pub claim_limit: usize,
+    pub max_idle_polls: usize,
+    pub poll_interval_ms: u64,
+    pub stop_conditions: Vec<&'static str>,
+    pub safety_gates: Vec<&'static str>,
+    pub scheduler_beat_posture: &'static str,
+    pub side_effects_executed: Vec<&'static str>,
+    pub side_effects_planned: Vec<&'static str>,
+}
+
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-149 safety: default mode is non-mutating, canary-live is explicit and one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-loop      DIFF-159 process-ownership canary plan; bounded and non-mutating in this DIFF.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-159 safety: default mode is non-mutating, canary-loop is bounded and non-mutating, canary-live is one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -386,6 +418,7 @@ where
             "--check" => parsed.mode = WorkerRuntimeMode::Check,
             "--dry-run" => parsed.mode = WorkerRuntimeMode::DryRun,
             "--once" => parsed.mode = WorkerRuntimeMode::Once,
+            "--canary-loop" => parsed.mode = WorkerRuntimeMode::CanaryLoop,
             "--canary-live" => {
                 parsed.canary_live = true;
                 parsed.explicit_live_execution = true;
@@ -418,6 +451,18 @@ where
                     ))?;
                 parsed.poll_interval_ms = parse_poll_interval_ms(value.as_ref())?;
             }
+            "--max-jobs" => {
+                let value = iterator
+                    .next()
+                    .ok_or(WorkerRuntimeError::MissingArgumentValue("--max-jobs"))?;
+                parsed.max_jobs = parse_max_jobs(value.as_ref())?;
+            }
+            "--max-idle-polls" => {
+                let value = iterator
+                    .next()
+                    .ok_or(WorkerRuntimeError::MissingArgumentValue("--max-idle-polls"))?;
+                parsed.max_idle_polls = parse_max_idle_polls(value.as_ref())?;
+            }
             other => return Err(WorkerRuntimeError::UnknownArgument(other.to_string())),
         }
     }
@@ -447,6 +492,11 @@ where
             "--canary-work-item requires --canary-live".to_string(),
         ));
     }
+    if matches!(parsed.mode, WorkerRuntimeMode::CanaryLoop) && parsed.canary_live {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "--canary-loop and --canary-live are separate canary modes".to_string(),
+        ));
+    }
     Ok(parsed)
 }
 
@@ -472,6 +522,16 @@ pub fn validate_worker_runtime_config(
     {
         return Err(WorkerRuntimeError::InvalidPollInterval(format!(
             "WORKER_POLL_INTERVAL_MS must be between {MIN_WORKER_POLL_INTERVAL_MS} and {MAX_WORKER_POLL_INTERVAL_MS}"
+        )));
+    }
+    if !(1..=MAX_WORKER_PROCESS_CANARY_JOBS).contains(&config.max_jobs) {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "WORKER_MAX_JOBS must be between 1 and {MAX_WORKER_PROCESS_CANARY_JOBS}"
+        )));
+    }
+    if config.max_idle_polls > MAX_WORKER_IDLE_POLLS {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "WORKER_MAX_IDLE_POLLS must be between 0 and {MAX_WORKER_IDLE_POLLS}"
         )));
     }
     Ok(config)
@@ -501,6 +561,12 @@ pub fn plan_worker_runtime(
             "build one-job claim UPDATE plan".to_string(),
             "stop before DB, artifact, audit, or Qdrant side effects".to_string(),
         ],
+        WorkerRuntimeMode::CanaryLoop => vec![
+            "validate DIFF-159 process canary bounds and explicit acknowledgement".to_string(),
+            "model repeated bounded queue polling for supported worker job families".to_string(),
+            "stop on max_jobs, max_idle_polls, fatal validation error, or external shutdown signal".to_string(),
+            "do not connect to PostgreSQL or mutate runtime data in DIFF-159".to_string(),
+        ],
     };
     let canary_plan = if args.canary_live {
         let work_item_id = args.canary_work_item_id.clone().ok_or_else(|| {
@@ -512,9 +578,20 @@ pub fn plan_worker_runtime(
     } else {
         None
     };
+    let process_canary_plan = if matches!(args.mode, WorkerRuntimeMode::CanaryLoop) {
+        Some(plan_worker_process_canary(&config))
+    } else {
+        None
+    };
     Ok(WorkerRuntimePlan {
         mode: args.mode,
-        status: if args.canary_live && config.live_execution_enabled {
+        status: if matches!(args.mode, WorkerRuntimeMode::CanaryLoop)
+            && config.process_canary_enabled
+        {
+            "process_canary_ready_non_mutating".to_string()
+        } else if matches!(args.mode, WorkerRuntimeMode::CanaryLoop) {
+            "process_canary_requires_IGY6_WORKER_PROCESS_CANARY_DIFF_159".to_string()
+        } else if args.canary_live && config.live_execution_enabled {
             "canary_live_ready".to_string()
         } else if args.canary_live {
             "canary_ready_side_effects_planned".to_string()
@@ -536,6 +613,7 @@ pub fn plan_worker_runtime(
             "arbitrary shell command execution".to_string(),
         ],
         canary_plan,
+        process_canary_plan,
     })
 }
 
@@ -579,13 +657,52 @@ pub fn plan_worker_canary(work_item_id: &str) -> WorkerCanaryPlan {
     }
 }
 
+pub fn plan_worker_process_canary(config: &WorkerRuntimeConfig) -> WorkerProcessCanaryPlan {
+    WorkerProcessCanaryPlan {
+        mode: "canary-loop",
+        status: if config.process_canary_enabled {
+            "ready_non_mutating".to_string()
+        } else {
+            "requires_IGY6_WORKER_PROCESS_CANARY_DIFF_159".to_string()
+        },
+        max_jobs: config.max_jobs,
+        claim_limit: config.claim_limit,
+        max_idle_polls: config.max_idle_polls,
+        poll_interval_ms: config.poll_interval_ms,
+        stop_conditions: vec![
+            "max_jobs reached",
+            "max_idle_polls reached",
+            "fatal validation error",
+            "external shutdown signal requested",
+        ],
+        safety_gates: vec![
+            "--canary-loop flag",
+            "IGY6_WORKER_PROCESS_CANARY=DIFF-159 acknowledgement",
+            "bounded --max-jobs",
+            "bounded --max-idle-polls",
+            "bounded --claim-limit",
+            "bounded --poll-interval-ms",
+            "Python/Celery worker remains production owner during canary planning",
+        ],
+        scheduler_beat_posture: "retained; replacement or retirement deferred",
+        side_effects_executed: Vec::new(),
+        side_effects_planned: vec![
+            "bounded queue polling",
+            "bounded live claim batches",
+            "covered job-family execution",
+            "structured loop status output",
+            "graceful shutdown observation",
+        ],
+    }
+}
+
 pub fn render_worker_runtime_status(
     plan: &WorkerRuntimePlan,
     config: &WorkerRuntimeConfig,
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-149",
+        "diff": "DIFF-159",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
@@ -594,6 +711,8 @@ pub fn render_worker_runtime_status(
         "python_celery_beat_required": true,
         "rust_only_runtime_claimed": false,
         "claim_limit": config.claim_limit,
+        "max_jobs": config.max_jobs,
+        "max_idle_polls": config.max_idle_polls,
         "poll_interval_ms": config.poll_interval_ms,
         "qdrant_chunk_collection": config.qdrant_chunk_collection,
         "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
@@ -603,6 +722,19 @@ pub fn render_worker_runtime_status(
         "allowed_work_types": plan.allowed_work_types,
         "planned_steps": plan.planned_steps,
         "blocked_side_effects": plan.blocked_side_effects,
+        "process_canary": plan.process_canary_plan.as_ref().map(|canary| json!({
+            "mode": canary.mode,
+            "status": canary.status,
+            "max_jobs": canary.max_jobs,
+            "claim_limit": canary.claim_limit,
+            "max_idle_polls": canary.max_idle_polls,
+            "poll_interval_ms": canary.poll_interval_ms,
+            "stop_conditions": canary.stop_conditions,
+            "safety_gates": canary.safety_gates,
+            "scheduler_beat_posture": canary.scheduler_beat_posture,
+            "side_effects_executed": canary.side_effects_executed,
+            "side_effects_planned": canary.side_effects_planned,
+        })),
         "canary": plan.canary_plan.as_ref().map(|canary| json!({
             "work_item_id": canary.work_item_id,
             "status": canary.status,
@@ -1588,6 +1720,30 @@ fn parse_poll_interval_ms(value: &str) -> Result<u64, WorkerRuntimeError> {
     if !(MIN_WORKER_POLL_INTERVAL_MS..=MAX_WORKER_POLL_INTERVAL_MS).contains(&parsed) {
         return Err(WorkerRuntimeError::InvalidPollInterval(format!(
             "poll interval must be between {MIN_WORKER_POLL_INTERVAL_MS} and {MAX_WORKER_POLL_INTERVAL_MS}, got {parsed}"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_max_jobs(value: &str) -> Result<usize, WorkerRuntimeError> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| WorkerRuntimeError::InvalidClaimLimit(format!("invalid max jobs: {value}")))?;
+    if !(1..=MAX_WORKER_PROCESS_CANARY_JOBS).contains(&parsed) {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "max jobs must be between 1 and {MAX_WORKER_PROCESS_CANARY_JOBS}, got {parsed}"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_max_idle_polls(value: &str) -> Result<usize, WorkerRuntimeError> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        WorkerRuntimeError::InvalidClaimLimit(format!("invalid max idle polls: {value}"))
+    })?;
+    if parsed > MAX_WORKER_IDLE_POLLS {
+        return Err(WorkerRuntimeError::InvalidClaimLimit(format!(
+            "max idle polls must be between 0 and {MAX_WORKER_IDLE_POLLS}, got {parsed}"
         )));
     }
     Ok(parsed)
@@ -3028,6 +3184,8 @@ mod tests {
         let args = parse_worker_runtime_args(Vec::<String>::new()).expect("args");
         assert_eq!(args.mode, WorkerRuntimeMode::Check);
         assert_eq!(args.claim_limit, 1);
+        assert_eq!(args.max_jobs, DEFAULT_WORKER_MAX_JOBS);
+        assert_eq!(args.max_idle_polls, DEFAULT_WORKER_MAX_IDLE_POLLS);
         assert!(!args.explicit_live_execution);
     }
 
@@ -3046,6 +3204,41 @@ mod tests {
         );
         assert!(parse_worker_runtime_args(["--claim-limit", "0"]).is_err());
         assert!(parse_worker_runtime_args(["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn process_canary_loop_args_are_bounded_and_separate_from_live_canary() {
+        let args = parse_worker_runtime_args([
+            "--canary-loop",
+            "--max-jobs",
+            "3",
+            "--max-idle-polls",
+            "2",
+            "--claim-limit",
+            "2",
+            "--poll-interval-ms",
+            "250",
+        ])
+        .expect("process canary args");
+
+        assert_eq!(args.mode, WorkerRuntimeMode::CanaryLoop);
+        assert_eq!(args.max_jobs, 3);
+        assert_eq!(args.max_idle_polls, 2);
+        assert_eq!(args.claim_limit, 2);
+        assert_eq!(args.poll_interval_ms, 250);
+        assert!(!args.explicit_live_execution);
+
+        assert!(parse_worker_runtime_args(["--canary-loop", "--max-jobs", "0"]).is_err());
+        assert!(parse_worker_runtime_args(["--canary-loop", "--max-idle-polls", "17"]).is_err());
+        assert!(matches!(
+            parse_worker_runtime_args([
+                "--canary-loop",
+                "--canary-live",
+                "--canary-work-item",
+                "work-1"
+            ]),
+            Err(WorkerRuntimeError::InvalidCanaryMode(_))
+        ));
     }
 
     #[test]
@@ -3123,6 +3316,46 @@ mod tests {
             .contains(&"Qdrant HTTP calls".to_string()));
         assert_eq!(status["rust_only_runtime_claimed"], json!(false));
         assert_eq!(status["python_celery_worker_required"], json!(true));
+    }
+
+    #[test]
+    fn process_canary_loop_plan_is_non_mutating_and_documents_stop_conditions() {
+        let args = parse_worker_runtime_args([
+            "--canary-loop",
+            "--max-jobs",
+            "4",
+            "--max-idle-polls",
+            "2",
+            "--claim-limit",
+            "2",
+        ])
+        .expect("process canary args");
+        let mut config = WorkerRuntimeConfig::safe_default();
+        config.max_jobs = args.max_jobs;
+        config.max_idle_polls = args.max_idle_polls;
+        config.claim_limit = args.claim_limit;
+        config.process_canary_enabled = true;
+        let plan = plan_worker_runtime(args, config.clone()).expect("plan");
+        let status = render_worker_runtime_status(&plan, &config);
+        let process_canary = plan.process_canary_plan.as_ref().expect("process canary");
+
+        assert_eq!(plan.status, "process_canary_ready_non_mutating");
+        assert_eq!(plan.mode, WorkerRuntimeMode::CanaryLoop);
+        assert!(!plan.mutates_runtime_data);
+        assert!(!plan.live_execution_enabled);
+        assert_eq!(process_canary.max_jobs, 4);
+        assert_eq!(process_canary.max_idle_polls, 2);
+        assert!(process_canary.stop_conditions.contains(&"max_jobs reached"));
+        assert!(process_canary
+            .safety_gates
+            .contains(&"IGY6_WORKER_PROCESS_CANARY=DIFF-159 acknowledgement"));
+        assert_eq!(
+            process_canary.scheduler_beat_posture,
+            "retained; replacement or retirement deferred"
+        );
+        assert_eq!(status["process_canary"]["max_jobs"], json!(4));
+        assert_eq!(status["process_canary"]["side_effects_executed"], json!([]));
+        assert_eq!(status["python_celery_beat_required"], json!(true));
     }
 
     #[test]

@@ -199,6 +199,16 @@ scheduler/beat replacement or retirement. Docker Compose was not changed:
 Python/Celery `worker` and `beat` remain active, and full Rust-only runtime is
 not claimed.
 
+DIFF-159 decision: A, Rust process ownership canary planning was added. The
+worker binary now accepts `--canary-loop` with bounded `--max-jobs`,
+`--max-idle-polls`, `--claim-limit`, and `--poll-interval-ms`, plus
+`IGY6_WORKER_PROCESS_CANARY=DIFF-159` acknowledgement. This is still not live
+production worker ownership: DIFF-159 does not claim queued work, does not run
+the loop against PostgreSQL, does not write audit rows, does not call Qdrant,
+does not change Docker Compose, and does not replace or retire beat. The next
+required step is an isolated live process-loop canary that proves repeated
+bounded claim/execution/shutdown behavior without racing Python/Celery.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

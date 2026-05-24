@@ -49,8 +49,13 @@ fn config_from_env(args: &igy6_worker::WorkerRuntimeArgs) -> Result<WorkerRuntim
         )?,
         claim_limit: args.claim_limit,
         poll_interval_ms: args.poll_interval_ms,
+        max_jobs: args.max_jobs,
+        max_idle_polls: args.max_idle_polls,
         live_execution_enabled: env::var("IGY6_WORKER_LIVE_CANARY")
             .map(|value| value == "DIFF-148")
+            .unwrap_or(false),
+        process_canary_enabled: env::var("IGY6_WORKER_PROCESS_CANARY")
+            .map(|value| value == "DIFF-159")
             .unwrap_or(false),
     })
 }

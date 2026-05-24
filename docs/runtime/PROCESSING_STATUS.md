@@ -152,6 +152,14 @@ shutdown posture, no Rust worker Docker Compose service, and no scheduler/beat
 replacement or retirement decision. Docker Compose therefore keeps the
 Python/Celery `worker` and `beat` services active.
 
+DIFF-159 adds a bounded Rust worker process-ownership canary plan through
+`--canary-loop`. The mode requires explicit `IGY6_WORKER_PROCESS_CANARY=DIFF-159`
+acknowledgement and bounded `--max-jobs`, `--max-idle-polls`, `--claim-limit`,
+and `--poll-interval-ms` settings. In DIFF-159 this mode is non-mutating: it
+does not connect to PostgreSQL, claim queued jobs, read artifacts, write audit
+events, call Qdrant, control Celery, replace Docker Compose worker ownership, or
+replace/retire beat. Scheduler/beat posture remains deferred.
+
 ## Pipeline
 
 ```text
