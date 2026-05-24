@@ -176,6 +176,18 @@ upsert did not complete. Worker process cutover is still not claimed:
 successful Qdrant upsert, broad queue ownership, Compose worker replacement,
 and beat posture remain unresolved.
 
+DIFF-157 decision: A, Qdrant point upsert compatibility fixed and corrected
+`chunk_vector_upsert` canary completed. Rust now uses deterministic
+UUID-shaped Qdrant point IDs derived from chunk IDs while retaining the original
+chunk IDs in point payload metadata. The selected work item
+`work-item-18b25ee83a881458-6` moved to `completed`, claim/start/success audit
+events were observed, Qdrant collection `igy6_diff157_chunks` was created,
+`PUT /points` returned HTTP 200, point scroll returned three points, and all
+three chunks moved to `embedding_status=completed` with
+`embedding_method=local_hash_v1` and `vector_collection=igy6_diff157_chunks`.
+Worker process cutover is still not claimed: broad queue ownership, Compose
+worker replacement, and beat posture remain unresolved.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

@@ -239,13 +239,53 @@ fn normalize_http_origin(base_url: &str) -> Result<String, VectorMemoryError> {
 fn point_payload(point: &ChunkVectorPoint) -> String {
     format!(
         "{{\"id\":\"{}\",\"vector\":[{}],\"payload\":{{\"chunk_id\":\"{}\",\"document_id\":\"{}\",\"chunk_index\":{},\"embedding_method\":\"{}\"}}}}",
-        json_escape(&point.id),
+        json_escape(&qdrant_point_id(&point.id)),
         encode_vector(&point.vector),
         json_escape(&point.chunk_id),
         json_escape(&point.document_id),
         point.chunk_index,
         json_escape(&point.embedding_method),
     )
+}
+
+fn qdrant_point_id(source_id: &str) -> String {
+    let seed = source_id.as_bytes();
+    let mut bytes = [0_u8; 16];
+    let salts = [0xcbf29ce484222325_u64, 0x9e3779b97f4a7c15_u64];
+    for (index, salt) in salts.iter().enumerate() {
+        let hash = stable_token_hash_with_seed(seed, *salt);
+        bytes[index * 8..(index + 1) * 8].copy_from_slice(&hash.to_be_bytes());
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    )
+}
+
+fn stable_token_hash_with_seed(bytes: &[u8], seed: u64) -> u64 {
+    let mut hash = seed;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn encode_vector(vector: &[f64]) -> String {
@@ -331,10 +371,24 @@ mod tests {
         let point =
             plan_chunk_vector_point("chunk-1", "document-1", 7, "alpha beta", 8).expect("point");
         let payload = qdrant_points_payload(&[point]);
+        assert!(payload.contains(&format!("\"id\":\"{}\"", qdrant_point_id("chunk-1"))));
         assert!(payload.contains("\"chunk_id\":\"chunk-1\""));
         assert!(payload.contains("\"document_id\":\"document-1\""));
         assert!(payload.contains("\"chunk_index\":7"));
         assert!(payload.contains("\"embedding_method\":\"rust_local_hash_v1\""));
+    }
+
+    #[test]
+    fn qdrant_point_ids_are_uuid_shaped_and_deterministic() {
+        let first = qdrant_point_id("chunk-18b25ee83a4d8467-0");
+        let second = qdrant_point_id("chunk-18b25ee83a4d8467-0");
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 36);
+        assert_eq!(
+            first.chars().filter(|character| *character == '-').count(),
+            4
+        );
+        assert_eq!(first.as_bytes()[14], b'5');
     }
 
     #[test]

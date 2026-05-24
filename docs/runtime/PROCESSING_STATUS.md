@@ -131,6 +131,18 @@ written, Qdrant collection `igy6_diff156_chunks` was created with vector size
 worker process ownership, Compose wiring, and scheduler posture are still not
 replaced.
 
+DIFF-157 fixes the Qdrant point upsert compatibility issue by using
+deterministic UUID-shaped Qdrant point IDs while preserving the original chunk
+ID in point payload metadata. It then runs exactly one corrected
+`chunk_vector_upsert` canary against isolated synthetic PostgreSQL and Qdrant.
+The selected work item completed, `chunk_vectors.upserted` audit was written,
+Qdrant collection `igy6_diff157_chunks` was created, point upsert returned
+HTTP 200, Qdrant point count became 3, and the three chunks moved to
+`embedding_status=completed` with `embedding_method=local_hash_v1` and
+`vector_collection=igy6_diff157_chunks`. Python/Celery `worker` and `beat`
+remain active because broad Rust worker process ownership, Compose wiring, and
+scheduler posture are still not replaced.
+
 ## Pipeline
 
 ```text

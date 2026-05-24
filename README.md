@@ -62,7 +62,12 @@ DIFF-156 runs the selected `chunk_vector_upsert` canary exactly once against
 isolated PostgreSQL and Qdrant. It verifies safe claim/failure audit behavior
 and Qdrant collection ensure, but Qdrant point upsert returns HTTP 400, so no
 points are stored and chunk embedding metadata/status updates remain
-unverified.
+unverified. DIFF-157 fixes that Qdrant compatibility issue by using
+deterministic UUID-shaped Qdrant point IDs while keeping the original chunk ID
+in point payload metadata, then reruns exactly one isolated vector canary. The
+canary completes, stores three Qdrant points, and marks the three chunks
+`completed` with vector metadata. Broad worker ownership, Compose worker
+replacement, and beat posture remain unresolved.
 
 Current web-used route parity is tracked by:
 
@@ -300,7 +305,9 @@ DIFF-155 reran the corrected `document_chunking` canary exactly once with
 evidence, and chained vector-work-item writes. Qdrant work remains for a later
 `chunk_vector_upsert` canary. DIFF-156 ran that vector canary once against
 isolated Qdrant; collection ensure succeeded, point upsert failed with HTTP
-400, and chunks remained `not_started`.
+400, and chunks remained `not_started`. DIFF-157 fixed the point ID shape and
+reran exactly one vector canary; Qdrant point upsert succeeded, three points
+were stored, and chunk embedding metadata/status updates were observed.
 
 Check worker/processing status:
 

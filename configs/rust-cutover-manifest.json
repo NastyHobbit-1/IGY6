@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-157"
+    "next_required_diff": "DIFF-158"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -357,7 +357,7 @@
       "Rust worker Docker/Compose canary service is not wired",
       "beat/scheduler replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "rust_worker_live_side_effect_executor": {
     "diff": "DIFF-149",
@@ -412,7 +412,7 @@
       "beat/scheduler replacement or retirement is not decided",
       "Python/Celery remains the production worker owner until a cutover DIFF removes or disables it"
     ],
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "rust_worker_canary_verification_cutover_decision": {
     "diff": "DIFF-150",
@@ -462,7 +462,7 @@
       "beat/scheduler posture has not been replaced or formally retired",
       "production rollback procedure after Rust worker ownership is not yet verified"
     ],
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "controlled_rust_worker_canary_observed_side_effect_audit": {
     "diff": "DIFF-151",
@@ -501,7 +501,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "safe_canary_fixture_work_item_selection": {
     "diff": "DIFF-152",
@@ -536,7 +536,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "controlled_live_rust_worker_canary_run": {
     "diff": "DIFF-153",
@@ -575,7 +575,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "controlled_document_chunking_live_canary": {
     "diff": "DIFF-154",
@@ -616,7 +616,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "corrected_document_chunking_live_canary": {
     "diff": "DIFF-155",
@@ -653,7 +653,7 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "controlled_chunk_vector_upsert_live_canary": {
     "diff": "DIFF-156",
@@ -704,7 +704,60 @@
     "docker_compose_changed": false,
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-157 fix Qdrant point upsert compatibility and rerun vector canary"
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "qdrant_upsert_compatibility_live_canary": {
+    "diff": "DIFF-157",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Qdrant upsert compatibility was fixed by using deterministic UUID-shaped Qdrant point IDs while preserving original chunk IDs in point payload metadata; exactly one isolated chunk_vector_upsert canary completed successfully.",
+    "compatibility_fix": "crates/igy6-vector-memory/src/lib.rs now derives deterministic UUID-shaped Qdrant point IDs from chunk IDs for the point id field; payload.chunk_id remains the original chunk ID.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture chunk_vector_upsert --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff157-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff157-postgres on 127.0.0.1:55436; stopped after observation",
+    "fixture_qdrant": "isolated docker qdrant container igy6-diff157-qdrant on 127.0.0.1:16334; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff157-local@127.0.0.1:55436/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff157-canary QDRANT_URL=http://127.0.0.1:16334 QDRANT_CHUNK_COLLECTION=igy6_diff157_chunks QDRANT_CHUNK_VECTOR_SIZE=384 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item work-item-18b25ee83a881458-6",
+    "work_item_id": "work-item-18b25ee83a881458-6",
+    "work_type": "chunk_vector_upsert",
+    "result_state": "completed",
+    "observed_postgresql_side_effects": [
+      "work_items work-item-18b25ee83a881458-6 moved from queued to completed",
+      "three selected chunks moved to embedding_status completed",
+      "three selected chunks recorded embedding_method local_hash_v1",
+      "three selected chunks recorded vector_collection igy6_diff157_chunks"
+    ],
+    "observed_audit_side_effects": [
+      "rust_worker_canary_fixture.selected",
+      "work_item.claimed",
+      "work_item.started",
+      "chunk_vectors.upserted"
+    ],
+    "observed_qdrant_side_effects": [
+      "GET /collections/igy6_diff157_chunks returned 404 before ensure",
+      "PUT /collections/igy6_diff157_chunks returned 200 and created the collection",
+      "PUT /collections/igy6_diff157_chunks/points returned 200",
+      "collection igy6_diff157_chunks exists with status green, vector size 384, and Cosine distance",
+      "points_count is 3 and scroll returned three points with original chunk_id payload metadata"
+    ],
+    "observed_qdrant_point_ids": [
+      "bf7a0ac7-8293-5ae9-8c85-62430be5fa39",
+      "5842bd3d-9fb4-5f16-a474-94b9284db426",
+      "e2373440-7d5c-5d49-92c9-951e3c69ccf9"
+    ],
+    "side_effects_still_unverified": [
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement",
+      "multi-job queue processing outside the one-item canary gate",
+      "production rollback posture after Rust worker process ownership changes"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -717,7 +770,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-156 observed one isolated chunk_vector_upsert Rust canary fail safely at Qdrant point upsert, so successful Qdrant upsert, broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-157 verified one successful isolated chunk_vector_upsert Rust canary, but broad queue polling, long-running process ownership, Compose wiring, and beat posture are still not owned by Rust."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -1128,7 +1181,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-156 because the isolated chunk_vector_upsert Rust canary failed safely at Qdrant point upsert; successful Qdrant upsert, broad worker ownership, and beat/scheduler posture are not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-157 because isolated one-item Rust canaries have succeeded but broad worker ownership and beat/scheduler posture are not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
