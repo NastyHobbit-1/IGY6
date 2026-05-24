@@ -2,11 +2,13 @@ use std::env;
 use std::process;
 
 use igy6_worker::{
-    execute_worker_live_canary, execute_worker_process_canary, parse_usize_setting,
-    parse_worker_runtime_args, plan_worker_runtime, render_worker_live_canary_result,
+    execute_worker_daemon, execute_worker_live_canary, execute_worker_process_canary,
+    parse_usize_setting, parse_worker_runtime_args, plan_worker_runtime,
+    render_worker_daemon_result, render_worker_live_canary_result,
     render_worker_process_canary_result, render_worker_runtime_status, worker_runtime_help,
     WorkerRuntimeConfig, DEFAULT_DATABASE_URL, DEFAULT_IGY6_DATA_ROOT,
     DEFAULT_QDRANT_CHUNK_COLLECTION, DEFAULT_QDRANT_CHUNK_VECTOR_SIZE, DEFAULT_QDRANT_URL,
+    DEFAULT_WORKER_SHUTDOWN_MARKER,
 };
 
 fn main() {
@@ -26,7 +28,10 @@ fn run() -> Result<(), String> {
     let config = config_from_env(&args)?;
     let plan =
         plan_worker_runtime(args.clone(), config.clone()).map_err(|error| error.to_string())?;
-    if matches!(args.mode, igy6_worker::WorkerRuntimeMode::CanaryLoop)
+    if matches!(args.mode, igy6_worker::WorkerRuntimeMode::Daemon) {
+        let result = execute_worker_daemon(&args, &config).map_err(|error| error.to_string())?;
+        println!("{}", render_worker_daemon_result(&result, &config));
+    } else if matches!(args.mode, igy6_worker::WorkerRuntimeMode::CanaryLoop)
         && config.process_canary_enabled
     {
         let result =
@@ -64,5 +69,7 @@ fn config_from_env(args: &igy6_worker::WorkerRuntimeArgs) -> Result<WorkerRuntim
         process_canary_enabled: env::var("IGY6_WORKER_PROCESS_CANARY")
             .map(|value| value == "DIFF-159")
             .unwrap_or(false),
+        shutdown_marker_path: env::var("IGY6_WORKER_SHUTDOWN_FILE")
+            .unwrap_or_else(|_| DEFAULT_WORKER_SHUTDOWN_MARKER.to_string()),
     })
 }

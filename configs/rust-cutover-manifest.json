@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-163"
+    "next_required_diff": "DIFF-164"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-163 archive Python worker and final Rust-only runtime audit is blocked until production Rust worker daemon and scheduler posture are resolved"
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-163 archive Python worker and final Rust-only runtime audit is blocked until production Rust worker daemon and scheduler posture are resolved"
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -938,7 +938,7 @@
       "production rollback from Rust worker ownership to Python/Celery is not proven",
       "scheduler/beat replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-163 archive Python worker and final Rust-only runtime audit is blocked until production Rust worker daemon and scheduler posture are resolved"
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
   },
   "rust_worker_docker_compose_canary_rollback": {
     "diff": "DIFF-161",
@@ -994,7 +994,7 @@
       "scheduler/beat replacement or retirement is not resolved in this DIFF",
       "rollback from production Rust worker ownership back to Python/Celery is documented for canary only, not yet proven for production replacement"
     ],
-    "next_recommended_diff": "DIFF-163 archive Python worker and final Rust-only runtime audit is blocked until production Rust worker daemon and scheduler posture are resolved"
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
   },
   "rust_worker_production_cutover_beat_resolution": {
     "diff": "DIFF-162",
@@ -1029,7 +1029,54 @@
     ],
     "rollback_posture": "No production worker replacement was performed. Rollback is preserving infra/docker-compose.yml unchanged. Future production cutover rollback must restore services/worker worker and beat definitions and validate Compose before restart.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-163 archive Python worker and final Rust-only runtime audit is blocked until production Rust worker daemon and scheduler posture are resolved"
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
+  },
+  "production_rust_worker_daemon_mode": {
+    "diff": "DIFF-163",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A production-capable Rust worker daemon mode was added as an explicit --daemon command. Docker Compose production worker ownership is not changed in this DIFF.",
+    "runtime_mode_added": "--daemon",
+    "runtime_command": "igy6-worker --daemon --claim-limit N --poll-interval-ms MS",
+    "requires_process_canary_env": false,
+    "default_command_safe": true,
+    "default_command": "igy6-worker --check",
+    "daemon_behavior": [
+      "repeated queue polling for supported queued work types",
+      "bounded claim_limit from 1 through 16",
+      "bounded poll_interval_ms from 100 through 60000",
+      "PostgreSQL FOR UPDATE SKIP LOCKED claim path reused from verified canaries",
+      "covered job-family execution path reused from verified canaries",
+      "job-level execution failures mark work items failed and write failure audit events",
+      "idle polling sleeps for poll_interval_ms before the next poll",
+      "fatal PostgreSQL connection or claim errors stop the daemon for supervisor restart"
+    ],
+    "graceful_shutdown": {
+      "method": "shutdown marker under IGY6_DATA_ROOT checked between polls",
+      "default_marker": "worker/control/shutdown",
+      "env_override": "IGY6_WORKER_SHUTDOWN_FILE",
+      "safety": "marker path must be relative and must not contain parent traversal"
+    },
+    "preserved_boundaries": [
+      "DATABASE_URL must be PostgreSQL",
+      "QDRANT_URL must be http(s) without credentials",
+      "IGY6_DATA_ROOT must be non-root and traversal-safe",
+      "artifact reads remain under IGY6_DATA_ROOT",
+      "no arbitrary shell commands",
+      "no user-provided command execution",
+      "no secrets printed"
+    ],
+    "production_docker_compose_worker_ownership_changed": false,
+    "compose_files_changed": [],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "beat_posture": "retained; replacement or retirement deferred",
+    "rollback_posture": "Stop any manually run Rust daemon and keep the existing Python/Celery worker and beat services active. Future Compose cutover rollback must restore the Python/Celery worker and beat definitions before restart.",
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -1042,7 +1089,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-162 decided production Rust worker replacement is not safe because the Rust live loop remains canary-only and intentionally bounded."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-163 adds Rust --daemon mode but does not cut over production Compose worker ownership or resolve beat/scheduler posture."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -1453,7 +1500,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-162 because production Rust worker replacement was not safe; the current Rust live loop remains canary-only and beat/scheduler posture is retained"
+                "reason": "Python/Celery workers remain required after DIFF-163 because Rust --daemon mode exists but production Docker Compose worker ownership and beat/scheduler posture are not cut over"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

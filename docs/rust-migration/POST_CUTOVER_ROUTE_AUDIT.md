@@ -242,6 +242,15 @@ Celery beat schedule was found, but beat is retained because production
 Python/Celery worker ownership was not replaced. Full Rust-only runtime is not
 claimed.
 
+DIFF-163 decision: A, production-capable Rust worker daemon mode was added.
+`igy6-worker --daemon` is an explicit live worker mode that does not require
+`IGY6_WORKER_PROCESS_CANARY`, polls repeatedly with bounded `claim_limit` and
+`poll_interval_ms`, checks `IGY6_DATA_ROOT/worker/control/shutdown` for graceful
+stop, and marks failed jobs failed with audit instead of retrying unboundedly.
+`infra/docker-compose.yml` is unchanged in this DIFF: Python/Celery `worker`
+and `beat` remain active, `services/worker/` is not archived, and full
+Rust-only runtime is not claimed.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

@@ -12,6 +12,10 @@ DIFF-162 reviewed production worker replacement and decided not to replace the
 Python/Celery worker yet because the Rust worker live loop is still canary-only
 and intentionally bounded. The production worker rollback posture is therefore
 unchanged.
+DIFF-163 adds a production-capable Rust worker `--daemon` mode, but it does not
+change production Docker Compose worker ownership. Rollback remains stopping any
+manually run Rust daemon and keeping the existing Python/Celery worker and beat
+services active.
 
 ## Current Cutover State
 
@@ -21,6 +25,8 @@ unchanged.
 - Legacy FastAPI API source is archived at
   `archive/legacy-python/services-api`.
 - Python/Celery worker services remain active from `services/worker`.
+- Rust worker daemon mode exists as `igy6-worker --daemon`, but Compose is not
+  cut over to it yet.
 - The DIFF-161 Rust worker Compose override is canary-only.
 - Full Rust-only repository or runtime operation is not claimed while worker
   production ownership remains unresolved.

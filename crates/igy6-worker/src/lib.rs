@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_chunking::{plan_document_chunks, ChunkPlan, ChunkingError, EvidencePlan};
@@ -64,6 +65,7 @@ pub const DEFAULT_WORKER_CLAIM_LIMIT: usize = 1;
 pub const DEFAULT_WORKER_POLL_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_WORKER_MAX_JOBS: usize = 2;
 pub const DEFAULT_WORKER_MAX_IDLE_POLLS: usize = 1;
+pub const DEFAULT_WORKER_SHUTDOWN_MARKER: &str = "worker/control/shutdown";
 pub const MAX_WORKER_CLAIM_LIMIT: usize = 16;
 pub const MAX_WORKER_PROCESS_CANARY_JOBS: usize = 16;
 pub const MAX_WORKER_IDLE_POLLS: usize = 16;
@@ -225,6 +227,7 @@ pub enum WorkerRuntimeMode {
     DryRun,
     Once,
     CanaryLoop,
+    Daemon,
     Help,
 }
 
@@ -235,6 +238,7 @@ impl WorkerRuntimeMode {
             Self::DryRun => "dry-run",
             Self::Once => "once",
             Self::CanaryLoop => "canary-loop",
+            Self::Daemon => "daemon",
             Self::Help => "help",
         }
     }
@@ -250,6 +254,7 @@ pub enum WorkerRuntimeError {
     InvalidDatabaseUrl(String),
     InvalidQdrantUrl(String),
     InvalidDataRoot(String),
+    InvalidShutdownMarker(String),
     InvalidVectorSize(String),
     InvalidCollectionName(String),
     LiveExecution(String),
@@ -268,6 +273,7 @@ impl fmt::Display for WorkerRuntimeError {
             | Self::InvalidDatabaseUrl(message)
             | Self::InvalidQdrantUrl(message)
             | Self::InvalidDataRoot(message)
+            | Self::InvalidShutdownMarker(message)
             | Self::InvalidVectorSize(message)
             | Self::InvalidCollectionName(message)
             | Self::LiveExecution(message) => write!(formatter, "{message}"),
@@ -317,6 +323,7 @@ pub struct WorkerRuntimeConfig {
     pub max_idle_polls: usize,
     pub live_execution_enabled: bool,
     pub process_canary_enabled: bool,
+    pub shutdown_marker_path: String,
 }
 
 impl WorkerRuntimeConfig {
@@ -333,6 +340,7 @@ impl WorkerRuntimeConfig {
             max_idle_polls: DEFAULT_WORKER_MAX_IDLE_POLLS,
             live_execution_enabled: false,
             process_canary_enabled: false,
+            shutdown_marker_path: DEFAULT_WORKER_SHUTDOWN_MARKER.to_string(),
         }
     }
 }
@@ -349,6 +357,7 @@ pub struct WorkerRuntimePlan {
     pub blocked_side_effects: Vec<String>,
     pub canary_plan: Option<WorkerCanaryPlan>,
     pub process_canary_plan: Option<WorkerProcessCanaryPlan>,
+    pub daemon_plan: Option<WorkerDaemonPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -391,6 +400,28 @@ pub struct WorkerProcessCanaryResult {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerDaemonResult {
+    pub service: &'static str,
+    pub diff: &'static str,
+    pub mode: &'static str,
+    pub status: String,
+    pub result_state: String,
+    pub mutates_runtime_data: bool,
+    pub live_execution_enabled: bool,
+    pub claim_limit: usize,
+    pub poll_interval_ms: u64,
+    pub jobs_attempted: usize,
+    pub jobs_completed: usize,
+    pub jobs_failed: usize,
+    pub idle_polls: usize,
+    pub exit_reason: String,
+    pub job_results: Vec<WorkerLiveCanaryResult>,
+    pub side_effects_executed: Vec<String>,
+    pub shutdown_marker_path: String,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerCanaryPlan {
     pub work_item_id: String,
@@ -424,8 +455,22 @@ pub struct WorkerProcessCanaryPlan {
     pub side_effects_planned: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerDaemonPlan {
+    pub mode: &'static str,
+    pub status: &'static str,
+    pub claim_limit: usize,
+    pub poll_interval_ms: u64,
+    pub shutdown_marker_path: String,
+    pub stop_conditions: Vec<&'static str>,
+    pub safety_gates: Vec<&'static str>,
+    pub retry_failure_posture: Vec<&'static str>,
+    pub scheduler_beat_posture: &'static str,
+    pub side_effects_planned: Vec<&'static str>,
+}
+
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --canary-loop      DIFF-160 process-loop canary; live only with explicit env gate and bounded limits.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-160 safety: default mode is non-mutating, canary-loop requires IGY6_WORKER_PROCESS_CANARY=DIFF-159 and bounded limits, canary-live is one-job bounded, Python/Celery worker and beat remain active, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --daemon [--claim-limit N] [--poll-interval-ms MS]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --daemon           DIFF-163 production-capable Rust worker daemon; explicit command, no canary env gate, repeated queue polling until shutdown marker or fatal error.\n  --canary-loop      DIFF-160 process-loop canary; live only with explicit env gate and bounded limits.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-163 safety: default mode is non-mutating, daemon mode is opt-in by command, daemon checks IGY6_DATA_ROOT/worker/control/shutdown between polls, canary-loop still requires IGY6_WORKER_PROCESS_CANARY=DIFF-159, Python/Celery worker and beat remain active until Compose cutover, and Rust-only runtime is not claimed.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -442,6 +487,7 @@ where
             "--dry-run" => parsed.mode = WorkerRuntimeMode::DryRun,
             "--once" => parsed.mode = WorkerRuntimeMode::Once,
             "--canary-loop" => parsed.mode = WorkerRuntimeMode::CanaryLoop,
+            "--daemon" => parsed.mode = WorkerRuntimeMode::Daemon,
             "--canary-live" => {
                 parsed.canary_live = true;
                 parsed.explicit_live_execution = true;
@@ -520,6 +566,13 @@ where
             "--canary-loop and --canary-live are separate canary modes".to_string(),
         ));
     }
+    if matches!(parsed.mode, WorkerRuntimeMode::Daemon)
+        && (parsed.canary_live || parsed.canary_work_item_id.is_some())
+    {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "--daemon must not be combined with canary flags".to_string(),
+        ));
+    }
     Ok(parsed)
 }
 
@@ -529,6 +582,7 @@ pub fn validate_worker_runtime_config(
     validate_database_url(&config.database_url)?;
     validate_qdrant_url(&config.qdrant_url)?;
     validate_data_root(&config.igy6_data_root)?;
+    validate_shutdown_marker_path(&config.shutdown_marker_path)?;
     validate_collection_name(&config.qdrant_chunk_collection)?;
     if config.qdrant_chunk_vector_size == 0 {
         return Err(WorkerRuntimeError::InvalidVectorSize(
@@ -590,6 +644,14 @@ pub fn plan_worker_runtime(
             "stop on max_jobs, max_idle_polls, fatal validation error, or external shutdown signal".to_string(),
             "do not connect to PostgreSQL or mutate runtime data in DIFF-159".to_string(),
         ],
+        WorkerRuntimeMode::Daemon => vec![
+            "validate production worker daemon configuration".to_string(),
+            "connect to PostgreSQL only after explicit --daemon invocation".to_string(),
+            "poll repeatedly for supported queued work items with bounded claim_limit".to_string(),
+            "sleep between idle polls using bounded poll_interval_ms".to_string(),
+            "check IGY6_DATA_ROOT shutdown marker between polls for graceful stop".to_string(),
+            "mark failed jobs failed with audit instead of retrying unboundedly".to_string(),
+        ],
     };
     let canary_plan = if args.canary_live {
         let work_item_id = args.canary_work_item_id.clone().ok_or_else(|| {
@@ -606,6 +668,11 @@ pub fn plan_worker_runtime(
     } else {
         None
     };
+    let daemon_plan = if matches!(args.mode, WorkerRuntimeMode::Daemon) {
+        Some(plan_worker_daemon(&config))
+    } else {
+        None
+    };
     Ok(WorkerRuntimePlan {
         mode: args.mode,
         status: if matches!(args.mode, WorkerRuntimeMode::CanaryLoop)
@@ -614,6 +681,8 @@ pub fn plan_worker_runtime(
             "process_canary_ready_non_mutating".to_string()
         } else if matches!(args.mode, WorkerRuntimeMode::CanaryLoop) {
             "process_canary_requires_IGY6_WORKER_PROCESS_CANARY_DIFF_159".to_string()
+        } else if matches!(args.mode, WorkerRuntimeMode::Daemon) {
+            "daemon_ready_explicit_live_worker_mode".to_string()
         } else if args.canary_live && config.live_execution_enabled {
             "canary_live_ready".to_string()
         } else if args.canary_live {
@@ -637,6 +706,7 @@ pub fn plan_worker_runtime(
         ],
         canary_plan,
         process_canary_plan,
+        daemon_plan,
     })
 }
 
@@ -719,13 +789,53 @@ pub fn plan_worker_process_canary(config: &WorkerRuntimeConfig) -> WorkerProcess
     }
 }
 
+pub fn plan_worker_daemon(config: &WorkerRuntimeConfig) -> WorkerDaemonPlan {
+    WorkerDaemonPlan {
+        mode: "daemon",
+        status: "ready_explicit_live_worker_mode",
+        claim_limit: config.claim_limit,
+        poll_interval_ms: config.poll_interval_ms,
+        shutdown_marker_path: config.shutdown_marker_path.clone(),
+        stop_conditions: vec![
+            "shutdown marker observed under IGY6_DATA_ROOT",
+            "fatal PostgreSQL connection or query error",
+            "fatal runtime configuration error",
+        ],
+        safety_gates: vec![
+            "--daemon flag",
+            "bounded --claim-limit",
+            "bounded --poll-interval-ms",
+            "validated DATABASE_URL",
+            "validated QDRANT_URL without credentials",
+            "validated IGY6_DATA_ROOT",
+            "shutdown marker path must be relative under IGY6_DATA_ROOT",
+        ],
+        retry_failure_posture: vec![
+            "job execution errors mark the claimed work item failed and write failure audit",
+            "daemon continues after job-level failures",
+            "idle polls sleep for poll_interval_ms before polling again",
+            "fatal database claim/connect errors stop the daemon for supervisor restart",
+        ],
+        scheduler_beat_posture: "retained; replacement or retirement deferred",
+        side_effects_planned: vec![
+            "repeated queue polling",
+            "FOR UPDATE SKIP LOCKED claim",
+            "covered job-family execution",
+            "PostgreSQL status and audit writes",
+            "artifact reads under IGY6_DATA_ROOT",
+            "Qdrant collection ensure and point upsert for chunk_vector_upsert",
+            "shutdown marker observation",
+        ],
+    }
+}
+
 pub fn render_worker_runtime_status(
     plan: &WorkerRuntimePlan,
     config: &WorkerRuntimeConfig,
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-160",
+        "diff": "DIFF-163",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
@@ -737,6 +847,7 @@ pub fn render_worker_runtime_status(
         "max_jobs": config.max_jobs,
         "max_idle_polls": config.max_idle_polls,
         "poll_interval_ms": config.poll_interval_ms,
+        "shutdown_marker_path": config.shutdown_marker_path,
         "qdrant_chunk_collection": config.qdrant_chunk_collection,
         "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
         "database_url_configured": !config.database_url.trim().is_empty(),
@@ -758,6 +869,18 @@ pub fn render_worker_runtime_status(
             "side_effects_executed": canary.side_effects_executed,
             "side_effects_planned": canary.side_effects_planned,
         })),
+        "daemon": plan.daemon_plan.as_ref().map(|daemon| json!({
+            "mode": daemon.mode,
+            "status": daemon.status,
+            "claim_limit": daemon.claim_limit,
+            "poll_interval_ms": daemon.poll_interval_ms,
+            "shutdown_marker_path": daemon.shutdown_marker_path,
+            "stop_conditions": daemon.stop_conditions,
+            "safety_gates": daemon.safety_gates,
+            "retry_failure_posture": daemon.retry_failure_posture,
+            "scheduler_beat_posture": daemon.scheduler_beat_posture,
+            "side_effects_planned": daemon.side_effects_planned,
+        })),
         "canary": plan.canary_plan.as_ref().map(|canary| json!({
             "work_item_id": canary.work_item_id,
             "status": canary.status,
@@ -771,6 +894,49 @@ pub fn render_worker_runtime_status(
             })).collect::<Vec<Value>>(),
             "rollback_posture": canary.rollback_posture,
         })),
+    })
+}
+
+pub fn render_worker_daemon_result(
+    result: &WorkerDaemonResult,
+    config: &WorkerRuntimeConfig,
+) -> Value {
+    json!({
+        "service": result.service,
+        "diff": result.diff,
+        "mode": result.mode,
+        "status": result.status,
+        "result_state": result.result_state,
+        "mutates_runtime_data": result.mutates_runtime_data,
+        "live_execution_enabled": result.live_execution_enabled,
+        "python_celery_worker_required": true,
+        "python_celery_beat_required": true,
+        "rust_only_runtime_claimed": false,
+        "claim_limit": result.claim_limit,
+        "poll_interval_ms": result.poll_interval_ms,
+        "jobs_attempted": result.jobs_attempted,
+        "jobs_completed": result.jobs_completed,
+        "jobs_failed": result.jobs_failed,
+        "idle_polls": result.idle_polls,
+        "exit_reason": result.exit_reason,
+        "shutdown_marker_path": result.shutdown_marker_path,
+        "qdrant_chunk_collection": config.qdrant_chunk_collection,
+        "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
+        "database_url_configured": !config.database_url.trim().is_empty(),
+        "qdrant_url_configured": !config.qdrant_url.trim().is_empty(),
+        "igy6_data_root_configured": !config.igy6_data_root.trim().is_empty(),
+        "side_effects_executed": result.side_effects_executed,
+        "error_message": result.error_message,
+        "jobs": result.job_results.iter().map(|job| json!({
+            "work_item_id": job.work_item_id,
+            "work_type": job.work_type,
+            "result_state": job.result_state,
+            "status": job.status,
+            "side_effects_executed": job.side_effects_executed,
+            "side_effects_planned": job.side_effects_planned,
+            "error_message": job.error_message,
+            "output": job.output_json,
+        })).collect::<Vec<Value>>(),
     })
 }
 
@@ -894,6 +1060,24 @@ pub fn execute_worker_process_canary(
     execute_worker_process_canary_inner(&validated_config)
 }
 
+pub fn execute_worker_daemon(
+    args: &WorkerRuntimeArgs,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerDaemonResult, WorkerRuntimeError> {
+    if !matches!(args.mode, WorkerRuntimeMode::Daemon) {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "production worker execution requires --daemon".to_string(),
+        ));
+    }
+    if args.canary_live || args.canary_work_item_id.is_some() {
+        return Err(WorkerRuntimeError::InvalidCanaryMode(
+            "--daemon must not be combined with canary flags".to_string(),
+        ));
+    }
+    let validated_config = validate_worker_runtime_config(config.clone())?;
+    execute_worker_daemon_inner(&validated_config)
+}
+
 fn execute_worker_process_canary_inner(
     config: &WorkerRuntimeConfig,
 ) -> Result<WorkerProcessCanaryResult, WorkerRuntimeError> {
@@ -907,7 +1091,13 @@ fn execute_worker_process_canary_inner(
     let mut exit_reason = "max_jobs reached".to_string();
 
     while jobs.len() < config.max_jobs {
-        let Some(claimed) = claim_next_process_canary_work_item(&mut client, config.claim_limit)?
+        let Some(claimed) = claim_next_worker_work_item(
+            &mut client,
+            config.claim_limit,
+            "DIFF-160",
+            "process_canary_loop",
+            "process canary claim rejected",
+        )?
         else {
             idle_polls += 1;
             if idle_polls >= config.max_idle_polls {
@@ -968,6 +1158,89 @@ fn execute_worker_process_canary_inner(
         exit_reason,
         job_results: jobs,
         side_effects_executed: side_effects.into_iter().collect(),
+        error_message: None,
+    })
+}
+
+fn execute_worker_daemon_inner(
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerDaemonResult, WorkerRuntimeError> {
+    let postgres_url = postgres_client_url(&config.database_url);
+    let mut client = Client::connect(&postgres_url, NoTls).map_err(|error| {
+        WorkerRuntimeError::LiveExecution(format!("failed to connect to PostgreSQL: {error}"))
+    })?;
+
+    let mut jobs = Vec::new();
+    let mut idle_polls = 0usize;
+    let exit_reason: String;
+    loop {
+        if daemon_shutdown_requested(config)? {
+            exit_reason = "shutdown marker observed".to_string();
+            break;
+        }
+
+        let mut claimed_this_poll = 0usize;
+        for _ in 0..config.claim_limit {
+            match claim_next_worker_work_item(
+                &mut client,
+                config.claim_limit,
+                "DIFF-163",
+                "production_daemon",
+                "daemon claim rejected",
+            )? {
+                Some(claimed) => {
+                    claimed_this_poll += 1;
+                    let job = execute_claimed_work_item(&mut client, claimed, config)?;
+                    jobs.push(job);
+                }
+                None => break,
+            }
+        }
+        if claimed_this_poll == 0 {
+            idle_polls += 1;
+            thread::sleep(Duration::from_millis(config.poll_interval_ms));
+        } else {
+            idle_polls = 0;
+        }
+    }
+
+    let jobs_completed = jobs
+        .iter()
+        .filter(|job| job.result_state == "completed")
+        .count();
+    let jobs_failed = jobs
+        .iter()
+        .filter(|job| job.result_state == "failed")
+        .count();
+    let mut side_effects = BTreeSet::new();
+    for job in &jobs {
+        for effect in &job.side_effects_executed {
+            side_effects.insert(effect.clone());
+        }
+    }
+
+    Ok(WorkerDaemonResult {
+        service: "igy6-worker",
+        diff: "DIFF-163",
+        mode: "daemon",
+        status: "daemon_exited_cleanly".to_string(),
+        result_state: if jobs_failed == 0 {
+            "completed".to_string()
+        } else {
+            "completed_with_job_failures".to_string()
+        },
+        mutates_runtime_data: !jobs.is_empty(),
+        live_execution_enabled: true,
+        claim_limit: config.claim_limit,
+        poll_interval_ms: config.poll_interval_ms,
+        jobs_attempted: jobs.len(),
+        jobs_completed,
+        jobs_failed,
+        idle_polls,
+        exit_reason,
+        job_results: jobs,
+        side_effects_executed: side_effects.into_iter().collect(),
+        shutdown_marker_path: config.shutdown_marker_path.clone(),
         error_message: None,
     })
 }
@@ -1131,9 +1404,12 @@ fn claim_one_canary_work_item(
     }))
 }
 
-fn claim_next_process_canary_work_item(
+fn claim_next_worker_work_item(
     client: &mut Client,
     claim_limit: usize,
+    generated_by: &'static str,
+    claim_mode: &'static str,
+    error_prefix: &'static str,
 ) -> Result<Option<ClaimedWorkItem>, WorkerRuntimeError> {
     let query_plan = queue_claim_query_plan(claim_limit)
         .map_err(|error| WorkerRuntimeError::InvalidClaimLimit(error.to_string()))?;
@@ -1161,9 +1437,7 @@ fn claim_next_process_canary_work_item(
         payload_json: row.get("payload_json"),
     };
     let claim_plan = plan_queue_claim(candidate.clone(), &candidate.requested_by_actor_id)
-        .map_err(|error| {
-            WorkerRuntimeError::LiveExecution(format!("process canary claim rejected: {error}"))
-        })?;
+        .map_err(|error| WorkerRuntimeError::LiveExecution(format!("{error_prefix}: {error}")))?;
     transaction
         .execute(
             "UPDATE work_items SET status = 'running', error_message = NULL, updated_at = now() WHERE id = $1 AND status = 'queued'",
@@ -1181,8 +1455,8 @@ fn claim_next_process_canary_work_item(
         json!({
             "work_type": claim_plan.work_type,
             "task_name": claim_plan.task_name,
-            "generated_by": "DIFF-160",
-            "claim_mode": "process_canary_loop",
+            "generated_by": generated_by,
+            "claim_mode": claim_mode,
         }),
     )?;
     insert_audit_event_tx(
@@ -1195,8 +1469,8 @@ fn claim_next_process_canary_work_item(
         &claim_plan.work_item_id,
         json!({
             "work_type": claim_plan.work_type,
-            "generated_by": "DIFF-160",
-            "claim_mode": "process_canary_loop",
+            "generated_by": generated_by,
+            "claim_mode": claim_mode,
         }),
     )?;
     transaction.commit().map_err(live_error)?;
@@ -2045,6 +2319,32 @@ fn validate_data_root(value: &str) -> Result<(), WorkerRuntimeError> {
         ));
     }
     Ok(())
+}
+
+fn validate_shutdown_marker_path(value: &str) -> Result<(), WorkerRuntimeError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') || Path::new(trimmed).is_absolute() {
+        return Err(WorkerRuntimeError::InvalidShutdownMarker(
+            "IGY6_WORKER_SHUTDOWN_FILE must be a relative path under IGY6_DATA_ROOT".to_string(),
+        ));
+    }
+    if Path::new(trimmed).components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::RootDir
+        )
+    }) {
+        return Err(WorkerRuntimeError::InvalidShutdownMarker(
+            "IGY6_WORKER_SHUTDOWN_FILE must not contain parent traversal".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn daemon_shutdown_requested(config: &WorkerRuntimeConfig) -> Result<bool, WorkerRuntimeError> {
+    validate_shutdown_marker_path(&config.shutdown_marker_path)?;
+    let marker = Path::new(&config.igy6_data_root).join(&config.shutdown_marker_path);
+    Ok(marker.exists())
 }
 
 fn validate_collection_name(value: &str) -> Result<(), WorkerRuntimeError> {
@@ -3497,6 +3797,24 @@ mod tests {
     }
 
     #[test]
+    fn daemon_args_are_explicit_and_not_canary_gated() {
+        let args = parse_worker_runtime_args([
+            "--daemon",
+            "--claim-limit",
+            "3",
+            "--poll-interval-ms",
+            "250",
+        ])
+        .expect("daemon args");
+
+        assert_eq!(args.mode, WorkerRuntimeMode::Daemon);
+        assert_eq!(args.claim_limit, 3);
+        assert_eq!(args.poll_interval_ms, 250);
+        assert!(!args.explicit_live_execution);
+        assert!(parse_worker_runtime_args(["--daemon", "--canary-live"]).is_err());
+    }
+
+    #[test]
     fn canary_live_requires_explicit_once_and_work_item() {
         assert!(matches!(
             parse_worker_runtime_args(["--canary-live", "--canary-work-item", "work-1"]),
@@ -3544,6 +3862,13 @@ mod tests {
         assert!(matches!(
             validate_worker_runtime_config(invalid_root),
             Err(WorkerRuntimeError::InvalidDataRoot(_))
+        ));
+
+        let mut invalid_shutdown_marker = WorkerRuntimeConfig::safe_default();
+        invalid_shutdown_marker.shutdown_marker_path = "../shutdown".to_string();
+        assert!(matches!(
+            validate_worker_runtime_config(invalid_shutdown_marker),
+            Err(WorkerRuntimeError::InvalidShutdownMarker(_))
         ));
     }
 
@@ -3611,6 +3936,72 @@ mod tests {
         assert_eq!(status["process_canary"]["max_jobs"], json!(4));
         assert_eq!(status["process_canary"]["side_effects_executed"], json!([]));
         assert_eq!(status["python_celery_beat_required"], json!(true));
+    }
+
+    #[test]
+    fn daemon_plan_documents_production_worker_posture() {
+        let args =
+            parse_worker_runtime_args(["--daemon", "--claim-limit", "2"]).expect("daemon args");
+        let mut config = WorkerRuntimeConfig::safe_default();
+        config.claim_limit = args.claim_limit;
+        config.shutdown_marker_path = "worker/control/shutdown".to_string();
+        let plan = plan_worker_runtime(args, config.clone()).expect("plan");
+        let status = render_worker_runtime_status(&plan, &config);
+        let daemon = plan.daemon_plan.as_ref().expect("daemon plan");
+
+        assert_eq!(plan.status, "daemon_ready_explicit_live_worker_mode");
+        assert_eq!(plan.mode, WorkerRuntimeMode::Daemon);
+        assert!(!plan.mutates_runtime_data);
+        assert_eq!(daemon.claim_limit, 2);
+        assert_eq!(
+            daemon.scheduler_beat_posture,
+            "retained; replacement or retirement deferred"
+        );
+        assert!(daemon
+            .safety_gates
+            .contains(&"shutdown marker path must be relative under IGY6_DATA_ROOT"));
+        assert!(daemon.retry_failure_posture.contains(
+            &"job execution errors mark the claimed work item failed and write failure audit"
+        ));
+        assert_eq!(status["daemon"]["mode"], json!("daemon"));
+        assert_eq!(
+            status["daemon"]["shutdown_marker_path"],
+            json!("worker/control/shutdown")
+        );
+        assert_eq!(status["rust_only_runtime_claimed"], json!(false));
+    }
+
+    #[test]
+    fn daemon_result_reports_shutdown_and_job_failures_without_rust_only_claim() {
+        let config = WorkerRuntimeConfig::safe_default();
+        let result = WorkerDaemonResult {
+            service: "igy6-worker",
+            diff: "DIFF-163",
+            mode: "daemon",
+            status: "daemon_exited_cleanly".to_string(),
+            result_state: "completed_with_job_failures".to_string(),
+            mutates_runtime_data: true,
+            live_execution_enabled: true,
+            claim_limit: 1,
+            poll_interval_ms: 1000,
+            jobs_attempted: 2,
+            jobs_completed: 1,
+            jobs_failed: 1,
+            idle_polls: 3,
+            exit_reason: "shutdown marker observed".to_string(),
+            job_results: vec![],
+            side_effects_executed: vec!["postgres_work_item_claim".to_string()],
+            shutdown_marker_path: "worker/control/shutdown".to_string(),
+            error_message: None,
+        };
+        let rendered = render_worker_daemon_result(&result, &config);
+
+        assert_eq!(rendered["diff"], json!("DIFF-163"));
+        assert_eq!(rendered["mode"], json!("daemon"));
+        assert_eq!(rendered["jobs_failed"], json!(1));
+        assert_eq!(rendered["exit_reason"], json!("shutdown marker observed"));
+        assert_eq!(rendered["rust_only_runtime_claimed"], json!(false));
+        assert_eq!(rendered["python_celery_worker_required"], json!(true));
     }
 
     #[test]

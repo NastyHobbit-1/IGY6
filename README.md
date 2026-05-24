@@ -103,6 +103,14 @@ bounded canary process would leave production worker ownership incomplete.
 `services/worker/app/celery_app.py` defines no repo beat schedule, but `beat`
 is retained because production worker ownership was not replaced. Full
 Rust-only runtime is still not claimed.
+DIFF-163 adds an explicit production-capable Rust worker daemon mode:
+`igy6-worker --daemon --claim-limit N --poll-interval-ms MS`. The daemon mode
+does not require `IGY6_WORKER_PROCESS_CANARY`, repeatedly polls supported
+queued work, keeps claim and poll bounds, observes the shutdown marker
+`IGY6_DATA_ROOT/worker/control/shutdown`, and marks failed jobs failed with
+audit instead of retrying them unboundedly. Docker Compose is not cut over in
+this DIFF, so Python/Celery `worker` and `beat` remain active and full
+Rust-only runtime is still not claimed.
 
 Current web-used route parity is tracked by:
 

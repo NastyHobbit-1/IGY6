@@ -190,6 +190,15 @@ production rollback verification exists yet. No repo-defined Celery beat
 schedule was found, but `beat` remains active because the Python/Celery worker
 runtime remains active. Full Rust-only runtime is not claimed.
 
+DIFF-163 adds `igy6-worker --daemon` as an explicit production-capable Rust
+worker mode. It does not require the DIFF-159 canary env gate, polls repeatedly
+with bounded `claim_limit` and `poll_interval_ms`, uses the verified
+claim/execute path, checks the relative shutdown marker
+`worker/control/shutdown` under `IGY6_DATA_ROOT`, and treats job-level failures
+as failed work items with audit events instead of unbounded retries. Docker
+Compose is not cut over in this DIFF, so Python/Celery `worker` and `beat`
+remain active and scheduler/beat posture remains deferred.
+
 ## Pipeline
 
 ```text
