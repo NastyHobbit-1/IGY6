@@ -67,7 +67,12 @@ deterministic UUID-shaped Qdrant point IDs while keeping the original chunk ID
 in point payload metadata, then reruns exactly one isolated vector canary. The
 canary completes, stores three Qdrant points, and marks the three chunks
 `completed` with vector metadata. Broad worker ownership, Compose worker
-replacement, and beat posture remain unresolved.
+replacement, and beat posture remain unresolved. DIFF-158 decides worker
+process cutover is still not ready: the Rust worker canary path is proven for
+one explicitly selected work item at a time, but there is no long-running Rust
+worker daemon, generic live queue polling loop, production retry/backoff and
+shutdown posture, Rust worker Compose service, or scheduler/beat replacement
+decision. Docker Compose still runs Python/Celery `worker` and `beat`.
 
 Current web-used route parity is tracked by:
 
@@ -308,6 +313,9 @@ isolated Qdrant; collection ensure succeeded, point upsert failed with HTTP
 400, and chunks remained `not_started`. DIFF-157 fixed the point ID shape and
 reran exactly one vector canary; Qdrant point upsert succeeded, three points
 were stored, and chunk embedding metadata/status updates were observed.
+DIFF-158 retains Python/Celery worker and beat because Rust has not yet proven
+long-running worker process ownership, broad queue polling, Compose cutover, or
+scheduler replacement/retirement.
 
 Check worker/processing status:
 

@@ -188,6 +188,17 @@ three chunks moved to `embedding_status=completed` with
 Worker process cutover is still not claimed: broad queue ownership, Compose
 worker replacement, and beat posture remain unresolved.
 
+DIFF-158 decision: B, worker process cutover is not ready. The Rust worker has
+proven isolated one-work-item live canaries for `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`, but it has not proven
+production worker process ownership. Exact blockers are long-running Rust
+daemon mode, generic live queue polling without a named canary item,
+production retry/backoff and graceful shutdown behavior, worker health/readiness
+posture, Rust worker Docker Compose wiring, rollback posture, and
+scheduler/beat replacement or retirement. Docker Compose was not changed:
+Python/Celery `worker` and `beat` remain active, and full Rust-only runtime is
+not claimed.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

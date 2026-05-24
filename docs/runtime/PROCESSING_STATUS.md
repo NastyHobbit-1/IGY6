@@ -143,6 +143,15 @@ HTTP 200, Qdrant point count became 3, and the three chunks moved to
 remain active because broad Rust worker process ownership, Compose wiring, and
 scheduler posture are still not replaced.
 
+DIFF-158 decides the worker process cutover is not ready. The successful
+DIFF-153, DIFF-155, and DIFF-157 canaries prove one explicitly selected work
+item at a time for the three covered job families, but they do not prove
+production worker ownership. The Rust worker has no long-running daemon mode,
+no generic live queue polling loop, no production retry/backoff and graceful
+shutdown posture, no Rust worker Docker Compose service, and no scheduler/beat
+replacement or retirement decision. Docker Compose therefore keeps the
+Python/Celery `worker` and `beat` services active.
+
 ## Pipeline
 
 ```text
