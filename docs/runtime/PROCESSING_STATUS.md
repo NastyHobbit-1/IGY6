@@ -171,6 +171,17 @@ Qdrant collection ensure, and one Qdrant point. Python/Celery `worker` and
 `beat` remain active because Compose worker service ownership, rollback, and
 scheduler posture are not cut over.
 
+DIFF-161 adds a non-default Docker/Compose Rust worker canary service in
+`infra/docker-compose.rust-worker-canary.yml` plus
+`crates/igy6-worker/Dockerfile`. The base Compose file is unchanged, so normal
+runtime still starts the Python/Celery `worker` and `beat`. The canary service
+is behind the `rust-worker-canary` profile and uses isolated profile-scoped
+canary PostgreSQL and Qdrant services plus an explicit synthetic data root. It
+runs the bounded `--canary-loop` with `max_jobs=3`, `max_idle_polls=1`,
+`claim_limit=1`, and `poll_interval_ms=100`. It is rollback-only service
+wiring; scheduler/beat posture and production worker replacement remain
+deferred.
+
 ## Pipeline
 
 ```text

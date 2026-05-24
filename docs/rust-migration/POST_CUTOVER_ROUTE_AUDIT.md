@@ -221,6 +221,17 @@ evidence item, chunk embedding metadata, Qdrant collection ensure, and one
 Qdrant point. Docker Compose was not changed; Python/Celery `worker` and
 `beat` remain active, and full Rust-only runtime is not claimed.
 
+DIFF-161 decision: A, Rust worker Docker/Compose canary service wiring was added
+without replacing production worker ownership. The new
+`infra/docker-compose.rust-worker-canary.yml` override defines an opt-in
+`rust-worker-canary` service behind the `rust-worker-canary` profile, and
+`crates/igy6-worker/Dockerfile` builds the Rust worker binary. The service runs
+bounded `--canary-loop` settings with isolated profile-scoped canary PostgreSQL
+and Qdrant services plus an explicit synthetic data root. Base
+`infra/docker-compose.yml` is unchanged, so Python/Celery `worker` and `beat`
+remain active. Rollback is to stop and remove only `rust-worker-canary`; full
+Rust-only runtime is not claimed.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

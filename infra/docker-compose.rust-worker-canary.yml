@@ -1,0 +1,65 @@
+services:
+  rust-worker-canary-postgres:
+    profiles:
+      - rust-worker-canary
+    image: postgres:16
+    environment:
+      POSTGRES_DB: igy6_canary
+      POSTGRES_USER: igy6
+      POSTGRES_PASSWORD: diff161-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U igy6 -d igy6_canary"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  rust-worker-canary-qdrant:
+    profiles:
+      - rust-worker-canary
+    image: qdrant/qdrant:v1.12.5
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /qdrant/storage
+
+  rust-worker-canary:
+    profiles:
+      - rust-worker-canary
+    build:
+      context: ..
+      dockerfile: crates/igy6-worker/Dockerfile
+    environment:
+      DATABASE_URL: ${RUST_WORKER_CANARY_DATABASE_URL:-postgresql://igy6:diff161-local@rust-worker-canary-postgres:5432/igy6_canary}
+      IGY6_DATA_ROOT: /workspace/canary-storage
+      QDRANT_URL: ${RUST_WORKER_CANARY_QDRANT_URL:-http://rust-worker-canary-qdrant:6333}
+      QDRANT_CHUNK_COLLECTION: ${RUST_WORKER_CANARY_QDRANT_CHUNK_COLLECTION:-igy6_rust_worker_compose_canary_chunks}
+      QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE:-384}
+      IGY6_WORKER_PROCESS_CANARY: DIFF-159
+      IGY6_WORKER_COMPOSE_CANARY: DIFF-161
+    command:
+      - igy6-worker
+      - --canary-loop
+      - --max-jobs
+      - "3"
+      - --max-idle-polls
+      - "1"
+      - --claim-limit
+      - "1"
+      - --poll-interval-ms
+      - "100"
+    depends_on:
+      rust-worker-canary-postgres:
+        condition: service_healthy
+      rust-worker-canary-qdrant:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${RUST_WORKER_CANARY_DATA_ROOT:?Set RUST_WORKER_CANARY_DATA_ROOT to a synthetic canary data root}
+        target: /workspace/canary-storage
+        read_only: true
+    restart: "no"

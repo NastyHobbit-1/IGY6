@@ -88,6 +88,13 @@ writes DB/audit rows, reads the synthetic artifact, upserts one Qdrant point,
 and exits cleanly at `max_jobs`. Python/Celery `worker` and `beat` remain
 active because Compose service ownership, side-by-side canary deployment,
 rollback, and scheduler posture are not cut over.
+DIFF-161 adds an opt-in Rust worker Docker/Compose canary service through
+`infra/docker-compose.rust-worker-canary.yml` and
+`crates/igy6-worker/Dockerfile`. The base Compose file is unchanged: normal
+local startup still runs the Python/Celery `worker` and `beat`. The canary
+service must be targeted explicitly with synthetic canary environment values,
+bounded `--canary-loop` flags, and `IGY6_WORKER_PROCESS_CANARY=DIFF-159`.
+Full Rust-only runtime is still not claimed.
 
 Current web-used route parity is tracked by:
 
@@ -117,6 +124,35 @@ Stop the stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env down
+```
+
+Run the Rust worker Compose canary only against synthetic fixture data:
+
+```bash
+RUST_WORKER_CANARY_DATA_ROOT=/tmp/igy6-diff161-canary \
+RUST_WORKER_CANARY_QDRANT_CHUNK_COLLECTION=igy6_diff161_chunks \
+docker compose -f infra/docker-compose.yml \
+  -f infra/docker-compose.rust-worker-canary.yml \
+  --env-file .env.example \
+  --profile rust-worker-canary \
+  up --build rust-worker-canary
+```
+
+Rollback the Rust worker Compose canary without changing the Python/Celery
+worker or beat services:
+
+```bash
+docker compose -f infra/docker-compose.yml \
+  -f infra/docker-compose.rust-worker-canary.yml \
+  --env-file .env.example \
+  --profile rust-worker-canary \
+  stop rust-worker-canary
+
+docker compose -f infra/docker-compose.yml \
+  -f infra/docker-compose.rust-worker-canary.yml \
+  --env-file .env.example \
+  --profile rust-worker-canary \
+  rm -f rust-worker-canary
 ```
 
 Show running services:

@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-161"
+    "next_required_diff": "DIFF-162"
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -33,7 +33,7 @@
     ],
     "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
     "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
+    "next_recommended_diff": "DIFF-162 replace Python/Celery worker and resolve beat/scheduler posture"
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -89,7 +89,7 @@
       "QDRANT_CHUNK_VECTOR_SIZE",
       "IGY6_DATA_ROOT bind mount"
     ],
-    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
+    "next_recommended_diff": "DIFF-162 replace Python/Celery worker and resolve beat/scheduler posture"
   },
   "worker_execution_contract_queue_claim": {
     "diff": "DIFF-142",
@@ -932,13 +932,69 @@
     "services_worker_removed": false,
     "rust_only_repository_or_runtime_claimed": false,
     "remaining_blockers": [
-      "Rust worker Dockerfile or Compose canary service is not added",
-      "side-by-side service-level canary without racing Python/Celery is not proven",
+      "Rust worker Compose canary service has been added but not yet run end to end through Docker Compose",
+      "side-by-side service-level canary without racing Python/Celery is not yet observed",
       "Rust worker service health/readiness behavior is not defined",
       "production rollback from Rust worker ownership to Python/Celery is not proven",
       "scheduler/beat replacement or retirement is not decided"
     ],
-    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
+    "next_recommended_diff": "DIFF-162 replace Python/Celery worker and resolve beat/scheduler posture"
+  },
+  "rust_worker_docker_compose_canary_rollback": {
+    "diff": "DIFF-161",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A non-default Rust worker Docker/Compose canary service was added with isolated profile-scoped PostgreSQL and Qdrant services, bounded flags, and rollback documentation. It does not replace Python/Celery worker or beat.",
+    "dockerfile": "crates/igy6-worker/Dockerfile",
+    "compose_override": "infra/docker-compose.rust-worker-canary.yml",
+    "base_compose_changed": false,
+    "canary_service": "rust-worker-canary",
+    "canary_dependency_services": [
+      "rust-worker-canary-postgres",
+      "rust-worker-canary-qdrant"
+    ],
+    "compose_profile": "rust-worker-canary",
+    "canary_startup_command": "RUST_WORKER_CANARY_DATA_ROOT=/tmp/igy6-diff161-canary RUST_WORKER_CANARY_QDRANT_CHUNK_COLLECTION=igy6_diff161_chunks docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary up --build rust-worker-canary",
+    "rollback_commands": [
+      "docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary stop rust-worker-canary",
+      "docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary rm -f rust-worker-canary"
+    ],
+    "canary_bounds": {
+      "max_jobs": 3,
+      "max_idle_polls": 1,
+      "claim_limit": 1,
+      "poll_interval_ms": 100
+    },
+    "required_gates": [
+      "explicit docker compose override file",
+      "rust-worker-canary compose profile",
+      "targeted rust-worker-canary service startup",
+      "isolated profile-scoped rust-worker-canary-postgres service",
+      "isolated profile-scoped rust-worker-canary-qdrant service",
+      "RUST_WORKER_CANARY_DATA_ROOT must point at synthetic canary data",
+      "IGY6_WORKER_PROCESS_CANARY=DIFF-159 inside the container"
+    ],
+    "safety_posture": [
+      "default production compose file is unchanged",
+      "normal docker compose startup does not start rust-worker-canary",
+      "canary service depends on isolated canary PostgreSQL and Qdrant services instead of production services",
+      "canary data root is mounted read-only in the Rust worker container",
+      "canary loop remains bounded",
+      "rollback stops and removes only rust-worker-canary"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "Compose-level Rust worker canary has service wiring but has not yet been run end to end against synthetic data",
+      "production worker replacement is not performed in this DIFF",
+      "scheduler/beat replacement or retirement is not resolved in this DIFF",
+      "rollback from production Rust worker ownership back to Python/Celery is documented for canary only, not yet proven for production replacement"
+    ],
+    "next_recommended_diff": "DIFF-162 replace Python/Celery worker and resolve beat/scheduler posture"
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -951,7 +1007,7 @@
     "services_worker": {
       "decision": "retained",
       "path": "services/worker/",
-      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-160 proves one isolated bounded Rust process-loop canary, but Compose worker replacement, service-level side-by-side canary, rollback, and scheduler/beat replacement or retirement are still deferred."
+      "reason": "Docker Compose still runs Python/Celery worker and beat services from this directory; DIFF-161 adds an opt-in Rust worker canary Compose override, but production worker replacement and scheduler/beat replacement or retirement are still deferred."
     },
     "rust_only_repository_claim_allowed": false
   },
@@ -1362,7 +1418,7 @@
             },
             {
                 "path": "services/worker/",
-                "reason": "Python/Celery workers remain required after DIFF-160 because the bounded Rust process-loop canary only ran in isolated synthetic services; Compose cutover, service-level side-by-side canary, rollback, and beat/scheduler posture are not replaced"
+                "reason": "Python/Celery workers remain required after DIFF-161 because the Rust worker Compose service is canary-only; production worker replacement and beat/scheduler posture are not replaced"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
