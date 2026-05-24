@@ -7,8 +7,9 @@ Date: 2026-05-17
 DIFF-103 completed cutover governance with Rust primary and FastAPI fallback.
 DIFF-138 removes FastAPI fallback after route parity reaches zero missing
 FastAPI routes. DIFF-139 archives the tracked legacy FastAPI API source.
-DIFF-140 is the final Rust API cutover audit. The current API topology is
-Rust-native while Python/Celery workers remain active:
+DIFF-140 is the final Rust API cutover audit. DIFF-164 cuts production Docker
+Compose worker ownership to the Rust worker daemon and retires the empty Celery
+beat service. The current API topology is Rust-native:
 
 ```text
 Next.js web
@@ -40,11 +41,13 @@ the route classification remains recorded in
 `configs/legacy-fastapi-route-classification.json` and
 `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`.
 The legacy FastAPI source is archived at
-`archive/legacy-python/services-api`. Python/Celery `worker` and `beat` remain
-active runtime services from `services/worker`. DIFF-143 through DIFF-145 add
-Rust worker planning and executor contracts for `collection_normalization`,
-`document_chunking`, and `chunk_vector_upsert`, but live worker process
-ownership and beat/scheduled-work posture are not cut over.
+`archive/legacy-python/services-api`. DIFF-143 through DIFF-145 add Rust worker
+planning and executor contracts for `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`; DIFF-153, DIFF-155, DIFF-157,
+and DIFF-160 verify the live Rust worker side effects and bounded loop canary;
+DIFF-163 adds production daemon mode; DIFF-164 makes that daemon the active
+production Compose worker. `services/worker/` remains only for rollback/archive
+review until the final audit DIFF.
 
 ## Runtime Topology
 
@@ -54,13 +57,15 @@ ownership and beat/scheduled-work posture are not cut over.
 | --- | --- |
 | `api` | Rust gateway built from `crates/igy6-gateway/Dockerfile`, published on `127.0.0.1:${APP_PORT:-8000}:8000`. |
 | `web` | Next.js UI with `API_BASE_URL=http://api:8000`; browser-side helpers also call `http://127.0.0.1:8000`. |
-| `worker` and `beat` | Python/Celery execution remains active. |
+| `worker` | Rust worker daemon built from `crates/igy6-worker/Dockerfile`; runs `igy6-worker --daemon --claim-limit ${IGY6_WORKER_CLAIM_LIMIT:-4} --poll-interval-ms ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}`. |
 
 The web UI calls the Rust gateway endpoint. The route parity guard reports zero
 FastAPI routes missing from Rust and zero web-used routes requiring fallback.
 Unsupported gateway routes now return Rust 404 responses instead of proxying to
-FastAPI. Full Rust-only repository or runtime operation is not claimed while
-Python/Celery `worker` and `beat` remain active.
+FastAPI. The Python/Celery worker and beat services are no longer active in base
+Compose after DIFF-164, but final Rust-only repository/runtime operation is not
+claimed until the final archive/audit DIFF reviews `services/worker/` removal
+and rollback posture.
 
 ## Worker Execution Parity
 
@@ -73,9 +78,10 @@ deterministic local vector planning, Qdrant collection/status/upsert request
 planning, chunk metadata/status update planning, and `chunk_vectors.*` audit
 events.
 
-This is not a worker runtime cutover. Python/Celery `worker` and `beat` remain
-active until a later DIFF replaces live worker process ownership and decides
-the scheduler/beat posture.
+DIFF-164 is the worker runtime cutover for production Compose. The Rust daemon
+now owns active `worker` service execution for the covered job families.
+Python/Celery `worker` is disabled from active Compose runtime. `beat` is
+removed because no repo-defined Celery beat schedule exists.
 
 DIFF-146 makes that decision explicit: choose Decision B, keep Python/Celery
 `worker` and `beat`, and do not claim full Rust-only runtime. The blocker is
@@ -250,6 +256,18 @@ stop, and marks failed jobs failed with audit instead of retrying unboundedly.
 `infra/docker-compose.yml` is unchanged in this DIFF: Python/Celery `worker`
 and `beat` remain active, `services/worker/` is not archived, and full
 Rust-only runtime is not claimed.
+
+DIFF-164 decision: A, production Compose worker ownership moved to Rust.
+`infra/docker-compose.yml` changes the base `worker` service from the
+Python/Celery image and command to the Rust worker image and explicit
+`igy6-worker --daemon` command with bounded claim and poll settings. The service
+depends on PostgreSQL and Qdrant health and mounts `${IGY6_DATA_ROOT}` at
+`/workspace/storage`. The Python/Celery `worker` service is no longer active.
+The `beat` service is removed because `services/worker/app/celery_app.py`
+defines no `beat_schedule` or periodic task registration. Rollback is to revert
+DIFF-164 or restore the prior Python/Celery `worker` and `beat` service
+definitions from git, validate Compose, and restart. Full Rust-only runtime is
+not finally claimed until the archive/audit DIFF handles `services/worker/`.
 
 ## Rust-Native Gateway Routes
 
@@ -530,10 +548,14 @@ accepts a fallback origin, and route parity reports 0 FastAPI routes missing
 from Rust. DIFF-139 moves the tracked FastAPI API tree to
 `archive/legacy-python/services-api` using `git mv`.
 
-`services/worker/` remains required because Docker Compose still runs:
+`services/worker/` was retained in DIFF-139 because Docker Compose still ran:
 
 - `worker`: `celery -A app.celery_app:celery_app worker --loglevel=INFO`
 - `beat`: `celery -A app.celery_app:celery_app beat --loglevel=INFO`
+
+After DIFF-164, base Docker Compose no longer runs those Python/Celery services.
+`services/worker/` remains in the repository only for rollback/archive review
+until the final audit DIFF.
 
 The Rust worker crate now includes DIFF-143 `collection_normalization` and
 DIFF-144 `document_chunking` execution planning plus SQL/audit/status executor

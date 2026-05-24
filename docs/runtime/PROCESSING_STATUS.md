@@ -4,9 +4,9 @@ Manual upload processing currently has two paths:
 
 - `POST /collection-runs/manual-upload` creates a completed collection run, a
   raw artifact, and a queued `collection_normalization` work item.
-- Python/Celery worker tasks still own the live runtime process for end-to-end
-  processing from raw artifacts to normalized documents, chunks, evidence, and
-  Qdrant vector memory.
+- The production Docker Compose `worker` service now runs the Rust worker
+  daemon for end-to-end processing from raw artifacts to normalized documents,
+  chunks, evidence, and Qdrant vector memory.
 
 The Rust worker crate now has DIFF-143 `collection_normalization`, DIFF-144
 `document_chunking`, and DIFF-145 `chunk_vector_upsert` execution planners plus
@@ -15,16 +15,17 @@ UTF-8 raw artifact normalization, `normalized_documents` insert shape,
 deterministic chunk and evidence item inserts, duplicate skips, deterministic
 local chunk vectors, Qdrant collection/status/upsert request planning,
 originating work-item status, completion/failure audit events, and chained
-work-item creation through the processing pipeline. It does not yet replace
-the live Python/Celery worker process. The Rust gateway dispatch route is
+work-item creation through the processing pipeline. DIFF-164 makes that Rust
+daemon the active production Compose worker. The Rust gateway dispatch route is
 safe-limited: it records dispatch metadata and audit events but does not invoke
 Celery or arbitrary runtime execution.
 
 DIFF-141 audits worker execution parity and recommends migrating worker
-execution to Rust one job family at a time. Until that parity is implemented and
-verified, Python/Celery `worker` remains required for live processing. `beat`
-also remains in the stack; no repo-defined beat schedule currently exists, but
-scheduled-work retirement or replacement requires a later DIFF.
+execution to Rust one job family at a time. DIFF-164 completes production
+Compose worker ownership cutover to the Rust daemon for the covered job
+families. Python/Celery `worker` is no longer active in base Compose. `beat` is
+removed from base Compose because no repo-defined beat schedule exists in
+`services/worker/app/celery_app.py`.
 
 DIFF-142 adds the Rust queue-claim contract only. DIFF-143 adds
 `collection_normalization` execution parity planning and executor contracts.
@@ -199,6 +200,16 @@ as failed work items with audit events instead of unbounded retries. Docker
 Compose is not cut over in this DIFF, so Python/Celery `worker` and `beat`
 remain active and scheduler/beat posture remains deferred.
 
+DIFF-164 cuts base Docker Compose worker ownership to Rust. The `worker`
+service now builds `crates/igy6-worker/Dockerfile` and runs
+`igy6-worker --daemon --claim-limit ${IGY6_WORKER_CLAIM_LIMIT:-4}
+--poll-interval-ms ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}` with
+`IGY6_DATA_ROOT=/workspace/storage`. It depends on healthy PostgreSQL and
+Qdrant. The Python/Celery `worker` service is not active in base Compose, and
+the empty Celery `beat` service is removed. `services/worker/` remains in the
+repository for rollback/archive review until the final audit DIFF, so final
+Rust-only repository/runtime is not claimed here.
+
 ## Pipeline
 
 ```text
@@ -221,8 +232,7 @@ python3 scripts/processing-status-smoke.py
 The script checks an already-running stack only. It validates:
 
 - Docker Compose config.
-- `worker`, `redis`, `postgres`, `qdrant`, `api`, and `web` are running.
-- Redis responds to `PING`.
+- `worker`, `postgres`, `qdrant`, `api`, and `web` are running.
 - Postgres responds to `pg_isready`.
 - API readiness responds.
 - Work items can be inspected.

@@ -125,40 +125,26 @@ services:
 
   worker:
     build:
-      context: ../services/worker
+      context: ..
+      dockerfile: crates/igy6-worker/Dockerfile
     environment:
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       DATABASE_URL: ${DATABASE_URL}
-      ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
+      IGY6_DATA_ROOT: /workspace/storage
       QDRANT_URL: ${QDRANT_URL}
       QDRANT_CHUNK_COLLECTION: ${QDRANT_CHUNK_COLLECTION}
       QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE}
-    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
+      IGY6_WORKER_SHUTDOWN_FILE: ${IGY6_WORKER_SHUTDOWN_FILE:-worker/control/shutdown}
+    command:
+      - igy6-worker
+      - --daemon
+      - --claim-limit
+      - ${IGY6_WORKER_CLAIM_LIMIT:-4}
+      - --poll-interval-ms
+      - ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    volumes:
-      - type: bind
-        source: ${IGY6_DATA_ROOT}
-        target: /workspace/storage
-
-  beat:
-    build:
-      context: ../services/worker
-    environment:
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
-      DATABASE_URL: ${DATABASE_URL}
-      ARTIFACT_STORE_PATH: ${ARTIFACT_STORE_PATH}
-      QDRANT_URL: ${QDRANT_URL}
-      QDRANT_CHUNK_COLLECTION: ${QDRANT_CHUNK_COLLECTION}
-      QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE}
-    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO"]
-    depends_on:
-      redis:
+      qdrant:
         condition: service_healthy
     volumes:
       - type: bind

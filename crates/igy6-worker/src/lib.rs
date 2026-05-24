@@ -470,7 +470,7 @@ pub struct WorkerDaemonPlan {
 }
 
 pub fn worker_runtime_help() -> &'static str {
-    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --daemon [--claim-limit N] [--poll-interval-ms MS]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --daemon           DIFF-163 production-capable Rust worker daemon; explicit command, no canary env gate, repeated queue polling until shutdown marker or fatal error.\n  --canary-loop      DIFF-160 process-loop canary; live only with explicit env gate and bounded limits.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-163 safety: default mode is non-mutating, daemon mode is opt-in by command, daemon checks IGY6_DATA_ROOT/worker/control/shutdown between polls, canary-loop still requires IGY6_WORKER_PROCESS_CANARY=DIFF-159, Python/Celery worker and beat remain active until Compose cutover, and Rust-only runtime is not claimed.\n"
+    "igy6-worker\n\nUsage:\n  igy6-worker [--check]\n  igy6-worker --dry-run [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --once [--claim-limit 1]\n  igy6-worker --daemon [--claim-limit N] [--poll-interval-ms MS]\n  IGY6_WORKER_LIVE_CANARY=DIFF-148 igy6-worker --once --canary-live --canary-work-item ID\n  IGY6_WORKER_PROCESS_CANARY=DIFF-159 igy6-worker --canary-loop --max-jobs N --max-idle-polls N [--claim-limit N] [--poll-interval-ms MS]\n  igy6-worker --help\n\nModes:\n  --check            Validate safe runtime configuration without touching runtime data. This is the default.\n  --dry-run          Plan queue polling and one bounded claim batch without DB, artifact, audit, or Qdrant side effects.\n  --once             Plan a single bounded worker iteration without live execution.\n  --daemon           DIFF-163/DIFF-164 production-capable Rust worker daemon; explicit command, no canary env gate, repeated queue polling until shutdown marker or fatal error.\n  --canary-loop      DIFF-160 process-loop canary; live only with explicit env gate and bounded limits.\n  --canary-live      Opt-in DIFF-149 live canary; bounded to one named work item and requires IGY6_WORKER_LIVE_CANARY=DIFF-148.\n  --canary-work-item Work item id for the canary gate.\n  --claim-limit N    Bounded claim limit, 1 through 16.\n  --max-jobs N       Bounded process canary job budget, 1 through 16.\n  --max-idle-polls N Bounded process canary idle-poll budget, 0 through 16.\n  --poll-interval-ms Bounded modeled poll interval, 100 through 60000.\n\nDIFF-164 safety: default mode is non-mutating, daemon mode is opt-in by command or Compose service invocation, daemon checks IGY6_DATA_ROOT/worker/control/shutdown between polls, canary-loop still requires IGY6_WORKER_PROCESS_CANARY=DIFF-159, production Compose worker ownership uses this Rust daemon, the empty Celery beat service is retired, and final Rust-only audit/archive remains deferred.\n"
 }
 
 pub fn parse_worker_runtime_args<I, S>(args: I) -> Result<WorkerRuntimeArgs, WorkerRuntimeError>
@@ -775,9 +775,10 @@ pub fn plan_worker_process_canary(config: &WorkerRuntimeConfig) -> WorkerProcess
             "bounded --max-idle-polls",
             "bounded --claim-limit",
             "bounded --poll-interval-ms",
-            "Python/Celery worker remains production owner during canary planning",
+            "production Compose worker ownership is Rust daemon after DIFF-164",
         ],
-        scheduler_beat_posture: "retained; replacement or retirement deferred",
+        scheduler_beat_posture:
+            "retained during canary planning; production Compose retirement handled by DIFF-164",
         side_effects_executed: Vec::new(),
         side_effects_planned: vec![
             "bounded queue polling",
@@ -816,7 +817,8 @@ pub fn plan_worker_daemon(config: &WorkerRuntimeConfig) -> WorkerDaemonPlan {
             "idle polls sleep for poll_interval_ms before polling again",
             "fatal database claim/connect errors stop the daemon for supervisor restart",
         ],
-        scheduler_beat_posture: "retained; replacement or retirement deferred",
+        scheduler_beat_posture:
+            "retired in production Compose by DIFF-164; no repo-defined Celery beat schedule found",
         side_effects_planned: vec![
             "repeated queue polling",
             "FOR UPDATE SKIP LOCKED claim",
@@ -835,13 +837,13 @@ pub fn render_worker_runtime_status(
 ) -> Value {
     json!({
         "service": "igy6-worker",
-        "diff": "DIFF-163",
+        "diff": "DIFF-164",
         "mode": plan.mode.as_str(),
         "status": plan.status,
         "mutates_runtime_data": plan.mutates_runtime_data,
         "live_execution_enabled": plan.live_execution_enabled,
-        "python_celery_worker_required": true,
-        "python_celery_beat_required": true,
+        "python_celery_worker_required": false,
+        "python_celery_beat_required": false,
         "rust_only_runtime_claimed": false,
         "claim_limit": config.claim_limit,
         "max_jobs": config.max_jobs,
@@ -909,8 +911,8 @@ pub fn render_worker_daemon_result(
         "result_state": result.result_state,
         "mutates_runtime_data": result.mutates_runtime_data,
         "live_execution_enabled": result.live_execution_enabled,
-        "python_celery_worker_required": true,
-        "python_celery_beat_required": true,
+        "python_celery_worker_required": false,
+        "python_celery_beat_required": false,
         "rust_only_runtime_claimed": false,
         "claim_limit": result.claim_limit,
         "poll_interval_ms": result.poll_interval_ms,
@@ -954,8 +956,8 @@ pub fn render_worker_live_canary_result(
         "result_state": result.result_state,
         "mutates_runtime_data": result.mutates_runtime_data,
         "live_execution_enabled": result.live_execution_enabled,
-        "python_celery_worker_required": true,
-        "python_celery_beat_required": true,
+        "python_celery_worker_required": false,
+        "python_celery_beat_required": false,
         "rust_only_runtime_claimed": false,
         "qdrant_chunk_collection": config.qdrant_chunk_collection,
         "qdrant_chunk_vector_size": config.qdrant_chunk_vector_size,
@@ -981,8 +983,8 @@ pub fn render_worker_process_canary_result(
         "result_state": result.result_state,
         "mutates_runtime_data": result.mutates_runtime_data,
         "live_execution_enabled": result.live_execution_enabled,
-        "python_celery_worker_required": true,
-        "python_celery_beat_required": true,
+        "python_celery_worker_required": false,
+        "python_celery_beat_required": false,
         "rust_only_runtime_claimed": false,
         "max_jobs": result.max_jobs,
         "max_idle_polls": result.max_idle_polls,
@@ -1184,7 +1186,7 @@ fn execute_worker_daemon_inner(
             match claim_next_worker_work_item(
                 &mut client,
                 config.claim_limit,
-                "DIFF-163",
+                "DIFF-164",
                 "production_daemon",
                 "daemon claim rejected",
             )? {
@@ -1221,7 +1223,7 @@ fn execute_worker_daemon_inner(
 
     Ok(WorkerDaemonResult {
         service: "igy6-worker",
-        diff: "DIFF-163",
+        diff: "DIFF-164",
         mode: "daemon",
         status: "daemon_exited_cleanly".to_string(),
         result_state: if jobs_failed == 0 {
@@ -3895,7 +3897,7 @@ mod tests {
             .blocked_side_effects
             .contains(&"Qdrant HTTP calls".to_string()));
         assert_eq!(status["rust_only_runtime_claimed"], json!(false));
-        assert_eq!(status["python_celery_worker_required"], json!(true));
+        assert_eq!(status["python_celery_worker_required"], json!(false));
     }
 
     #[test]
@@ -3931,11 +3933,11 @@ mod tests {
             .contains(&"IGY6_WORKER_PROCESS_CANARY=DIFF-159 acknowledgement"));
         assert_eq!(
             process_canary.scheduler_beat_posture,
-            "retained; replacement or retirement deferred"
+            "retained during canary planning; production Compose retirement handled by DIFF-164"
         );
         assert_eq!(status["process_canary"]["max_jobs"], json!(4));
         assert_eq!(status["process_canary"]["side_effects_executed"], json!([]));
-        assert_eq!(status["python_celery_beat_required"], json!(true));
+        assert_eq!(status["python_celery_beat_required"], json!(false));
     }
 
     #[test]
@@ -3955,7 +3957,7 @@ mod tests {
         assert_eq!(daemon.claim_limit, 2);
         assert_eq!(
             daemon.scheduler_beat_posture,
-            "retained; replacement or retirement deferred"
+            "retired in production Compose by DIFF-164; no repo-defined Celery beat schedule found"
         );
         assert!(daemon
             .safety_gates
@@ -3976,7 +3978,7 @@ mod tests {
         let config = WorkerRuntimeConfig::safe_default();
         let result = WorkerDaemonResult {
             service: "igy6-worker",
-            diff: "DIFF-163",
+            diff: "DIFF-164",
             mode: "daemon",
             status: "daemon_exited_cleanly".to_string(),
             result_state: "completed_with_job_failures".to_string(),
@@ -3996,12 +3998,12 @@ mod tests {
         };
         let rendered = render_worker_daemon_result(&result, &config);
 
-        assert_eq!(rendered["diff"], json!("DIFF-163"));
+        assert_eq!(rendered["diff"], json!("DIFF-164"));
         assert_eq!(rendered["mode"], json!("daemon"));
         assert_eq!(rendered["jobs_failed"], json!(1));
         assert_eq!(rendered["exit_reason"], json!("shutdown marker observed"));
         assert_eq!(rendered["rust_only_runtime_claimed"], json!(false));
-        assert_eq!(rendered["python_celery_worker_required"], json!(true));
+        assert_eq!(rendered["python_celery_worker_required"], json!(false));
     }
 
     #[test]

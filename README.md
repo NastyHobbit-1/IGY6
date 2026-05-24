@@ -111,6 +111,16 @@ queued work, keeps claim and poll bounds, observes the shutdown marker
 audit instead of retrying them unboundedly. Docker Compose is not cut over in
 this DIFF, so Python/Celery `worker` and `beat` remain active and full
 Rust-only runtime is still not claimed.
+DIFF-164 cuts production Docker Compose worker ownership to the Rust worker
+daemon. The base `worker` service now builds `crates/igy6-worker/Dockerfile`
+and runs `igy6-worker --daemon --claim-limit ${IGY6_WORKER_CLAIM_LIMIT:-4}
+--poll-interval-ms ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}` against PostgreSQL,
+Qdrant, and `/workspace/storage`. The Python/Celery `worker` service is no
+longer active in production Compose. `beat` is removed because
+`services/worker/app/celery_app.py` defines no repo `beat_schedule` or periodic
+tasks; scheduled-work replacement is therefore retired rather than replaced.
+`services/worker/` remains in the repository until the final archive/audit DIFF,
+so final Rust-only repository/runtime is not claimed here.
 
 Current web-used route parity is tracked by:
 
@@ -169,6 +179,15 @@ docker compose -f infra/docker-compose.yml \
   --env-file .env.example \
   --profile rust-worker-canary \
   rm -f rust-worker-canary
+```
+
+Rollback production worker ownership to Python/Celery by reverting DIFF-164 or
+restoring the previous `worker` and `beat` service definitions from git, then
+validating Compose before restart:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env config
+docker compose -f infra/docker-compose.yml --env-file .env up --build worker
 ```
 
 Show running services:
@@ -344,7 +363,8 @@ item creation, evidence availability, and retrieval visibility separately.
 ## Processing Status Diagnostics
 
 Manual upload creates raw artifact metadata and queued processing work. Live
-end-to-end processing is still owned by the Python/Celery worker. The Rust
+end-to-end processing is now owned by the Rust worker daemon in production
+Docker Compose. The Rust
 worker crate has DIFF-143 collection normalization, DIFF-144 document chunking,
 and DIFF-145 chunk vector upsert parity planning and executor contracts, and
 DIFF-146 retains Python/Celery because there is not yet a Rust worker process
@@ -380,7 +400,7 @@ isolated Qdrant; collection ensure succeeded, point upsert failed with HTTP
 400, and chunks remained `not_started`. DIFF-157 fixed the point ID shape and
 reran exactly one vector canary; Qdrant point upsert succeeded, three points
 were stored, and chunk embedding metadata/status updates were observed.
-DIFF-158 retains Python/Celery worker and beat because Rust has not yet proven
+DIFF-158 retains Python/Celery worker and beat because Rust had not yet proven
 long-running worker process ownership, broad queue polling, Compose cutover, or
 scheduler replacement/retirement.
 DIFF-159 adds the bounded `--canary-loop` planning mode for a future process
@@ -389,6 +409,9 @@ for later DIFFs.
 DIFF-160 runs the bounded live process-loop canary once in isolated synthetic
 services and observes three completed work items, audit events, one normalized
 document, one chunk/evidence item, and one Qdrant point.
+DIFF-163 adds production daemon mode, and DIFF-164 changes the production
+Compose `worker` service to that Rust daemon. The Python/Celery `worker` and
+empty `beat` services are no longer active in base Compose.
 
 Check worker/processing status:
 
@@ -397,7 +420,7 @@ python3 scripts/processing-status-smoke.py
 ```
 
 See `docs/runtime/PROCESSING_STATUS.md` for the pipeline, status meanings, and
-worker/API/Redis log commands.
+worker/API log commands.
 
 ## Optional Local LLM Plan
 
