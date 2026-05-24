@@ -58,6 +58,11 @@ exactly once in an isolated local PostgreSQL container and verifies successful
 were written, three chunks and three evidence items were created, and a chained
 `chunk_vector_upsert` work item was queued. Qdrant, broad Rust worker process
 ownership, Compose worker replacement, and beat posture remain unresolved.
+DIFF-156 runs the selected `chunk_vector_upsert` canary exactly once against
+isolated PostgreSQL and Qdrant. It verifies safe claim/failure audit behavior
+and Qdrant collection ensure, but Qdrant point upsert returns HTTP 400, so no
+points are stored and chunk embedding metadata/status updates remain
+unverified.
 
 Current web-used route parity is tracked by:
 
@@ -293,7 +298,9 @@ and no chunks, evidence items, or chained vector work item were written.
 DIFF-155 reran the corrected `document_chunking` canary exactly once with
 `chunk_size=100` in an isolated database and observed successful chunk,
 evidence, and chained vector-work-item writes. Qdrant work remains for a later
-`chunk_vector_upsert` canary.
+`chunk_vector_upsert` canary. DIFF-156 ran that vector canary once against
+isolated Qdrant; collection ensure succeeded, point upsert failed with HTTP
+400, and chunks remained `not_started`.
 
 Check worker/processing status:
 

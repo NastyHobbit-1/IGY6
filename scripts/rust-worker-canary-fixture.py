@@ -26,6 +26,16 @@ DOCUMENT_ACTOR_ID = "diff-154-canary"
 DOCUMENT_SOURCE_ID = "diff-154-canary-source"
 DOCUMENT_ID = "diff-154-canary-document"
 DOCUMENT_WORK_ITEM_ID = "diff-154-canary-work-item"
+VECTOR_ACTOR_ID = "diff-156-canary"
+VECTOR_SOURCE_ID = "diff-156-canary-source"
+VECTOR_DOCUMENT_ID = "diff-156-canary-document"
+VECTOR_WORK_ITEM_ID = "work-item-18b25ee83a881458-6"
+VECTOR_PARENT_WORK_ITEM_ID = DOCUMENT_WORK_ITEM_ID
+VECTOR_CHUNK_IDS = [
+    "chunk-18b25ee83a4d8467-0",
+    "chunk-18b25ee83a4d9290-2",
+    "chunk-18b25ee83a4d94f0-4",
+]
 ARTIFACT_TEXT = (
     "DIFF-152 synthetic Rust worker canary artifact.\n"
     "This file contains non-sensitive local fixture text only.\n"
@@ -37,6 +47,11 @@ DOCUMENT_TEXT = (
     "multiple deterministic chunks when the Rust worker uses a small chunk size. "
     "It verifies chunk and evidence writes without Qdrant execution."
 )
+VECTOR_CHUNK_TEXTS = [
+    DOCUMENT_TEXT[0:100],
+    DOCUMENT_TEXT[100:200],
+    DOCUMENT_TEXT[200:],
+]
 
 
 def json_sql(value: Any) -> str:
@@ -121,6 +136,42 @@ def document_work_item_payload() -> dict[str, Any]:
             ],
             "missing_information": [],
             "recorded_by": "DIFF-154 fixture",
+        },
+    }
+
+
+def vector_work_item_payload() -> dict[str, Any]:
+    return {
+        "chunk_ids": VECTOR_CHUNK_IDS,
+        "limit": len(VECTOR_CHUNK_IDS),
+        "parent_work_item_id": VECTOR_PARENT_WORK_ITEM_ID,
+        "worker_task_name": "memory.vector.upsert_chunks",
+        "generated_by": "DIFF-156",
+        "intent_verification_recorded": True,
+        "intent_verification": {
+            "original_request": "Run one safe chunk_vector_upsert Rust worker canary.",
+            "interpretation": (
+                "Seed one synthetic queued chunk_vector_upsert work item for a "
+                "gated Rust canary run against isolated PostgreSQL and Qdrant."
+            ),
+            "proposed_work_type": "chunk_vector_upsert",
+            "sources_likely_used": [VECTOR_SOURCE_ID],
+            "expected_output": (
+                "Qdrant collection ensure, Qdrant point upsert, chunk embedding "
+                "metadata updates, and completion audit rows."
+            ),
+            "safety_requirements": [
+                "Use synthetic fixture data only.",
+                "Run only the selected chunk_vector_upsert work item.",
+                "Use isolated local PostgreSQL and local Qdrant only.",
+                "Do not process broad queues.",
+            ],
+            "assumptions": [
+                "The isolated canary database contains only this synthetic vector fixture.",
+                "The isolated Qdrant instance is disposable and contains no private data.",
+            ],
+            "missing_information": [],
+            "recorded_by": "DIFF-156 fixture",
         },
     }
 
@@ -232,7 +283,75 @@ def document_fixture_sql() -> str:
     )
 
 
+def vector_fixture_sql() -> str:
+    source_metadata = {
+        "generated_by": "DIFF-156",
+        "fixture": "rust_worker_chunk_vector_upsert_canary",
+        "non_production": True,
+    }
+    document_metadata = {
+        "generated_by": "DIFF-156",
+        "fixture": "rust_worker_chunk_vector_upsert_canary",
+        "non_sensitive": True,
+    }
+    chunk_metadata = {
+        "generated_by": "DIFF-156",
+        "fixture": "rust_worker_chunk_vector_upsert_canary",
+        "non_sensitive": True,
+    }
+    payload = vector_work_item_payload()
+    lines = [
+        "BEGIN;",
+        "INSERT INTO sources (id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json)",
+        (
+            f"VALUES ({text_sql(VECTOR_SOURCE_ID)}, 'DIFF-156 Rust chunk_vector_upsert canary source', "
+            f"'manual_upload', 'synthetic://diff-156-chunk-vector-upsert-canary', "
+            f"{text_sql(VECTOR_ACTOR_ID)}, 'internal', 'test_fixture', true, {json_sql(source_metadata)})"
+        ),
+        "ON CONFLICT (id) DO UPDATE SET enabled = true, metadata_json = EXCLUDED.metadata_json, updated_at = now();",
+        "INSERT INTO normalized_documents (id, raw_artifact_id, source_id, title, document_type, language, text_content, sensitivity, metadata_json)",
+        (
+            f"VALUES ({text_sql(VECTOR_DOCUMENT_ID)}, NULL, {text_sql(VECTOR_SOURCE_ID)}, "
+            f"'diff-156-chunk-vector-upsert-canary.txt', 'text', NULL, {text_sql(DOCUMENT_TEXT)}, "
+            f"'internal', {json_sql(document_metadata)})"
+        ),
+        "ON CONFLICT (id) DO UPDATE SET text_content = EXCLUDED.text_content, metadata_json = EXCLUDED.metadata_json, updated_at = now();",
+    ]
+    for index, (chunk_id, chunk_text) in enumerate(zip(VECTOR_CHUNK_IDS, VECTOR_CHUNK_TEXTS)):
+        location = {"chunk_index": index, "generated_by": "DIFF-156"}
+        lines.extend(
+            [
+                "INSERT INTO chunks (id, document_id, chunk_index, text_content, location_json, embedding_status, metadata_json)",
+                (
+                    f"VALUES ({text_sql(chunk_id)}, {text_sql(VECTOR_DOCUMENT_ID)}, {index}, "
+                    f"{text_sql(chunk_text)}, {json_sql(location)}, 'not_started', {json_sql(chunk_metadata)})"
+                ),
+                "ON CONFLICT (id) DO UPDATE SET text_content = EXCLUDED.text_content, embedding_status = 'not_started', metadata_json = EXCLUDED.metadata_json, updated_at = now();",
+            ]
+        )
+    lines.extend(
+        [
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message)",
+            (
+                f"VALUES ({text_sql(VECTOR_WORK_ITEM_ID)}, 'chunk_vector_upsert', 'queued', "
+                f"{text_sql(VECTOR_ACTOR_ID)}, {json_sql(payload)}, NULL)"
+            ),
+            "ON CONFLICT (id) DO UPDATE SET status = 'queued', payload_json = EXCLUDED.payload_json, error_message = NULL, updated_at = now();",
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json)",
+            (
+                f"VALUES ({text_sql(VECTOR_ACTOR_ID)}, 'rust_worker_canary_fixture.selected', "
+                f"'selected', 'work_item', {text_sql(VECTOR_WORK_ITEM_ID)}, {text_sql(VECTOR_WORK_ITEM_ID)}, "
+                f"{json_sql({'generated_by': 'DIFF-156', 'selected_work_item_id': VECTOR_WORK_ITEM_ID, 'work_type': 'chunk_vector_upsert'})});"
+            ),
+            "COMMIT;",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def fixture_sql(fixture: str = "collection_normalization") -> str:
+    if fixture == "chunk_vector_upsert":
+        return vector_fixture_sql()
     if fixture == "document_chunking":
         return document_fixture_sql()
     return collection_fixture_sql()
@@ -370,7 +489,24 @@ def document_observation_sql() -> str:
     )
 
 
+def vector_observation_sql() -> str:
+    chunk_ids_sql = ", ".join(text_sql(chunk_id) for chunk_id in VECTOR_CHUNK_IDS)
+    return "\n".join(
+        [
+            "\\pset format unaligned",
+            "\\pset fieldsep '|'",
+            "\\pset tuples_only off",
+            f"SELECT 'work_item' AS section, id, work_type, status, COALESCE(error_message, '') AS error_message FROM work_items WHERE id = {text_sql(VECTOR_WORK_ITEM_ID)} ORDER BY id;",
+            f"SELECT 'audit_event' AS section, event_type, decision, resource_type, resource_id, correlation_id FROM audit_events WHERE correlation_id = {text_sql(VECTOR_WORK_ITEM_ID)} OR resource_id = {text_sql(VECTOR_WORK_ITEM_ID)} ORDER BY id;",
+            f"SELECT 'chunk' AS section, id, document_id, chunk_index::text, embedding_status, metadata_json->>'embedding_method' AS embedding_method, metadata_json->>'vector_collection' AS vector_collection FROM chunks WHERE id IN ({chunk_ids_sql}) ORDER BY id;",
+            f"SELECT 'normalized_document' AS section, id, source_id, title, document_type, sensitivity, length(text_content)::text AS text_length FROM normalized_documents WHERE id = {text_sql(VECTOR_DOCUMENT_ID)} ORDER BY id;",
+        ]
+    )
+
+
 def observation_sql(fixture: str = "collection_normalization") -> str:
+    if fixture == "chunk_vector_upsert":
+        return vector_observation_sql()
     if fixture == "document_chunking":
         return document_observation_sql()
     return collection_observation_sql()
@@ -405,6 +541,8 @@ def ensure_canary_data_root(data_root: Path) -> None:
         and "diff-152" not in lowered
         and "diff154" not in lowered
         and "diff-154" not in lowered
+        and "diff156" not in lowered
+        and "diff-156" not in lowered
     ):
         raise SystemExit(
             "Refusing to write artifact: --data-root must clearly be a canary/diff152 test path."
@@ -426,7 +564,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare the DIFF-152 Rust worker canary fixture.")
     parser.add_argument(
         "--fixture",
-        choices=["collection_normalization", "document_chunking"],
+        choices=["collection_normalization", "document_chunking", "chunk_vector_upsert"],
         default="collection_normalization",
         help="Synthetic canary fixture to emit.",
     )
@@ -454,7 +592,25 @@ def main() -> int:
     args = parser.parse_args()
 
     artifact = artifact_plan()
-    if args.fixture == "document_chunking":
+    if args.fixture == "chunk_vector_upsert":
+        selected = {
+            "diff": "DIFF-156",
+            "decision": "A",
+            "fixture": "rust_worker_canary_chunk_vector_upsert",
+            "selected_work_item_id": VECTOR_WORK_ITEM_ID,
+            "parent_work_item_id": VECTOR_PARENT_WORK_ITEM_ID,
+            "source_id": VECTOR_SOURCE_ID,
+            "document_id": VECTOR_DOCUMENT_ID,
+            "chunk_ids": VECTOR_CHUNK_IDS,
+            "work_type": "chunk_vector_upsert",
+            "limit": len(VECTOR_CHUNK_IDS),
+            "live_canary_command": (
+                "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- "
+                f"--once --canary-live --canary-work-item {VECTOR_WORK_ITEM_ID}"
+            ),
+            "live_canary_run_by_fixture": False,
+        }
+    elif args.fixture == "document_chunking":
         selected = {
             "diff": "DIFF-154",
             "decision": "A",

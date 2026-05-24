@@ -166,6 +166,16 @@ or run because DIFF-155 was scoped to `document_chunking` only. Worker process
 cutover is still not claimed: live `chunk_vector_upsert`/Qdrant, broad queue
 ownership, Compose worker replacement, and beat posture remain unresolved.
 
+DIFF-156 decision: A, controlled `chunk_vector_upsert` canary was run exactly
+once but failed safely at Qdrant point upsert. The selected work item
+`work-item-18b25ee83a881458-6` moved to `failed`, claim/start/failure audit
+events were observed, Qdrant collection `igy6_diff156_chunks` was created, and
+Qdrant point count remained 0 after `PUT /points` returned HTTP 400. Chunk
+`embedding_status` and vector metadata remained unchanged because the Qdrant
+upsert did not complete. Worker process cutover is still not claimed:
+successful Qdrant upsert, broad queue ownership, Compose worker replacement,
+and beat posture remain unresolved.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

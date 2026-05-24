@@ -119,6 +119,18 @@ Python/Celery `worker` and `beat` remain active because live
 `chunk_vector_upsert`/Qdrant, broad Rust worker process ownership, Compose
 wiring, and scheduler posture are still not replaced.
 
+DIFF-156 chooses Decision A and runs exactly one gated `chunk_vector_upsert`
+canary against isolated synthetic PostgreSQL and Qdrant containers. The
+selected work item `work-item-18b25ee83a881458-6` was claimed, started, and
+then failed safely with `Qdrant point upsert failed with HTTP 400`. Observed
+side effects: `work_items` moved to `failed`, `chunk_vectors.failed` audit was
+written, Qdrant collection `igy6_diff156_chunks` was created with vector size
+384 and Cosine distance, and Qdrant point count remained 0. Chunk
+`embedding_status` and vector metadata remained unchanged. Python/Celery
+`worker` and `beat` remain active because successful Qdrant upsert, broad Rust
+worker process ownership, Compose wiring, and scheduler posture are still not
+replaced.
+
 ## Pipeline
 
 ```text
