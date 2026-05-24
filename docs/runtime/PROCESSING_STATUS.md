@@ -108,6 +108,17 @@ no `chunks`, `evidence_items`, or chained `chunk_vector_upsert` work item were
 created. The fixture helper now emits `chunk_size=100` for the next controlled
 document-chunking canary, but DIFF-154 does not run a second canary.
 
+DIFF-155 chooses Decision A and runs exactly one corrected gated
+`document_chunking` canary against isolated synthetic data. The selected work
+item `diff-154-canary-work-item` completed, claim/start/success audit rows were
+observed, three `chunks` rows were written with text lengths 100, 100, and 61,
+three `evidence_items` rows were written, and one chained
+`chunk_vector_upsert` work item was queued. Qdrant side effects were not
+expected or run because this DIFF was scoped to `document_chunking` only.
+Python/Celery `worker` and `beat` remain active because live
+`chunk_vector_upsert`/Qdrant, broad Rust worker process ownership, Compose
+wiring, and scheduler posture are still not replaced.
+
 ## Pipeline
 
 ```text

@@ -156,6 +156,16 @@ without writing chunks, evidence items, or a chained `chunk_vector_upsert` work
 item. The fixture helper is corrected to emit `chunk_size=100` for a later
 canary. Qdrant side effects were not expected or run in DIFF-154.
 
+DIFF-155 decision: A, corrected `document_chunking` canary completed. The
+corrected fixture was applied to an isolated local PostgreSQL canary container,
+then Rust ran exactly one selected work item: `diff-154-canary-work-item`.
+Observed side effects include `work_items` completion, claim/start/success
+audit events, three `chunks` rows, three `evidence_items` rows, and one chained
+queued `chunk_vector_upsert` work item. Qdrant side effects were not expected
+or run because DIFF-155 was scoped to `document_chunking` only. Worker process
+cutover is still not claimed: live `chunk_vector_upsert`/Qdrant, broad queue
+ownership, Compose worker replacement, and beat posture remain unresolved.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:
