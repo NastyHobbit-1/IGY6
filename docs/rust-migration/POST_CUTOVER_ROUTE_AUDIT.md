@@ -283,6 +283,12 @@ for the API and worker path. Rollback remains possible through the archive and
 git history by restoring the previous Python/Celery service definitions,
 validating Compose, and restarting intentionally.
 
+DIFF-166 hardening audit keeps that runtime ownership unchanged and adds the
+non-destructive `scripts/post-cutover-runtime-audit.py` check. The check reads
+repository files only and verifies that active Compose/runtime docs point to
+the Rust gateway and Rust worker daemon while archived Python source remains
+history/rollback-only.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

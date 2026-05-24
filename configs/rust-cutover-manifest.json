@@ -1149,6 +1149,24 @@
     ],
     "rollback_posture": "Legacy Python worker source is preserved at archive/legacy-python/services-worker and in git history. To roll back worker ownership, restore the prior Python/Celery worker and optional beat service definitions, point them at the archived source or restore the historical services/worker path, validate Docker Compose, and restart intentionally."
   },
+  "post_cutover_hardening_audit": {
+    "diff": "DIFF-166",
+    "status": "complete",
+    "audit_scope": "post-cutover current-runtime docs, manifest, Compose/runtime references, and non-destructive operator checks",
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "active_python_celery_worker_claims_found": false,
+    "active_python_celery_beat_claims_found": false,
+    "archive_python_references_allowed": true,
+    "verification_script": "scripts/post-cutover-runtime-audit.py",
+    "remaining_archived_python_references": [
+      "archive/legacy-python/services-api/",
+      "archive/legacy-python/services-worker/",
+      "historical DIFF docs and chronological migration audit entries",
+      "rollback instructions for intentionally restoring legacy topology"
+    ],
+    "current_runtime_posture": "Rust gateway API and Rust worker daemon are the active application runtime; Next.js web, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix remain expected non-Rust supporting components."
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {

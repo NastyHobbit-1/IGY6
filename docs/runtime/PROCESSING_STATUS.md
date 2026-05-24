@@ -19,7 +19,7 @@ made the daemon the active production Compose worker, and DIFF-165 archived the
 inactive Python/Celery worker source under
 `archive/legacy-python/services-worker`.
 
-No Python/Celery `worker` service and no Celery `beat` service remains active in
+No Python/Celery `worker` service and no Celery `beat` service remain active in
 base Docker Compose. `beat` is retired because the archived worker source has no
 repo-defined beat schedule or periodic task registration. The Rust gateway
 dispatch route is safe-limited: it records dispatch metadata and audit events
@@ -79,6 +79,12 @@ Rust worker harness check:
 
 ```bash
 cargo run -p igy6-worker -- --check
+```
+
+Post-cutover runtime audit:
+
+```bash
+python3 scripts/post-cutover-runtime-audit.py
 ```
 
 Rust worker canary plan:

@@ -4,8 +4,9 @@ DIFF-138 keeps the Rust gateway as the `api` service and removes the FastAPI
 `legacy-api` fallback wiring after route parity reaches zero missing FastAPI
 routes. DIFF-139 archives the tracked legacy FastAPI API source under
 `archive/legacy-python/services-api`. DIFF-140 records the final Rust API
-cutover audit: the active API path is Rust-native, FastAPI fallback is removed,
-and Python/Celery `worker` and `beat` remain active. The cutover checks remain
+cutover audit from that point: the active API path became Rust-native, FastAPI
+fallback was removed, and Python/Celery `worker` and `beat` still remained
+active until later worker cutover DIFFs. The cutover checks remain
 non-destructive: they do not delete files, do not touch runtime/private data,
 and do not move `.env` files.
 DIFF-162 reviewed production worker replacement and decided not to replace the
@@ -78,6 +79,7 @@ docker compose -f infra/docker-compose.yml --env-file .env up --build worker
 ## Manual Verification Points
 
 - `scripts/rust-cutover.sh --check`
+- `python3 scripts/post-cutover-runtime-audit.py`
 - `npm --prefix apps/web run build`
 - `docker compose -f infra/docker-compose.yml --env-file .env.example config`
 - Local API health after services are started

@@ -138,6 +138,12 @@ scripts/runtime-smoke.sh --stop
 
 The stop command uses `docker compose down`, never `down -v`.
 
+Run the post-cutover audit without touching runtime data:
+
+```bash
+python3 scripts/post-cutover-runtime-audit.py
+```
+
 ## Simple WSL Aliases
 
 Add aliases like these to your shell profile, adjusting the path:
