@@ -105,8 +105,9 @@ missing = [key for key in required_top if key not in data]
 if missing:
     raise SystemExit(f"missing manifest keys: {missing}")
 
-if data["target_architecture"] != "rust-primary":
-    raise SystemExit("target_architecture must be rust-primary")
+valid_targets = {"rust-primary", "rust-only-application-runtime"}
+if data["target_architecture"] not in valid_targets:
+    raise SystemExit("target_architecture must be rust-primary or rust-only-application-runtime")
 
 if not isinstance(data["cutover_ready"], bool):
     raise SystemExit("cutover_ready must be boolean")

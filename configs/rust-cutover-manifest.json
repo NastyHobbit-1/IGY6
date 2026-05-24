@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "cutover_ready": true,
-  "target_architecture": "rust-primary",
-  "operational_status": "rust-native-api-with-rust-worker-daemon-and-archived-fastapi",
+  "target_architecture": "rust-only-application-runtime",
+  "operational_status": "rust-native-api-and-worker-daemon-with-legacy-python-archived",
   "fastapi_fallback_required": false,
   "route_parity": {
     "diff": "DIFF-139",
@@ -18,7 +18,7 @@
     "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
     "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
     "guard_script": "scripts/rust-route-parity.py",
-    "next_required_diff": "DIFF-165"
+    "next_required_diff": null
   },
   "final_rust_api_cutover_audit": {
     "diff": "DIFF-140",
@@ -27,13 +27,11 @@
     "route_parity_complete": true,
     "fastapi_fallback_removed": true,
     "services_api_archived": true,
-    "remaining_python_components": [
-      "services/worker worker service",
-      "services/worker beat service"
-    ],
-    "remaining_python_reason": "Docker Compose still runs Python/Celery worker and beat for live processing; DIFF-143 through DIFF-145 add Rust collection_normalization, document_chunking, and chunk_vector_upsert planning/executor contracts, but Rust does not yet replace live worker process ownership or beat/scheduler posture.",
-    "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-165 archive Python worker and final Rust-only runtime audit"
+    "remaining_python_components": [],
+    "remaining_python_reason": "Superseded by DIFF-165. Base Docker Compose no longer runs FastAPI, Python/Celery worker, or Celery beat; legacy Python API and worker source trees are archived under archive/legacy-python for history and rollback review only.",
+    "superseded_by": "DIFF-165",
+    "rust_only_repository_or_runtime_claimed": true,
+    "next_recommended_diff": null
   },
   "worker_execution_parity_audit": {
     "diff": "DIFF-141",
@@ -235,9 +233,9 @@
     "decision_summary": "Rust worker process cutover is not ready; retain Python/Celery worker and beat until a real Rust worker runtime executes queued jobs and scheduler posture is resolved.",
     "python_celery_worker_active": true,
     "python_celery_beat_active": true,
-    "worker_removed": false,
+    "worker_removed": true,
     "beat_removed": false,
-    "services_worker_removed": false,
+    "services_worker_removed": true,
     "rust_only_repository_or_runtime_claimed": false,
     "rust_worker_contracts_complete_for_job_families": [
       "collection_normalization",
@@ -281,7 +279,7 @@
     "python_celery_beat_active": true,
     "worker_removed": false,
     "beat_removed": false,
-    "services_worker_removed": false,
+    "services_worker_removed": true,
     "rust_only_repository_or_runtime_claimed": false,
     "config_validation": [
       "DATABASE_URL must be PostgreSQL-shaped",
@@ -1011,7 +1009,7 @@
     "beat_schedule_audit": {
       "repo_defined_schedule_found": false,
       "evidence": [
-        "services/worker/app/celery_app.py contains no beat_schedule",
+        "archive/legacy-python/services-worker/app/celery_app.py contains no beat_schedule",
         "repo search found no crontab, periodic_task, on_after_configure, or scheduled Celery registration"
       ],
       "retained_reason": "Beat is retained because production worker ownership itself was not replaced in DIFF-162; removing beat would be a partial runtime topology change while Python/Celery remains active."
@@ -1076,9 +1074,9 @@
     "beat_removed": true,
     "services_worker_removed": false,
     "beat_posture": "retired from production Compose by DIFF-164 because no repo-defined beat schedule exists",
-    "rollback_posture": "Revert DIFF-164 or restore the previous Python/Celery worker and beat service definitions from git, validate Compose, and restart worker ownership from services/worker.",
-    "rust_only_repository_or_runtime_claimed": false,
-    "next_recommended_diff": "DIFF-165 archive Python worker and final Rust-only runtime audit"
+    "rollback_posture": "Restore the previous Python/Celery worker and beat service definitions from git and the archived source at archive/legacy-python/services-worker, validate Compose, and restart worker ownership.",
+    "rust_only_repository_or_runtime_claimed": true,
+    "next_recommended_diff": null
   },
   "rust_worker_production_compose_cutover": {
     "diff": "DIFF-164",
@@ -1110,15 +1108,46 @@
     "beat_schedule_audit": {
       "repo_defined_schedule_found": false,
       "evidence": [
-        "services/worker/app/celery_app.py contains no beat_schedule",
+        "archive/legacy-python/services-worker/app/celery_app.py contains no beat_schedule",
         "repo search found no crontab, periodic_task, on_after_configure, or scheduled Celery registration"
       ],
       "retirement_reason": "No repo-defined scheduled Celery work exists, so there is no scheduler behavior to replace in DIFF-164."
     },
-    "rollback_posture": "Revert DIFF-164 or restore the previous Python/Celery worker and beat service definitions from git, run docker compose config validation, and restart the stack.",
-    "rust_only_repository_or_runtime_claimed": false,
-    "rust_only_claim_deferred_reason": "services/worker remains in the repository for rollback/archive review; final Rust-only runtime audit is reserved for DIFF-165.",
-    "next_recommended_diff": "DIFF-165 archive Python worker and final Rust-only runtime audit"
+    "rollback_posture": "Restore the previous Python/Celery worker and beat service definitions from git and the archived source at archive/legacy-python/services-worker, run docker compose config validation, and restart the stack.",
+    "rust_only_repository_or_runtime_claimed": true,
+    "rust_only_claim_deferred_reason": null,
+    "next_recommended_diff": null
+  },
+  "final_rust_only_runtime_audit": {
+    "diff": "DIFF-165",
+    "status": "complete",
+    "decision": "A",
+    "services_worker_archived": true,
+    "services_worker_archive_path": "archive/legacy-python/services-worker/",
+    "fastapi_fallback_required": false,
+    "python_celery_worker_active": false,
+    "python_celery_beat_active": false,
+    "beat_posture": "retired from active Compose runtime because no repo-defined Celery beat schedule or periodic task registration was found",
+    "active_runtime_python_components": [],
+    "rust_only_application_runtime_claimed": true,
+    "remaining_non_rust_components": [
+      "Next.js web UI",
+      "PostgreSQL",
+      "Redis",
+      "Qdrant",
+      "Neo4j",
+      "MLflow",
+      "Phoenix"
+    ],
+    "runtime_evidence": [
+      "infra/docker-compose.yml builds api from crates/igy6-gateway/Dockerfile",
+      "infra/docker-compose.yml builds worker from crates/igy6-worker/Dockerfile",
+      "infra/docker-compose.yml defines no legacy-api service",
+      "infra/docker-compose.yml defines no Python/Celery worker service",
+      "infra/docker-compose.yml defines no beat service",
+      "infra/docker-compose.rust-worker-canary.yml builds the canary worker from crates/igy6-worker/Dockerfile"
+    ],
+    "rollback_posture": "Legacy Python worker source is preserved at archive/legacy-python/services-worker and in git history. To roll back worker ownership, restore the prior Python/Celery worker and optional beat service definitions, point them at the archived source or restore the historical services/worker path, validate Docker Compose, and restart intentionally."
   },
   "legacy_python_review": {
     "diff": "DIFF-139",
@@ -1129,11 +1158,12 @@
       "reason": "No active runtime path needs the FastAPI API service after DIFF-138 removed legacy-api fallback wiring and route parity reached zero missing FastAPI routes."
     },
     "services_worker": {
-      "decision": "retained",
-      "path": "services/worker/",
-      "reason": "Base Docker Compose no longer runs Python/Celery worker or beat after DIFF-164; services/worker remains only for rollback/archive review until the final audit DIFF."
+      "decision": "archived",
+      "from": "services/worker/",
+      "to": "archive/legacy-python/services-worker/",
+      "reason": "Base Docker Compose no longer runs Python/Celery worker or beat after DIFF-164; DIFF-165 archives the inactive worker source for rollback/history."
     },
-    "rust_only_repository_claim_allowed": false
+    "rust_only_repository_claim_allowed": true
   },
   "required_phases": [
     "host_bridge",
@@ -1541,8 +1571,8 @@
                 "reason": "archived legacy FastAPI API source retained for route parity history, migration archaeology, and rollback analysis; not an active runtime service"
             },
             {
-                "path": "services/worker/",
-                "reason": "Python/Celery worker source is retained only for rollback/archive review after DIFF-164; base Compose no longer runs worker or beat from this directory"
+                "path": "archive/legacy-python/services-worker/",
+                "reason": "archived legacy Python/Celery worker source retained for rollback history; not an active runtime service"
             },
             {
                 "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",

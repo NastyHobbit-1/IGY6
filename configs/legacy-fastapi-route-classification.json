@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "diff": "DIFF-139",
+  "diff": "DIFF-165",
   "source": {
     "fastapi_route_inventory": "archive/legacy-python/services-api/app",
     "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
@@ -15,7 +15,7 @@
     "web_routes_requiring_fallback": 0
   },
   "fastapi_fallback_required": false,
-  "rust_only_claim_allowed": false,
+  "rust_only_claim_allowed": true,
   "rust_api_route_parity_claim_allowed": true,
   "classification_counts": {
     "active_parity_required": 0,

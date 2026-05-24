@@ -9,7 +9,9 @@ DIFF-138 removes FastAPI fallback after route parity reaches zero missing
 FastAPI routes. DIFF-139 archives the tracked legacy FastAPI API source.
 DIFF-140 is the final Rust API cutover audit. DIFF-164 cuts production Docker
 Compose worker ownership to the Rust worker daemon and retires the empty Celery
-beat service. The current API topology is Rust-native:
+beat service. DIFF-165 archives the inactive Python/Celery worker source and
+locks the final Rust-only application runtime audit. The current API topology
+is Rust-native:
 
 ```text
 Next.js web
@@ -46,8 +48,8 @@ planning and executor contracts for `collection_normalization`,
 `document_chunking`, and `chunk_vector_upsert`; DIFF-153, DIFF-155, DIFF-157,
 and DIFF-160 verify the live Rust worker side effects and bounded loop canary;
 DIFF-163 adds production daemon mode; DIFF-164 makes that daemon the active
-production Compose worker. `services/worker/` remains only for rollback/archive
-review until the final audit DIFF.
+production Compose worker; DIFF-165 archives the inactive worker source at
+`archive/legacy-python/services-worker`.
 
 ## Runtime Topology
 
@@ -63,9 +65,10 @@ The web UI calls the Rust gateway endpoint. The route parity guard reports zero
 FastAPI routes missing from Rust and zero web-used routes requiring fallback.
 Unsupported gateway routes now return Rust 404 responses instead of proxying to
 FastAPI. The Python/Celery worker and beat services are no longer active in base
-Compose after DIFF-164, but final Rust-only repository/runtime operation is not
-claimed until the final archive/audit DIFF reviews `services/worker/` removal
-and rollback posture.
+Compose after DIFF-164, and DIFF-165 archives the inactive worker source. The
+Rust-only claim applies to the application API and worker runtime; non-Rust
+supporting services still include Next.js web, PostgreSQL, Redis, Qdrant,
+Neo4j, MLflow, and Phoenix.
 
 ## Worker Execution Parity
 
@@ -263,11 +266,22 @@ Python/Celery image and command to the Rust worker image and explicit
 `igy6-worker --daemon` command with bounded claim and poll settings. The service
 depends on PostgreSQL and Qdrant health and mounts `${IGY6_DATA_ROOT}` at
 `/workspace/storage`. The Python/Celery `worker` service is no longer active.
-The `beat` service is removed because `services/worker/app/celery_app.py`
-defines no `beat_schedule` or periodic task registration. Rollback is to revert
-DIFF-164 or restore the prior Python/Celery `worker` and `beat` service
-definitions from git, validate Compose, and restart. Full Rust-only runtime is
-not finally claimed until the archive/audit DIFF handles `services/worker/`.
+The `beat` service is removed because the legacy worker source defines no
+`beat_schedule` or periodic task registration. Rollback is to restore the prior
+Python/Celery `worker` and `beat` service definitions from git, validate
+Compose, and restart. Full Rust-only runtime is claimed only after DIFF-165
+archives the inactive worker source.
+
+DIFF-165 decision: A, legacy Python worker source can be archived. The inactive
+worker source moves from `services/worker/` to
+`archive/legacy-python/services-worker/`. Base Compose builds the active API
+from `crates/igy6-gateway/Dockerfile` and the active worker from
+`crates/igy6-worker/Dockerfile`; it defines no `legacy-api`, Python/Celery
+worker, or Celery `beat` service. The canary override also builds the worker
+from the Rust worker Dockerfile. Full Rust-only application runtime is claimed
+for the API and worker path. Rollback remains possible through the archive and
+git history by restoring the previous Python/Celery service definitions,
+validating Compose, and restarting intentionally.
 
 ## Rust-Native Gateway Routes
 
@@ -554,18 +568,15 @@ from Rust. DIFF-139 moves the tracked FastAPI API tree to
 - `beat`: `celery -A app.celery_app:celery_app beat --loglevel=INFO`
 
 After DIFF-164, base Docker Compose no longer runs those Python/Celery services.
-`services/worker/` remains in the repository only for rollback/archive review
-until the final audit DIFF.
+DIFF-165 archives the inactive source at
+`archive/legacy-python/services-worker`.
 
-The Rust worker crate now includes DIFF-143 `collection_normalization` and
-DIFF-144 `document_chunking` execution planning plus SQL/audit/status executor
-contracts. It preserves Python/Celery normalization behavior for UTF-8 artifact
-normalization, `normalized_documents` insert shape, deterministic chunk and
-evidence item inserts, duplicate skips, originating work-item status,
-completion/failure audit events, and chained work-item creation through
-`chunk_vector_upsert`. It does not replace live Celery process ownership,
-execute `chunk_vector_upsert`, call Qdrant, or remove Python/Celery. Full
-Rust-only repository/runtime operation is therefore not claimed.
+The Rust worker crate now includes live execution for `collection_normalization`,
+`document_chunking`, and `chunk_vector_upsert`, with PostgreSQL claim/status
+writes, audit events, scoped artifact reads, deterministic chunk/vector logic,
+Qdrant collection/point work, and chained work-item creation through the
+processing pipeline. DIFF-164 moves production Compose worker ownership to that
+Rust daemon, and DIFF-165 archives the old Python/Celery implementation.
 
 DIFF-141 audits the active Python/Celery worker and beat services. It finds five
 registered Celery tasks, no repo-defined beat schedule, and no Python/Celery
@@ -890,3 +901,11 @@ then drove unsupported non-web route migration or retirement through DIFF-138:
     executor contracts without migrating vector upsert.
 28. Recommended next DIFF: DIFF-145 Rust `chunk_vector_upsert` execution
     parity.
+29. DIFF-145 through DIFF-160: complete Rust worker job-family parity and
+    isolated live canary verification for normalization, chunking, vector
+    upsert, and bounded process-loop execution.
+30. DIFF-163: add production-capable Rust worker daemon mode.
+31. DIFF-164: cut production Docker Compose worker ownership to the Rust daemon
+    and remove the empty Celery beat service.
+32. DIFF-165: archive legacy Python/Celery worker source and lock the final
+    Rust-only application runtime audit.

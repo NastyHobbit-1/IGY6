@@ -18,9 +18,13 @@ manually run Rust daemon and keeping the existing Python/Celery worker and beat
 services active.
 DIFF-164 changes production Docker Compose worker ownership to the Rust worker
 daemon and removes the empty Celery `beat` service after verifying that
-`services/worker/app/celery_app.py` defines no repo beat schedule. Rollback for
-worker ownership is to revert DIFF-164 or restore the prior Python/Celery
-`worker` and `beat` service definitions from git, validate Compose, and restart.
+the now-archived worker source defines no repo beat schedule. Rollback for
+worker ownership is to restore the prior Python/Celery `worker` and `beat`
+service definitions from git, validate Compose, and restart.
+DIFF-165 archives the inactive Python/Celery worker source under
+`archive/legacy-python/services-worker` and records the final Rust-only
+application runtime audit. Rollback now uses that archive path or git history
+when restoring a Python/Celery worker topology.
 
 ## Current Cutover State
 
@@ -33,12 +37,12 @@ worker ownership is to revert DIFF-164 or restore the prior Python/Celery
   `crates/igy6-worker/Dockerfile`.
 - Python/Celery `worker` and `beat` services are not active in base Compose
   after DIFF-164.
-- `services/worker/` remains in the repository for rollback/archive review
-  until the final audit DIFF.
+- Legacy Python/Celery worker source is archived at
+  `archive/legacy-python/services-worker`.
 - The DIFF-161 Rust worker Compose override is canary-only.
-- Full Rust-only repository/runtime operation is not finally claimed until the
-  final archive/audit DIFF reviews `services/worker/` removal and rollback
-  posture.
+- Rust-only application runtime is claimed for the active API and worker path.
+  Next.js web and infrastructure services remain intentionally non-Rust
+  supporting components.
 
 ## Rollback Expectations
 
@@ -59,10 +63,12 @@ Do not move runtime data into the repository during rollback. Do not archive or
 delete governance files, `docs/diffs/`, `docs/agents/`, `.env`, storage roots,
 or external data roots.
 
-To roll back the DIFF-164 production worker cutover, restore the previous
-Python/Celery `worker` service definition from `services/worker`, restore the
-previous `beat` service definition if scheduled-work rollback is needed,
-validate Compose, and only then restart the stack:
+To roll back the DIFF-164/DIFF-165 production worker cutover, restore the
+previous Python/Celery worker source from
+`archive/legacy-python/services-worker` or git history, restore the previous
+`worker` service definition, restore the previous `beat` service definition if
+scheduled-work rollback is needed, validate Compose, and only then restart the
+stack:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env config

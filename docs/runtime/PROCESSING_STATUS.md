@@ -8,207 +8,22 @@ Manual upload processing currently has two paths:
   daemon for end-to-end processing from raw artifacts to normalized documents,
   chunks, evidence, and Qdrant vector memory.
 
-The Rust worker crate now has DIFF-143 `collection_normalization`, DIFF-144
-`document_chunking`, and DIFF-145 `chunk_vector_upsert` execution planners plus
-SQL/audit/status executor contracts. It preserves Python/Celery semantics for
-UTF-8 raw artifact normalization, `normalized_documents` insert shape,
+The Rust worker crate preserves the former Python/Celery processing semantics
+for UTF-8 raw artifact normalization, normalized-document inserts,
 deterministic chunk and evidence item inserts, duplicate skips, deterministic
-local chunk vectors, Qdrant collection/status/upsert request planning,
-originating work-item status, completion/failure audit events, and chained
-work-item creation through the processing pipeline. DIFF-164 makes that Rust
-daemon the active production Compose worker. The Rust gateway dispatch route is
-safe-limited: it records dispatch metadata and audit events but does not invoke
-Celery or arbitrary runtime execution.
+local chunk vectors, Qdrant collection/upsert behavior, originating work-item
+status, completion/failure audit events, and chained work-item creation through
+the processing pipeline. DIFF-153 through DIFF-160 verified those side effects
+through isolated Rust canaries. DIFF-163 added production daemon mode, DIFF-164
+made the daemon the active production Compose worker, and DIFF-165 archived the
+inactive Python/Celery worker source under
+`archive/legacy-python/services-worker`.
 
-DIFF-141 audits worker execution parity and recommends migrating worker
-execution to Rust one job family at a time. DIFF-164 completes production
-Compose worker ownership cutover to the Rust daemon for the covered job
-families. Python/Celery `worker` is no longer active in base Compose. `beat` is
-removed from base Compose because no repo-defined beat schedule exists in
-`services/worker/app/celery_app.py`.
-
-DIFF-142 adds the Rust queue-claim contract only. DIFF-143 adds
-`collection_normalization` execution parity planning and executor contracts.
-DIFF-144 adds `document_chunking` execution parity planning and executor
-contracts. DIFF-145 adds `chunk_vector_upsert` execution parity planning,
-including deterministic local vector and Qdrant request contracts. Live worker
-process ownership and beat/scheduled-work posture remain Python/Celery-backed.
-
-DIFF-146 decides the worker process cutover is not ready. `crates/igy6-worker`
-is still a library crate with contracts and tests, not a long-running worker
-binary or container. It does not poll queued work, atomically claim jobs from
-PostgreSQL in a runtime loop, read artifacts during execution, apply DB/audit
-writes, execute Qdrant HTTP requests, or provide worker health/shutdown/retry
-behavior. `worker` and `beat` therefore remain in Docker Compose.
-
-DIFF-147 adds the `igy6-worker` binary as a safe runtime harness. Its default
-mode is `--check`, and it also supports `--dry-run`, `--once`, and `--help`.
-These modes validate configuration and plan bounded queue/claim behavior
-without connecting to PostgreSQL, mutating queue rows, reading artifacts,
-writing audits, calling Qdrant, controlling Celery, or replacing beat. Live
-execution is not enabled by DIFF-147.
-
-DIFF-148 adds an explicit one-job canary gate:
-`--once --canary-live --canary-work-item ID`. Reporting
-`live_execution_enabled=true` additionally requires
-`IGY6_WORKER_LIVE_CANARY=DIFF-148`. The canary emits structured states and
-side-effect verification planning for DB writes, audit writes, artifact reads,
-and Qdrant calls. DIFF-148 does not execute those side effects; they remain
-planned-only, so Python/Celery remains the production worker path.
-
-DIFF-149 implements the live canary executor behind those same gates. When both
-the CLI canary flags and `IGY6_WORKER_LIVE_CANARY=DIFF-148` are present, Rust
-may claim and execute exactly one selected canary work item. Implemented live
-side effects are PostgreSQL claim/status writes, worker audit events, scoped
-artifact reads under `IGY6_DATA_ROOT/artifacts`, job-family DB writes, and Qdrant
-collection/point work only for `chunk_vector_upsert`. Broad queue polling,
-long-running process ownership, Docker Compose Rust worker wiring, and beat
-replacement remain out of scope, so Python/Celery remains the production worker
-path.
-
-DIFF-150 audits that posture and chooses Decision B: worker process cutover is
-not ready. No controlled real canary was run because no explicitly selected safe
-runtime work item was provided. Static verification covers the canary gates,
-non-mutating defaults, SQL claim shape, artifact path safety, and Qdrant request
-boundaries, but live PostgreSQL/audit/artifact/Qdrant observations remain
-unverified. Docker Compose still runs Python/Celery `worker` and `beat`.
-
-DIFF-151 attempts to advance to an observed canary audit, but chooses Decision
-B because no explicitly selected safe queued work item ID was available. No live
-canary command with `IGY6_WORKER_LIVE_CANARY=DIFF-148` was run. The required
-next preparation step is to create or select one non-sensitive queued canary
-work item, prevent a Python/Celery race for that item during the canary window,
-and then record the single Rust canary command plus observed PostgreSQL,
-`audit_events`, artifact, and Qdrant results.
-
-DIFF-152 chooses Decision A and adds a deterministic safe fixture helper:
-`scripts/rust-worker-canary-fixture.py`. The selected canary work item ID is
-`diff-152-canary-work-item`, with one synthetic `collection_normalization`
-fixture path. The helper is non-mutating by default and can emit the seed SQL
-and synthetic artifact plan needed for a later controlled canary. DIFF-152 does
-not run the live Rust worker canary, does not process broad queues, and does
-not change Docker Compose worker or beat ownership.
-
-DIFF-153 chooses Decision A and runs exactly one gated live Rust canary against
-the DIFF-152 selected fixture in an isolated local PostgreSQL canary container
-and `/tmp/igy6-diff153-canary` data root. Observed side effects: the selected
-work item moved to `completed`, claim/start/success audit rows were written,
-the synthetic artifact under `IGY6_DATA_ROOT/artifacts` was read, one
-`normalized_documents` row was written, and one chained `document_chunking` work
-item was queued. Qdrant side effects were not expected because the selected
-canary was `collection_normalization`. Python/Celery `worker` and `beat` remain
-active because live `document_chunking`, live `chunk_vector_upsert`, broad Rust
-worker ownership, and scheduler posture are still not replaced.
-
-DIFF-154 attempts exactly one gated live Rust canary for
-`document_chunking` against isolated synthetic data. The attempt fails safely
-before chunk writes because the fixture used invalid `chunk_size=80` while the
-Rust contract requires 100 through 5000. Observed side effects: the selected
-work item moved to `failed`, claim/start/failure audit rows were written, and
-no `chunks`, `evidence_items`, or chained `chunk_vector_upsert` work item were
-created. The fixture helper now emits `chunk_size=100` for the next controlled
-document-chunking canary, but DIFF-154 does not run a second canary.
-
-DIFF-155 chooses Decision A and runs exactly one corrected gated
-`document_chunking` canary against isolated synthetic data. The selected work
-item `diff-154-canary-work-item` completed, claim/start/success audit rows were
-observed, three `chunks` rows were written with text lengths 100, 100, and 61,
-three `evidence_items` rows were written, and one chained
-`chunk_vector_upsert` work item was queued. Qdrant side effects were not
-expected or run because this DIFF was scoped to `document_chunking` only.
-Python/Celery `worker` and `beat` remain active because live
-`chunk_vector_upsert`/Qdrant, broad Rust worker process ownership, Compose
-wiring, and scheduler posture are still not replaced.
-
-DIFF-156 chooses Decision A and runs exactly one gated `chunk_vector_upsert`
-canary against isolated synthetic PostgreSQL and Qdrant containers. The
-selected work item `work-item-18b25ee83a881458-6` was claimed, started, and
-then failed safely with `Qdrant point upsert failed with HTTP 400`. Observed
-side effects: `work_items` moved to `failed`, `chunk_vectors.failed` audit was
-written, Qdrant collection `igy6_diff156_chunks` was created with vector size
-384 and Cosine distance, and Qdrant point count remained 0. Chunk
-`embedding_status` and vector metadata remained unchanged. Python/Celery
-`worker` and `beat` remain active because successful Qdrant upsert, broad Rust
-worker process ownership, Compose wiring, and scheduler posture are still not
-replaced.
-
-DIFF-157 fixes the Qdrant point upsert compatibility issue by using
-deterministic UUID-shaped Qdrant point IDs while preserving the original chunk
-ID in point payload metadata. It then runs exactly one corrected
-`chunk_vector_upsert` canary against isolated synthetic PostgreSQL and Qdrant.
-The selected work item completed, `chunk_vectors.upserted` audit was written,
-Qdrant collection `igy6_diff157_chunks` was created, point upsert returned
-HTTP 200, Qdrant point count became 3, and the three chunks moved to
-`embedding_status=completed` with `embedding_method=local_hash_v1` and
-`vector_collection=igy6_diff157_chunks`. Python/Celery `worker` and `beat`
-remain active because broad Rust worker process ownership, Compose wiring, and
-scheduler posture are still not replaced.
-
-DIFF-158 decides the worker process cutover is not ready. The successful
-DIFF-153, DIFF-155, and DIFF-157 canaries prove one explicitly selected work
-item at a time for the three covered job families, but they do not prove
-production worker ownership. The Rust worker has no long-running daemon mode,
-no generic live queue polling loop, no production retry/backoff and graceful
-shutdown posture, no Rust worker Docker Compose service, and no scheduler/beat
-replacement or retirement decision. Docker Compose therefore keeps the
-Python/Celery `worker` and `beat` services active.
-
-DIFF-159 adds a bounded Rust worker process-ownership canary plan through
-`--canary-loop`. The mode requires explicit `IGY6_WORKER_PROCESS_CANARY=DIFF-159`
-acknowledgement and bounded `--max-jobs`, `--max-idle-polls`, `--claim-limit`,
-and `--poll-interval-ms` settings. In DIFF-159 this mode is non-mutating: it
-does not connect to PostgreSQL, claim queued jobs, read artifacts, write audit
-events, call Qdrant, control Celery, replace Docker Compose worker ownership, or
-replace/retire beat. Scheduler/beat posture remains deferred.
-
-DIFF-160 implements and runs the live bounded `--canary-loop` against isolated
-synthetic services only. With `max_jobs=3`, `max_idle_polls=1`, `claim_limit=1`,
-and `poll_interval_ms=100`, the loop processes the synthetic
-`collection_normalization`, chained `document_chunking`, and chained
-`chunk_vector_upsert` work items, then exits cleanly at `max_jobs`. Observed
-side effects include completed work items, claim/start/success audit events,
-one normalized document, one chunk, one evidence item, chunk embedding metadata,
-Qdrant collection ensure, and one Qdrant point. Python/Celery `worker` and
-`beat` remain active because Compose worker service ownership, rollback, and
-scheduler posture are not cut over.
-
-DIFF-161 adds a non-default Docker/Compose Rust worker canary service in
-`infra/docker-compose.rust-worker-canary.yml` plus
-`crates/igy6-worker/Dockerfile`. The base Compose file is unchanged, so normal
-runtime still starts the Python/Celery `worker` and `beat`. The canary service
-is behind the `rust-worker-canary` profile and uses isolated profile-scoped
-canary PostgreSQL and Qdrant services plus an explicit synthetic data root. It
-runs the bounded `--canary-loop` with `max_jobs=3`, `max_idle_polls=1`,
-`claim_limit=1`, and `poll_interval_ms=100`. It is rollback-only service
-wiring; scheduler/beat posture and production worker replacement remain
-deferred.
-
-DIFF-162 decides production worker cutover is not safe yet. The current Rust
-live loop is still a canary mode, requires `IGY6_WORKER_PROCESS_CANARY=DIFF-159`,
-and intentionally exits after bounded job or idle budgets. No production Rust
-daemon mode, retry/backoff posture, worker health/readiness posture, or
-production rollback verification exists yet. No repo-defined Celery beat
-schedule was found, but `beat` remains active because the Python/Celery worker
-runtime remains active. Full Rust-only runtime is not claimed.
-
-DIFF-163 adds `igy6-worker --daemon` as an explicit production-capable Rust
-worker mode. It does not require the DIFF-159 canary env gate, polls repeatedly
-with bounded `claim_limit` and `poll_interval_ms`, uses the verified
-claim/execute path, checks the relative shutdown marker
-`worker/control/shutdown` under `IGY6_DATA_ROOT`, and treats job-level failures
-as failed work items with audit events instead of unbounded retries. Docker
-Compose is not cut over in this DIFF, so Python/Celery `worker` and `beat`
-remain active and scheduler/beat posture remains deferred.
-
-DIFF-164 cuts base Docker Compose worker ownership to Rust. The `worker`
-service now builds `crates/igy6-worker/Dockerfile` and runs
-`igy6-worker --daemon --claim-limit ${IGY6_WORKER_CLAIM_LIMIT:-4}
---poll-interval-ms ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}` with
-`IGY6_DATA_ROOT=/workspace/storage`. It depends on healthy PostgreSQL and
-Qdrant. The Python/Celery `worker` service is not active in base Compose, and
-the empty Celery `beat` service is removed. `services/worker/` remains in the
-repository for rollback/archive review until the final audit DIFF, so final
-Rust-only repository/runtime is not claimed here.
+No Python/Celery `worker` service and no Celery `beat` service remains active in
+base Docker Compose. `beat` is retired because the archived worker source has no
+repo-defined beat schedule or periodic task registration. The Rust gateway
+dispatch route is safe-limited: it records dispatch metadata and audit events
+but does not invoke Celery or arbitrary runtime execution.
 
 ## Pipeline
 
