@@ -27,14 +27,13 @@ function appearsAfter(name, text, earlier, later) {
   check(`${name}: ${later} appears after ${earlier}`, earlierIndex >= 0 && laterIndex > earlierIndex);
 }
 
-includesAll("top-level navigation", page, [
-  'href="#home">Home',
-  'href="#assistant">Assistant',
-  'href="#data-knowledge">Data &amp; Knowledge',
-  'href="#work-processing">Work &amp; Processing',
-  'href="#reports">Reports',
-  'href="#safety-audit">Safety &amp; Audit',
-  'href="#settings">Settings'
+includesAll("top-level tabs", page, [
+  'htmlFor="tab-home">Home',
+  'htmlFor="tab-add-data">Add Data',
+  'htmlFor="tab-work">Work',
+  'htmlFor="tab-results">Results',
+  'htmlFor="tab-settings">Settings',
+  'htmlFor="tab-advanced">Advanced'
 ]);
 
 includesAll("workflow section anchors", page, [
@@ -51,6 +50,15 @@ includesAll("workflow section anchors", page, [
   'id="reports"',
   'id="safety-audit"',
   'id="settings"'
+]);
+
+includesAll("tab panel mapping", page, [
+  'data-tab-panel="home"',
+  'data-tab-panel="add-data"',
+  'data-tab-panel="work"',
+  'data-tab-panel="results"',
+  'data-tab-panel="settings"',
+  'data-tab-panel="advanced"'
 ]);
 
 check(
@@ -135,7 +143,7 @@ appearsAfter(
 );
 
 includesAll("manual upload guided workflow", page, [
-  "Guided Manual Upload",
+  "Guided Upload",
   "Step 1: Select or create source.",
   "Step 2: Check approval status.",
   "Step 3: Request approval if required.",
@@ -155,26 +163,31 @@ includesAll("empty and next-step guidance states", page, [
   "No work items recorded yet.",
   "No approvals recorded yet.",
   "No reports recorded yet.",
-  "Create a manual_upload source in Data & Knowledge.",
-  "Upload approved text and check processing.",
-  "Ask Assistant a question over local evidence."
+  "Add a data source first.",
+  "Add approved text and check processing.",
+  "Ask a question over local evidence."
 ]);
 
 includesAll("safety posture", page, [
   "local-first",
+  "System ready",
+  "Background worker ready",
   "Rust API",
   "Rust worker",
   "FastAPI fallback",
   "inactive / archived",
   "Celery beat",
-  "evidence-only",
   "no-external-model",
   "approval-gated",
-  "Dispatch is safe-limited",
-  "Supported queued processing is owned by the Rust worker daemon"
+  "Background processing is ready",
+  "Old Python services"
 ]);
 
 includesAll("supporting styles", styles, [
+  ".productTabs",
+  ".tabList",
+  ".tabContent",
+  ".readinessStrip",
   ".runtimePosture",
   ".primaryWorkflowGrid",
   ".advancedPanel",

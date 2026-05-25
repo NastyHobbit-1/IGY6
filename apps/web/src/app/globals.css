@@ -68,7 +68,7 @@ a {
 
 .consoleShell {
   display: grid;
-  grid-template-columns: 270px minmax(0, 1fr) 326px;
+  grid-template-columns: 250px minmax(0, 1fr);
   min-height: 100vh;
   background: rgba(7, 10, 15, 0.72);
 }
@@ -93,7 +93,7 @@ a {
 }
 
 .rightContext {
-  display: grid;
+  display: none;
   align-content: start;
   gap: 12px;
   border-left: 1px solid rgba(148, 163, 184, 0.14);
@@ -278,14 +278,18 @@ a {
   gap: 4px;
 }
 
-.navSection a {
+.navSection a,
+.navSection label {
+  display: block;
   border-radius: 10px;
   padding: 10px 12px;
   color: #cbd5e1;
+  cursor: pointer;
   font-size: 0.9rem;
 }
 
-.navSection a:hover {
+.navSection a:hover,
+.navSection label:hover {
   background: rgba(96, 165, 250, 0.11);
   color: #f8fafc;
 }
@@ -745,6 +749,8 @@ a {
 .pill[data-state="enabled"],
 .pill[data-state="completed"],
 .pill[data-state="ready"],
+.pill[data-state="system-ready"],
+.pill[data-state="background-ready"],
 .pill[data-state="local-first"] {
   border-color: rgba(52, 211, 153, 0.28);
   background: rgba(10, 70, 52, 0.46);
@@ -1183,6 +1189,129 @@ a {
   scroll-margin-top: 90px;
 }
 
+.productTabs {
+  position: sticky;
+  top: 82px;
+  z-index: 4;
+  margin-top: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(9, 13, 20, 0.9);
+  padding: 8px;
+  backdrop-filter: blur(18px);
+}
+
+.tabInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tabList {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tabList label {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #b8c4d6;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.tabList label:hover,
+.tabList label:focus-visible {
+  border-color: rgba(125, 166, 255, 0.28);
+  background: rgba(30, 64, 112, 0.24);
+  color: #eef6ff;
+  outline: none;
+}
+
+.productTabs:has(#tab-home:checked) label[for="tab-home"],
+.productTabs:has(#tab-add-data:checked) label[for="tab-add-data"],
+.productTabs:has(#tab-work:checked) label[for="tab-work"],
+.productTabs:has(#tab-results:checked) label[for="tab-results"],
+.productTabs:has(#tab-settings:checked) label[for="tab-settings"],
+.productTabs:has(#tab-advanced:checked) label[for="tab-advanced"] {
+  border-color: rgba(96, 165, 250, 0.38);
+  background: rgba(30, 64, 112, 0.42);
+  color: #f8fbff;
+}
+
+.tabContent {
+  display: none;
+}
+
+.mainConsole:has(#tab-home:checked) [data-tab-panel="home"],
+.mainConsole:has(#tab-add-data:checked) [data-tab-panel="add-data"],
+.mainConsole:has(#tab-work:checked) [data-tab-panel="work"],
+.mainConsole:has(#tab-results:checked) [data-tab-panel="results"],
+.mainConsole:has(#tab-settings:checked) [data-tab-panel="settings"],
+.mainConsole:has(#tab-advanced:checked) [data-tab-panel="advanced"] {
+  display: grid;
+}
+
+.workspaceGrid {
+  display: contents;
+}
+
+.tabContent.panel,
+.tabContent.workflowSection,
+.tabContent.chatStage {
+  margin-top: 14px;
+}
+
+.readinessStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.readinessStrip article {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  border-radius: 10px;
+  background: rgba(10, 70, 52, 0.22);
+  padding: 12px;
+}
+
+.readinessStrip span {
+  color: #a7f3d0;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.readinessStrip strong {
+  color: #f1f5f9;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.readinessSummary {
+  margin-bottom: 14px;
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  border-radius: 10px;
+  background: rgba(10, 70, 52, 0.18);
+  color: #d7fbe8;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 12px;
+}
+
 .runtimePosture {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1240,7 +1369,8 @@ a {
   line-height: 1.5;
 }
 
-.primaryWorkflowGrid a {
+.primaryWorkflowGrid a,
+.primaryWorkflowGrid label {
   display: inline-flex;
   width: fit-content;
   min-height: 34px;
@@ -1249,6 +1379,7 @@ a {
   border-radius: 10px;
   background: rgba(30, 64, 112, 0.34);
   color: #dbeafe;
+  cursor: pointer;
   font-size: 0.8rem;
   font-weight: 900;
   padding: 6px 10px;
@@ -1432,6 +1563,8 @@ a {
   }
 
   .metrics,
+  .tabList,
+  .readinessStrip,
   .runtimePosture,
   .primaryWorkflowGrid,
   .split,

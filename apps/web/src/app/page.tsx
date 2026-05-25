@@ -410,14 +410,14 @@ const TERM_HELP: Record<string, TermHelpContent> = {
   },
   workItem: {
     title: "Work Item",
-    explanation: "A Work Item is a queued, running, completed, failed, or canceled task for Rust worker processing.",
+    explanation: "A Work Item is a queued, running, completed, failed, or canceled task for background processing.",
     manage: "Review work items in Work & Processing and dispatch supported queued items from Advanced controls.",
     purpose: "Work items keep long-running local processing out of the API request path.",
     warning: "Queued work items require intent verification metadata before dispatch."
   },
   dispatch: {
     title: "Dispatch",
-    explanation: "Dispatch records a bounded request for supported queued work and keeps execution behind the current Rust worker/runtime checks.",
+    explanation: "Dispatch records a bounded request for supported queued work and keeps execution behind current system checks.",
     manage: "Use Work & Processing Advanced dispatch controls with a queued work item ID.",
     purpose: "It advances supported worker tasks such as normalization, chunking, and vector upsert.",
     warning: "Dispatch is not autonomous action; unsupported work types are rejected."
@@ -433,14 +433,14 @@ const TERM_HELP: Record<string, TermHelpContent> = {
     title: "Evidence Answer",
     explanation: "Evidence Answer creates an evidence-grounded answer from local retrieved evidence.",
     manage: "Use Assistant evidence controls or the chat evidence-answer API.",
-    purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic fallback.",
+    purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic backup answers.",
     warning: "Local LLM generation is optional, disabled by default, evidence-required, and falls back deterministically when unavailable."
   },
   localLlm: {
     title: "Local LLM",
     explanation: "Local LLM means optional Ollama generation running on this machine, not a cloud model.",
     manage: "Review provider, model, timeout, and evidence-required state in Settings.",
-    purpose: "It can draft evidence-grounded wording from retrieved evidence while preserving deterministic fallback.",
+    purpose: "It can draft evidence-grounded wording from retrieved evidence while preserving deterministic backup answers.",
     warning: "It must not execute actions, bypass approvals, or answer without evidence."
   },
   deterministic: {
@@ -666,6 +666,12 @@ const RUNTIME_POSTURE = [
   { label: "Celery beat", value: "inactive", state: "retired" }
 ];
 
+const USER_READINESS = [
+  { label: "System", value: "ready", state: "ready" },
+  { label: "Background processing", value: "ready", state: "ready" },
+  { label: "Old Python services", value: "archived", state: "archived" }
+];
+
 function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResponse> }) {
   const data = envSettings.data;
   const groupedSettings = data.groups.map((group) => ({
@@ -803,7 +809,7 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
 `;
 
   return (
-    <section className="panel settingsPanel" id="settings" data-settings-env>
+    <section className="panel settingsPanel tabContent" id="settings" data-settings-env data-tab-panel="settings">
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Local-only configuration</p>
@@ -991,12 +997,12 @@ function buildLlmDisplay(data: EnvSettingsResponse): LlmDisplay {
   const answerMode = !enabled
     ? "deterministic evidence"
     : configured
-      ? "local LLM evidence-grounded with deterministic fallback"
+      ? "local LLM evidence-grounded with deterministic backup"
       : "unavailable until model is selected";
   const healthDetail = !enabled
     ? "No model calls are made while LLM_PROVIDER is none. Assistant uses deterministic evidence answers and insufficient-evidence responses."
     : configured
-      ? "Settings does not contact Ollama. Evidence answers perform a timeout-bound local call only when retrieved evidence exists, then fall back deterministically if unavailable."
+      ? "Settings does not contact Ollama. Evidence answers perform a timeout-bound local call only when retrieved evidence exists, then use a deterministic backup answer if unavailable."
       : "Select a local Ollama model before enabling evidence-grounded local generation. No token or cloud endpoint is required.";
   return {
     provider,
@@ -1740,14 +1746,14 @@ export default async function Home() {
           <div className="brandMark">IG</div>
           <div>
             <strong>IGY6</strong>
-            <span>Local evidence console</span>
+            <span>Local evidence app</span>
           </div>
         </div>
 
         <div className="sidebarActions">
-          <a className="sidebarButton primary" href="#assistant">Ask Assistant</a>
-          <a className="sidebarButton" href="#data-knowledge">Upload data</a>
-          <a className="sidebarButton" href="#safety-audit">Review approvals</a>
+          <label className="sidebarButton primary" htmlFor="tab-results">Ask with evidence</label>
+          <label className="sidebarButton" htmlFor="tab-add-data">Add data</label>
+          <label className="sidebarButton" htmlFor="tab-work">Check processing</label>
         </div>
 
         <label className="sidebarSearch">
@@ -1755,14 +1761,13 @@ export default async function Home() {
           <input readOnly value="" placeholder="Sources, uploads, evidence, reports..." />
         </label>
 
-        <nav className="navSection" aria-label="Workspace sections">
-          <a href="#home">Home</a>
-          <a href="#assistant">Assistant</a>
-          <a href="#data-knowledge">Data &amp; Knowledge</a>
-          <a href="#work-processing">Work &amp; Processing</a>
-          <a href="#reports">Reports</a>
-          <a href="#safety-audit">Safety &amp; Audit</a>
-          <a href="#settings">Settings</a>
+        <nav className="navSection" aria-label="Workspace tabs">
+          <label htmlFor="tab-home">Home</label>
+          <label htmlFor="tab-add-data">Add Data</label>
+          <label htmlFor="tab-work">Work</label>
+          <label htmlFor="tab-results">Results</label>
+          <label htmlFor="tab-settings">Settings</label>
+          <label htmlFor="tab-advanced">Advanced</label>
         </nav>
 
         <section className="sidebarList" aria-label="Recent work">
@@ -1789,27 +1794,44 @@ export default async function Home() {
         <header className="topBar">
           <div>
             <p className="eyebrow">IGY6</p>
-            <h1>Local Evidence Workspace</h1>
+            <h1>Local Evidence Dashboard</h1>
           </div>
           <div className="topStatus">
             <StatusPill state="local-first" />
-            <StatusPill state="rust-runtime" />
-            <StatusPill state="evidence-only" />
+            <StatusPill state="system-ready" />
+            <StatusPill state="background-ready" />
             <StatusPill state="no-external-model" />
             <StatusPill state={health.data.status} />
           </div>
         </header>
 
-        <section className="panel workflowHero" id="home">
+        <section className="productTabs" aria-label="Main dashboard tabs">
+          <input className="tabInput" id="tab-home" name="main-dashboard-tab" type="radio" defaultChecked />
+          <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" />
+          <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" />
+          <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" />
+          <input className="tabInput" id="tab-settings" name="main-dashboard-tab" type="radio" />
+          <input className="tabInput" id="tab-advanced" name="main-dashboard-tab" type="radio" />
+          <nav className="tabList" aria-label="Main dashboard">
+            <label role="tab" htmlFor="tab-home">Home</label>
+            <label role="tab" htmlFor="tab-add-data">Add Data</label>
+            <label role="tab" htmlFor="tab-work">Work</label>
+            <label role="tab" htmlFor="tab-results">Results</label>
+            <label role="tab" htmlFor="tab-settings">Settings</label>
+            <label role="tab" htmlFor="tab-advanced">Advanced</label>
+          </nav>
+        </section>
+
+        <section className="panel workflowHero tabContent" id="home" data-tab-panel="home">
           <div className="panelHeader">
             <div>
               <p className="eyebrow">Home</p>
-              <h2>Runtime Status And Main Workflows</h2>
+              <h2>System Ready</h2>
             </div>
             <StatusPill state={health.data.status} />
           </div>
-          <section className="runtimePosture" aria-label="Current runtime posture">
-            {RUNTIME_POSTURE.map((item) => (
+          <section className="readinessStrip" aria-label="Current readiness">
+            {USER_READINESS.map((item) => (
               <article key={item.label}>
                 <span>{item.label}</span>
                 <strong>{item.value}</strong>
@@ -1817,6 +1839,7 @@ export default async function Home() {
               </article>
             ))}
           </section>
+          <p className="readinessSummary">System ready. Background worker ready. {pendingApprovals.length > 0 ? "Review pending approvals before sensitive collection." : "No approval needs attention right now."}</p>
           <section className="metrics compact" aria-label="Home overview">
             <article><span>Service readiness</span><strong>{Object.keys(checks).length ? `${Object.values(checks).filter((check) => check.status === "ok").length}/${Object.keys(checks).length}` : "Unknown"}</strong></article>
             <article><span>Recent data activity</span><strong>{recentRuns.length + recentArtifacts.length}</strong></article>
@@ -1827,26 +1850,26 @@ export default async function Home() {
           <div className="primaryWorkflowGrid" aria-label="Primary workflows">
             <article>
               <span>1</span>
-              <h3>Add authorized data</h3>
+              <h3>Add data</h3>
               <p>Create a scoped source and upload approved UTF-8 text such as notes, logs, or exports.</p>
-              <a href="#uploads-collection">Open upload workflow</a>
+              <label htmlFor="tab-add-data">Open Add Data</label>
             </article>
             <article>
               <span>2</span>
               <h3>Check processing</h3>
-              <p>Review Rust worker queue status, completed work, failures, and audit records.</p>
-              <a href="#work-processing">Open processing</a>
+              <p>See what is waiting, running, completed, or needs attention.</p>
+              <label htmlFor="tab-work">Open Work</label>
             </article>
             <article>
               <span>3</span>
               <h3>Ask with evidence</h3>
-              <p>{sources.data.length === 0 ? "Create a manual_upload source in Data & Knowledge." : evidenceItems.data.length === 0 ? "Upload approved text and check processing." : "Ask Assistant a question over local evidence."}</p>
-              <a href="#assistant">Open Assistant</a>
+              <p>{sources.data.length === 0 ? "Add a data source first." : evidenceItems.data.length === 0 ? "Add approved text and check processing." : "Ask a question over local evidence."}</p>
+              <label htmlFor="tab-results">Open Results</label>
             </article>
           </div>
         </section>
 
-        <section className="chatStage workflowSection" id="assistant">
+        <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="results">
           <div className="conversationWindow">
             <article className="message systemMessage">
               <div className="avatar">SYS</div>
@@ -1888,7 +1911,52 @@ export default async function Home() {
           <AgentCommandPanel capabilities={agentCapabilities} />
         </section>
 
-        <section className="panel toolConsole" aria-label="MVP action console">
+        <section className="panel diagnosticsPanel tabContent" id="advanced-diagnostics" data-tab-panel="advanced">
+          <div className="panelHeader">
+            <div>
+              <p className="eyebrow">Advanced</p>
+              <h2>Diagnostics</h2>
+            </div>
+            <StatusPill state={health.data.status} />
+          </div>
+          <section className="runtimePosture" aria-label="Technical runtime posture">
+            {RUNTIME_POSTURE.map((item) => (
+              <article key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <StatusPill state={item.state} />
+              </article>
+            ))}
+          </section>
+          <section className="split">
+            <article className="panelInset">
+              <h3>Service readiness</h3>
+              <div className="checkList">
+                {Object.entries(checks).map(([name, check]) => (
+                  <article className="checkRow" key={name}>
+                    <span>{name}</span>
+                    <StatusPill state={check.status} />
+                  </article>
+                ))}
+                {Object.keys(checks).length === 0 ? <EmptyState label="No readiness details returned." /> : null}
+              </div>
+            </article>
+            <article className="panelInset">
+              <h3>Recent audit</h3>
+              <div className="stack">
+                {recentAuditEvents.map((event) => (
+                  <article className="miniRecord" key={event.id}>
+                    <strong>{event.event_type}</strong>
+                    <span>{event.decision ?? "recorded"} · {event.actor_id}</span>
+                  </article>
+                ))}
+              </div>
+              {recentAuditEvents.length === 0 ? <EmptyState label="No audit events yet." /> : null}
+            </article>
+          </section>
+        </section>
+
+        <section className="panel toolConsole tabContent" aria-label="Advanced route console" data-tab-panel="advanced">
           <details>
             <summary>
               <span>
@@ -1902,11 +1970,11 @@ export default async function Home() {
         </section>
 
         <section className="workspaceGrid" aria-label="IGY6 workflow records">
-          <section className="panel workflowSection" id="data-knowledge">
+          <section className="panel workflowSection tabContent" id="data-knowledge" data-tab-panel="add-data">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Data &amp; Knowledge</p>
-                <h2>Information Lifecycle</h2>
+                <p className="eyebrow">Add Data</p>
+                <h2>Bring In Authorized Information</h2>
               </div>
               <StatusPill state="local-first" />
             </div>
@@ -1915,14 +1983,10 @@ export default async function Home() {
                 <span key={step}>{step}</span>
               ))}
             </div>
-            <section className="workflowTabs" aria-label="Data and knowledge panels">
+            <section className="workflowTabs" aria-label="Add data steps">
               <a href="#data-overview">Overview</a>
               <a href="#sources-panel">Sources</a>
-              <a href="#uploads-collection">Uploads &amp; Collection</a>
-              <a href="#evidence-panel">Evidence</a>
-              <a href="#memory-panel">Memory</a>
-              <a href="#analysis-panel">Analysis</a>
-              <a href="#data-search">Search</a>
+              <a href="#uploads-collection">Uploads</a>
             </section>
             <div className="quickStartGrid" id="data-overview">
               <article>
@@ -1930,17 +1994,17 @@ export default async function Home() {
                 <p>Upload warranty notes, router troubleshooting notes, a bill note, or a folder inventory and ask what changed, what expires, or what looks duplicated.</p>
               </article>
               <article>
-                <h3>Coder examples</h3>
-                <p>Upload build logs, repo status reports, or verification summaries and ask for failure causes, next DIFF recommendations, or route parity evidence.</p>
+                <h3>Project examples</h3>
+                <p>Upload build notes, verification summaries, or project logs and ask what failed, what changed, or what needs review.</p>
               </article>
             </div>
           </section>
 
-          <section className="panel" id="sources-panel">
+          <section className="panel tabContent" id="sources-panel" data-tab-panel="add-data">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Data &amp; Knowledge / Sources</p>
-                <h2><HelpHeading term="source">Sources And Permissions</HelpHeading></h2>
+                <p className="eyebrow">Add Data / Sources</p>
+                <h2><HelpHeading term="source">Where Your Data Comes From</HelpHeading></h2>
               </div>
               {sources.error ? <span className="errorText">{sources.error}</span> : <StatusPill state={`${sources.data.length}-sources`} />}
             </div>
@@ -1969,11 +2033,11 @@ export default async function Home() {
             </details>
           </section>
 
-          <section className="panel" id="uploads-collection">
+          <section className="panel tabContent" id="uploads-collection" data-tab-panel="add-data">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Data &amp; Knowledge / Uploads &amp; Collection</p>
-                <h2><HelpHeading term="manualUpload">Guided Manual Upload</HelpHeading></h2>
+                <p className="eyebrow">Add Data / Uploads</p>
+                <h2><HelpHeading term="manualUpload">Guided Upload</HelpHeading></h2>
               </div>
               <StatusPill state="approval-aware" />
             </div>
@@ -2001,11 +2065,11 @@ export default async function Home() {
             </details>
           </section>
 
-          <section className="panel" id="evidence-panel">
+          <section className="panel tabContent" id="evidence-panel" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Data &amp; Knowledge / Evidence</p>
-                <h2><HelpHeading term="evidenceItem">Documents, Chunks, Evidence, And Claims</HelpHeading></h2>
+                <p className="eyebrow">Results</p>
+                <h2><HelpHeading term="evidenceItem">Evidence And Documents</HelpHeading></h2>
               </div>
               {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some evidence endpoints returned errors.</span>
@@ -2100,11 +2164,11 @@ export default async function Home() {
             </section>
           </section>
 
-          <section className="panel" id="memory-panel">
+          <section className="panel tabContent" id="memory-panel" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Data &amp; Knowledge / Memory</p>
-                <h2><HelpHeading term="vectorMemory">Vector And Graph Memory</HelpHeading></h2>
+                <p className="eyebrow">Results</p>
+                <h2><HelpHeading term="vectorMemory">Search Memory And Findings</HelpHeading></h2>
               </div>
               {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some memory or analysis endpoints returned errors.</span>
@@ -2180,17 +2244,17 @@ export default async function Home() {
               </div>
             </section>
             <section className="panelInset" id="data-search">
-              <h3>Search Across Data &amp; Knowledge</h3>
+              <h3>Search Your Data</h3>
               <p>Use Assistant for semantic retrieval now. Filter targets include sources, uploads, evidence, memory, and analysis records. Example question: "What did I upload today?"</p>
-              <a className="inlineAction" href="#assistant">Open Assistant search</a>
+              <label className="inlineAction" htmlFor="tab-results">Open Results search</label>
             </section>
           </section>
 
-          <section className="panel workflowSection" id="work-processing">
+          <section className="panel workflowSection tabContent" id="work-processing" data-tab-panel="work">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Work &amp; Processing</p>
-                <h2><HelpHeading term="workItem">Queue, Dispatch, And Processing Status</HelpHeading></h2>
+                <p className="eyebrow">Work</p>
+                <h2><HelpHeading term="workItem">Processing Status</HelpHeading></h2>
               </div>
               {[workItems.error, approvals.error, feedback.error, outcomes.error, reports.error, auditEvents.error].filter(Boolean).length > 0 ? (
                 <span className="errorText">Some review or operations endpoints returned errors.</span>
@@ -2207,7 +2271,7 @@ export default async function Home() {
                 <span key={step}>{step}</span>
               ))}
             </div>
-            <p className="agentRuntimeReason">Dispatch is safe-limited: the Rust API records dispatch metadata and deterministic status transitions without arbitrary runtime execution from user input. Supported queued processing is owned by the Rust worker daemon.</p>
+            <p className="agentRuntimeReason">Background processing is ready. Supported queued work stays behind system checks and does not run arbitrary user input.</p>
             <section className="quad analysisGrid">
               <div>
                 <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
@@ -2229,11 +2293,11 @@ export default async function Home() {
             </details>
           </section>
 
-          <section className="panel workflowSection" id="safety-audit">
+          <section className="panel workflowSection tabContent" id="safety-audit" data-tab-panel="settings">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Safety &amp; Audit</p>
-                <h2>Approvals, Audit Trail, And Policy State</h2>
+                <p className="eyebrow">Settings</p>
+                <h2>Safety, Approvals, And Policy</h2>
               </div>
               <StatusPill state="approval-gated" />
             </div>
@@ -2301,7 +2365,7 @@ export default async function Home() {
                   <article className="item evidenceItem"><div><strong>Approval-required default</strong><span>System-changing actions require explicit local approval.</span></div><StatusPill state="enabled" /></article>
                   <article className="item evidenceItem"><div><strong>Allowed operation classes</strong><span>Read-only checks, retrieval preview, approved stack controls, approved collection.</span></div><StatusPill state="bounded" /></article>
                   <article className="item evidenceItem"><div><strong>External model policy</strong><span>Local-first evidence workflows do not send data to external models by default.</span></div><StatusPill state="blocked" /></article>
-                  <article className="item evidenceItem"><div><strong>Runtime capability</strong><span>{agentCapabilities.data.runtime.reason ?? "Capability status is reported by the Rust API runtime."}</span></div><StatusPill state={agentCapabilities.data.runtime.docker_control_available ? "runtime-ready" : "runtime-blocked"} /></article>
+                  <article className="item evidenceItem"><div><strong>Runtime capability</strong><span>{agentCapabilities.data.runtime.reason ?? "Capability status is reported by the system runtime."}</span></div><StatusPill state={agentCapabilities.data.runtime.docker_control_available ? "runtime-ready" : "runtime-blocked"} /></article>
                 </div>
               </div>
 
@@ -2327,16 +2391,16 @@ export default async function Home() {
             </details>
           </section>
 
-          <section className="panel workflowSection" id="reports">
+          <section className="panel workflowSection tabContent" id="reports" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Reports</p>
-                <h2>View, Render, And Export Reports</h2>
+                <p className="eyebrow">Results</p>
+                <h2>Reports</h2>
               </div>
               {reports.error ? <span className="errorText">{reports.error}</span> : <StatusPill state={`${reports.data.length}-reports`} />}
             </div>
             <div className="fieldGuide">
-              <article><strong>Report render reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Coder: "Render a route parity verification summary."</span></article>
+              <article><strong>Report reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Project: "Summarize the latest verification notes."</span></article>
             </div>
             <section className="quad analysisGrid">
               <div>
