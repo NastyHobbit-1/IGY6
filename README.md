@@ -1,33 +1,34 @@
 # IGY6
 
-IGY6 is a private, local-first adaptive intelligence workspace. It registers
-authorized sources, stores raw artifacts, normalizes them into evidence,
-searches vector and graph memory, tracks work and audit events, and exposes a
-review UI for evidence-backed questions, approvals, outcomes, reports, and
-controlled self-improvement work.
+IGY6 is a private, local-first evidence workspace for collecting information, processing it into searchable evidence, and using that evidence to answer questions, review activity, and produce reports.
 
-IGY6 is not a generic chatbot, hosted RAG demo, external-model workflow, or
-autonomous system-changing agent. The default posture is local, evidence-first,
-read-only where possible, and approval-gated before sensitive or
-system-changing actions.
+It is built for personal/local operation. The application keeps runtime data outside the repository, preserves an audit trail, and favors evidence-backed answers over unsupported claims.
 
-## Current Runtime Status
+## What IGY6 Does
 
-The active application API and worker runtime is Rust-only:
+IGY6 helps you:
 
-- `api` is the Rust gateway built from `crates/igy6-gateway/Dockerfile`.
-- `worker` is the Rust worker daemon built from
-  `crates/igy6-worker/Dockerfile`.
-- Python/FastAPI fallback is inactive and archived.
-- Python/Celery worker is inactive and archived.
+- add authorized text-based data and source records;
+- track background processing from raw input to documents, chunks, evidence, and memory;
+- search and review local evidence;
+- ask questions that are grounded in stored evidence;
+- inspect approvals, audit events, processing status, and reports;
+- keep local runtime data separate from source code.
+
+IGY6 is not a hosted chatbot, a generic RAG demo, or an unrestricted automation agent. Sensitive or system-changing actions are expected to stay explicit, auditable, and approval-aware.
+
+## Current Runtime
+
+The active application runtime is Rust-based for the API and worker path:
+
+- `api` runs the Rust gateway.
+- `worker` runs the Rust worker daemon.
+- Legacy FastAPI and Python/Celery worker code is archived only for history and rollback.
 - Celery beat is inactive.
-- Route parity reports zero FastAPI routes missing from Rust and zero web-used
-  routes requiring fallback.
 
-The Rust-only claim applies to the application API and worker runtime. These
-supporting components intentionally remain non-Rust:
+Supporting services intentionally remain as supporting infrastructure:
 
-- Next.js web
+- Next.js web UI
 - PostgreSQL
 - Redis
 - Qdrant
@@ -35,30 +36,103 @@ supporting components intentionally remain non-Rust:
 - MLflow
 - Phoenix
 
-Archived legacy Python source is history and rollback material only:
-
-- FastAPI API archive: `archive/legacy-python/services-api`
-- Python/Celery worker archive: `archive/legacy-python/services-worker`
-
-Do not treat archive paths as active services. Base Docker Compose must not
-define `legacy-api`, a Python/Celery worker, Celery beat, or legacy worker
-source-tree runtime references.
-
-## Runtime Data Rule
-
-Runtime/private data does not belong in the repository. Keep local runtime data
-under `IGY6_DATA_ROOT`.
-
-Repository contents are source code, docs, configs, scripts, tests, and
-archive/history. Do not commit `.env`, storage roots, Docker volume data,
-private exports, artifacts, credentials, tokens, cookies, or collected personal
-data.
-
 ## Quickstart
 
-Create `.env` from `.env.example` before normal local runs.
+From the repository root:
 
-Use the simple runtime scripts:
+```bash
+cp .env.example .env
+scripts/run.sh
+```
+
+Open the web UI:
+
+```text
+http://127.0.0.1:3000
+```
+
+Check service status:
+
+```bash
+scripts/status.sh
+```
+
+Stop IGY6 safely:
+
+```bash
+scripts/stop.sh
+```
+
+Restart IGY6:
+
+```bash
+scripts/restart.sh
+```
+
+The stop script uses a normal Docker Compose shutdown and does not remove volumes. Do not use `docker compose down -v` unless you intentionally want to remove Docker volume data.
+
+## Main User Workflow
+
+1. Start IGY6 with `scripts/run.sh`.
+2. Open the web UI at `http://127.0.0.1:3000`.
+3. Use **Home** to confirm the system is ready.
+4. Use **Add Data** to add supported information.
+5. Use **Work** to check processing.
+6. Use **Results** to review evidence, answers, and reports.
+7. Use **Settings** for safety/configuration review.
+8. Use **Advanced** only for diagnostics and technical troubleshooting.
+
+For a full tab-by-tab guide, see [`docs/ui/README.md`](docs/ui/README.md).
+
+## Web UI Tabs
+
+- **Home**: readiness, attention items, and next actions.
+- **Add Data**: user-friendly entry point for sources and text-oriented uploads.
+- **Work**: processing status and background work.
+- **Results**: evidence, answers, reports, and searchable output.
+- **Settings**: safety, approvals, local configuration, and policy posture.
+- **Advanced**: diagnostics and lower-level tools for troubleshooting.
+
+The main interface is intended for normal use. Technical details belong in **Advanced**, not on the default screen.
+
+## Data and Privacy Rule
+
+Runtime/private data belongs under `IGY6_DATA_ROOT`, not in the repository.
+
+Do not commit:
+
+- `.env`;
+- storage folders;
+- artifacts;
+- exported private data;
+- credentials, tokens, cookies, or secrets;
+- collected personal data.
+
+The repository should contain source code, documentation, configuration templates, tests, scripts, and archive/history only.
+
+## What Is Supported Now
+
+Current supported/product-facing posture:
+
+- Rust API and worker runtime.
+- Docker Compose local stack.
+- Normal-user tabbed web interface.
+- Runtime status and validation scripts.
+- Text-oriented manual upload path.
+- Worker processing for normalization, chunking, and vector upsert.
+- Evidence-oriented review and answer flows where records exist.
+- Archived legacy Python code for history/rollback only.
+
+Current limitations:
+
+- Manual upload is best for UTF-8 text.
+- Binary PDF, image, audio, and video parsing are not claimed unless a later change adds and verifies them.
+- Some source/collector workflows may be planned, metadata-only, or dependent on current API-backed records.
+- Empty UI states are real empty states, not demo data.
+
+## Useful Commands
+
+Start, stop, restart, and inspect the stack:
 
 ```bash
 scripts/run.sh
@@ -67,101 +141,22 @@ scripts/restart.sh
 scripts/status.sh
 ```
 
-The scripts resolve the repository root from their own location, require
-`.env`, preserve runtime data, and print the underlying Docker Compose command.
-
-Underlying start command:
-
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env up --build
-```
-
-Underlying stop command:
-
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env down
-```
-
-Underlying restart commands:
-
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env down
-docker compose -f infra/docker-compose.yml --env-file .env up --build
-```
-
-Underlying status command:
-
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env ps
-```
-
-Follow logs:
-
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200
-```
-
-Do not use `down -v` as a normal stop command. It can delete Docker volume
-data.
-
-## Local URLs
-
-| Service | URL |
-| --- | --- |
-| Web UI | `http://127.0.0.1:3000` |
-| Rust API gateway | `http://127.0.0.1:8000` |
-| API readiness | `http://127.0.0.1:8000/health/ready` |
-
-## Validation Commands
-
-Post-cutover runtime audit:
-
-```bash
-python3 scripts/post-cutover-runtime-audit.py
-```
-
-Post-cutover smoke suite:
+Run non-destructive validation:
 
 ```bash
 scripts/post-cutover-smoke.sh --check
-```
-
-Fresh-clone startup readiness:
-
-```bash
 scripts/fresh-clone-startup-check.sh --check
-```
-
-Startup/shutdown/restart command-shape validation:
-
-```bash
 scripts/runtime-lifecycle-check.sh --check
+python3 scripts/post-cutover-runtime-audit.py
 ```
 
-Rust cutover guard:
-
-```bash
-scripts/rust-cutover.sh --check
-```
-
-Web build:
+Build the web UI:
 
 ```bash
 npm --prefix apps/web run build
 ```
 
-Useful supporting checks:
-
-```bash
-git status --short
-git diff --check
-python3 -m json.tool configs/rust-cutover-manifest.json
-python3 -m json.tool configs/legacy-fastapi-route-classification.json
-python3 scripts/rust-route-parity.py --check
-docker compose -f infra/docker-compose.yml --env-file .env.example config
-```
-
-For Rust code changes, also run:
+Run Rust checks when changing Rust code:
 
 ```bash
 cargo fmt --all --check
@@ -169,154 +164,56 @@ cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
 
-## What The Validation Scripts Do
+## Local URLs
 
-`scripts/post-cutover-smoke.sh --check` validates static runtime ownership,
-Compose config, route parity, the cutover audit, and Rust worker help/check. It
-does not start services or touch runtime data. If a local Rust API stack is
-already running, it also probes live health endpoints unless those probes are
-allowed to skip.
-
-`scripts/fresh-clone-startup-check.sh --check` validates required tools,
-tracked files, `.env.example` coverage for Compose, Rust-only runtime posture,
-Compose config, route parity, Rust worker help/check, and the post-cutover
-smoke path. It does not create `.env`, create data-root folders, start
-services, install dependencies, pull images, or process queues.
-
-`scripts/runtime-lifecycle-check.sh --check` validates Compose config, expected
-service names, Rust API/worker ownership, absence of `legacy-api` and `beat`,
-documented start/shutdown/restart command shapes, non-volume-removing shutdown
-posture, rollback posture, the post-cutover audit, and the post-cutover smoke
-suite. It does not start, stop, restart, or mutate Compose services.
-
-## Active Services
-
-Base Docker Compose defines the active local stack:
-
-| Service | Role |
+| Area | URL |
 | --- | --- |
-| `web` | Next.js UI |
-| `api` | Rust gateway API |
-| `worker` | Rust worker daemon for supported work-item processing |
-| `postgres` | Relational state and audit store |
-| `redis` | Queue/supporting runtime service |
-| `qdrant` | Vector memory |
-| `neo4j` | Graph memory |
-| `mlflow` | Experiment tracking support |
-| `phoenix` | Trace/evaluation support |
-
-The Rust worker daemon covers the post-cutover worker runtime for
-`collection_normalization`, `document_chunking`, and `chunk_vector_upsert`.
-Graph sync, reports, ingestion workflows, and product flows should still be
-verified by their own DIFF-scoped checks before being considered complete
-end-to-end product workflows.
-
-## Using The Product
-
-The web UI is organized around these workflows:
-
-- Home: runtime status, service readiness, recent data, recent work, audit, and
-  next action.
-- Assistant: evidence questions, retrieval preview, safe actions, approvals,
-  and action results.
-- Data & Knowledge: sources, uploads, collection runs, raw artifacts,
-  documents, chunks, evidence, memory, analysis, and search.
-- Work & Processing: queue status, work item detail, dispatch status, worker
-  readiness, and processing pipeline.
-- Reports: report list, detail, render controls, and status.
-- Safety & Audit: approvals, audit log, safety rules, local-first state, and
-  external-model policy.
-- Settings: redacted environment status, runtime status, storage paths, and
-  diagnostics.
-
-Manual upload currently works best with UTF-8 text. Binary PDF/image/audio
-parsing is not claimed unless a later DIFF adds it.
-
-For a full tab-by-tab user guide, see `docs/ui/README.md`.
-
-## Optional Local LLM
-
-IGY6 does not call an external model by default. Optional local Ollama support
-exists behind local-only configuration and evidence-required checks. With
-`LLM_PROVIDER=none`, deterministic evidence fallback is active. If a local
-provider is enabled, answers must still cite retrieved evidence or report
-insufficient evidence.
-
-See `docs/llm/LOCAL_LLM_PROVIDER_PLAN.md`.
-
-## Docs Map
-
-Start here:
-
-- `AGENTS.md`: repository rules and DIFF-governed workflow.
-- `docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md`: current post-cutover
-  completion plan.
-- `docs/runtime/PROCESSING_STATUS.md`: worker processing status and diagnostics.
-- `docs/runtime/E2E_MANUAL_UPLOAD_SMOKE.md`: guided manual upload smoke path.
-- `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`: route and runtime cutover
-  audit history.
-- `docs/rust-migration/RUST_CUTOVER_ROLLBACK.md`: rollback posture.
-- `docs/rust-migration/NON_WEB_FASTAPI_ROUTE_CLASSIFICATION.md`: final FastAPI
-  route classification result.
-- `configs/rust-cutover-manifest.json`: machine-readable cutover manifest.
-- `configs/legacy-fastapi-route-classification.json`: machine-readable legacy
-  route classification.
-- `docs/diffs/`: locked DIFF history and active DIFF records.
-
-Historical migration docs and locked DIFF records may describe earlier
-FastAPI/Python/Celery states. Treat those as chronology unless a current-status
-section says otherwise.
+| Web UI | `http://127.0.0.1:3000` |
+| Rust API gateway | `http://127.0.0.1:8000` |
+| API readiness | `http://127.0.0.1:8000/health/ready` |
 
 ## Troubleshooting
 
-- Web UI unavailable: run `docker compose -f infra/docker-compose.yml --env-file .env ps`
-  and check the `web` logs.
-- API unavailable: open `http://127.0.0.1:8000/health/ready` and check `api`
-  logs.
-- Empty `ps` output: the stack is probably not running for the selected Compose
-  project/env file.
-- No evidence after upload: check Work & Processing, worker logs, and
-  `docs/runtime/PROCESSING_STATUS.md`.
-- Qdrant/vector errors: run the post-cutover smoke suite and check `qdrant`
-  logs.
-- Settings save blocked: run verify first and read the redacted validation
-  warnings.
-- Phoenix `GET / 200 OK` log lines are normal local health/readiness probes.
-
-Useful log commands:
+If the UI does not open:
 
 ```bash
+scripts/status.sh
+```
+
+If the system looks unhealthy:
+
+```bash
+scripts/post-cutover-smoke.sh --check
+```
+
+If start/stop/restart behavior is unclear:
+
+```bash
+scripts/runtime-lifecycle-check.sh --check
+```
+
+View logs directly through Docker Compose when needed:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 worker
-docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web
 ```
 
-## Rollback Posture
+## Documentation
 
-Rollback is intentional and DIFF-scoped. To restore a legacy Python API or
-worker topology for diagnosis, use git history or the archives under
-`archive/legacy-python/`, restore the needed Compose service definitions,
-validate Compose, and restart intentionally. Do not move runtime/private data
-into the repository during rollback.
+Primary user/operator docs:
 
-```bash
-docker compose -f infra/docker-compose.yml --env-file .env config
-```
+- [`docs/ui/README.md`](docs/ui/README.md): tab-by-tab web UI guide.
+- [`docs/runtime/PROCESSING_STATUS.md`](docs/runtime/PROCESSING_STATUS.md): processing and worker status.
+- [`docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md`](docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md): remaining product-completion plan.
+- [`docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`](docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md): runtime cutover audit history.
+- [`docs/rust-migration/RUST_CUTOVER_ROLLBACK.md`](docs/rust-migration/RUST_CUTOVER_ROLLBACK.md): rollback posture.
 
-See `docs/rust-migration/RUST_CUTOVER_ROLLBACK.md`.
+Historical migration files and locked DIFF records may describe older Python/FastAPI/Celery states. Treat those as chronology unless a current-status section says otherwise.
 
-## Development Rules
+## Development and Governance
 
-- Work one DIFF at a time.
-- Do not edit locked DIFFs.
-- Do not start the next DIFF without explicit instruction.
-- Keep changes scoped to the active DIFF.
-- Do not mutate `.env` unless the active DIFF explicitly allows it.
-- Do not touch runtime/private data unless explicitly scoped.
-- Do not remove archive/history files unless explicitly scoped.
-- Do not claim non-Rust infrastructure has been rewritten in Rust.
-- Preserve approval gates, auditability, evidence lineage, and read-only
-  defaults.
+The project uses DIFF-governed changes. Work one scoped DIFF at a time, keep the repo runnable, and do not edit locked DIFF records.
 
-Before editing, read `AGENTS.md`, inspect `git status --short`, inspect the
-current diff, and read the relevant active DIFF and agent prompt.
+Contributor and agent instructions are intentionally kept out of the public-facing README. See `AGENTS.md` only if you are contributing to the repository process.
