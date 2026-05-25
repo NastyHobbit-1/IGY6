@@ -1,18 +1,15 @@
-# Agent Workflow Notes
+# Agent Notes
 
-This directory contains supporting workflow notes for coding agents.
+This directory is not used by the IGY6 runtime on `main`.
 
-Root `AGENTS.md` is the required entry point for project instructions. Files in
-this directory may add process details, role notes, or checklists, but must not
-override the safety, scope, approval, and audit requirements in `AGENTS.md`.
+Private coordination material belongs on the local `dev` branch, not on the product-facing `main` branch.
 
-Agents should use this directory for:
+Runtime chat and action behavior lives in the application code and configuration:
 
-- DIFF process details.
-- Review checklists.
-- Handoff notes.
-- Role-specific operating guidance.
-- Future workflow updates that are too detailed for root `AGENTS.md`.
-
-Before editing code, agents must inspect `docs/diffs`, this directory, current
-git status, and the current diff.
+- `crates/igy6-agent-api/`
+- `crates/igy6-gateway/`
+- `crates/igy6-llm/`
+- `crates/igy6-evidence-answer/`
+- `configs/local-llm-routing.json`
+- `apps/web/src/app/api/agent/`
+- `apps/web/src/app/api/chat/`
