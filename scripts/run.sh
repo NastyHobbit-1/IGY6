@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,32 +7,26 @@ source "${SCRIPT_DIR}/lib/igy6-ops.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run.sh [--detached] [--help]
+Usage: scripts/run.sh [--help]
 
 Start the local IGY6 Docker Compose stack.
 
-Default:
-  Runs in the foreground with:
+Runs:
   docker compose -f infra/docker-compose.yml --env-file .env up --build
 
 Options:
-  --detached   Start with -d, run health checks, and write last-healthy metadata.
-  --help       Show this help.
+  --help  Show this help.
 
 Safety:
   - Does not modify .env.
   - Does not delete volumes or images.
-  - Warns about common host ports but never kills processes.
-  - Stores only safe operational metadata after detached health checks pass.
+  - Does not create .env automatically.
+  - Prints Docker Compose errors directly.
 EOF
 }
 
-detached=false
 for arg in "$@"; do
   case "${arg}" in
-    --detached)
-      detached=true
-      ;;
     --help|-h)
       usage
       exit 0
@@ -46,16 +39,6 @@ done
 
 igy6_require_repo_files
 igy6_require_docker_compose
-igy6_check_ports
 
-if [[ "${detached}" == "true" ]]; then
-  igy6_run_compose up --build -d
-  if igy6_health_checks; then
-    igy6_write_snapshot
-  else
-    igy6_die "Detached startup health checks failed; last-healthy snapshot was not updated."
-  fi
-else
-  igy6_info "Foreground mode selected. Last-healthy snapshot is written only by --detached after health checks pass."
-  igy6_run_compose up --build
-fi
+igy6_info "Starting IGY6 local stack. Press Ctrl+C to stop foreground log streaming; containers may continue according to Docker Compose behavior."
+igy6_run_compose up --build

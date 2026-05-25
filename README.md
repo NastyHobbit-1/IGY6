@@ -58,19 +58,38 @@ data.
 
 Create `.env` from `.env.example` before normal local runs.
 
-Start the stack:
+Use the simple runtime scripts:
+
+```bash
+scripts/run.sh
+scripts/stop.sh
+scripts/restart.sh
+scripts/status.sh
+```
+
+The scripts resolve the repository root from their own location, require
+`.env`, preserve runtime data, and print the underlying Docker Compose command.
+
+Underlying start command:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 ```
 
-Stop the stack:
+Underlying stop command:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env down
 ```
 
-Show services:
+Underlying restart commands:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env down
+docker compose -f infra/docker-compose.yml --env-file .env up --build
+```
+
+Underlying status command:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env ps

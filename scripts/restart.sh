@@ -7,18 +7,21 @@ source "${SCRIPT_DIR}/lib/igy6-ops.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/stop.sh [--help]
+Usage: scripts/restart.sh [--help]
 
-Stop the local IGY6 Docker Compose stack.
+Restart the local IGY6 Docker Compose stack.
 
 Runs:
   docker compose -f infra/docker-compose.yml --env-file .env down
+  docker compose -f infra/docker-compose.yml --env-file .env up --build
 
 Safety:
+  - Does not use down -v.
   - Does not remove volumes.
   - Does not remove images.
-  - Does not prune Docker.
-  - Preserves persistent data under IGY6_DATA_ROOT.
+  - Does not delete runtime data.
+  - Does not modify or create .env.
+  - Prints Docker Compose errors directly.
 EOF
 }
 
@@ -36,5 +39,8 @@ done
 
 igy6_require_repo_files
 igy6_require_docker_compose
-igy6_info "Persistent data under IGY6_DATA_ROOT is preserved. No volumes, images, or data folders will be deleted."
+igy6_info "Restarting IGY6 local stack. Persistent data under IGY6_DATA_ROOT is preserved."
+igy6_info "Stopping existing containers without removing volumes..."
 igy6_run_compose down
+igy6_info "Starting the stack again..."
+igy6_run_compose up --build
