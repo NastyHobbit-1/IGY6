@@ -156,6 +156,17 @@ Compose config, route parity, the cutover audit, and Rust worker help/check. If
 a local Rust API stack is already running, it also probes live health endpoints;
 use `--require-running` when those live probes must be fatal.
 
+Validate fresh-clone startup readiness without creating `.env`, touching
+`IGY6_DATA_ROOT`, starting services, or processing queues:
+
+```bash
+scripts/fresh-clone-startup-check.sh --check
+```
+
+This check confirms the repository has the tracked files, example
+configuration, Compose config, Rust worker command surface, route parity, and
+post-cutover smoke path needed before a live startup.
+
 ## Simple WSL Aliases
 
 Add aliases like these to your shell profile, adjusting the path:

@@ -1199,6 +1199,34 @@
       "does not verify product user journeys or UI feature behavior"
     ]
   },
+  "fresh_clone_startup_validation": {
+    "diff": "DIFF-169",
+    "status": "complete",
+    "command": "scripts/fresh-clone-startup-check.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "verifies": [
+      "required local tools are available",
+      "fresh-clone required repository files exist",
+      ".env.example supplies every variable required by infra/docker-compose.yml plus key runtime settings",
+      "Docker Compose config validates from .env.example",
+      "post-cutover runtime audit passes",
+      "Rust/FastAPI route parity guard passes",
+      "Rust worker --help renders",
+      "Rust worker --check reports non-mutating Rust-only posture",
+      "post-cutover smoke suite passes"
+    ],
+    "does_not_verify": [
+      "does not mutate .env",
+      "does not create, read, or mutate IGY6_DATA_ROOT",
+      "does not start or stop Docker Compose services",
+      "does not install dependencies, pull images, or clone external repositories",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not verify end-to-end product workflows"
+    ]
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {

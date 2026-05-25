@@ -99,6 +99,18 @@ without starting services, stopping services, running broad worker queues,
 mutating `.env`, or touching `IGY6_DATA_ROOT`. Live API health probes are
 optional unless `--require-running` is supplied.
 
+Fresh-clone startup readiness check:
+
+```bash
+scripts/fresh-clone-startup-check.sh --check
+```
+
+The fresh-clone check validates required tools, required tracked files,
+`.env.example` completeness for Compose, Rust-only runtime posture, Docker
+Compose config, route parity, Rust worker help/check, and the post-cutover
+smoke suite. It does not create `.env`, create data-root folders, start
+services, stop services, install dependencies, pull images, or process queues.
+
 Rust worker canary plan:
 
 ```bash

@@ -44,8 +44,8 @@ Purpose: prove the Rust-only runtime is stable enough for normal operation.
 
 Planned DIFFs:
 
-- Runtime smoke suite
-- Fresh clone startup validation
+- Runtime smoke suite — completed by DIFF-168
+- Fresh clone startup validation — completed by DIFF-169
 - Startup/shutdown/restart validation
 - Worker retry/failure/recovery hardening
 - Runtime logging and diagnostics
@@ -290,8 +290,8 @@ Polished/shareable release path:
 
 ## Next DIFF After This Plan
 
-Recommended next DIFF:
+Recommended next Track 1 DIFF after DIFF-169:
 
 ```text
-DIFF-168 post-cutover runtime smoke suite
+Startup/shutdown/restart validation
 ```
