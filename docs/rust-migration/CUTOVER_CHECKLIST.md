@@ -13,7 +13,7 @@ run cutover early.
 - Confirm runtime/private data under `IGY6_DATA_ROOT` is not inside the archive
   plan.
 - Confirm `.env` is not modified by the cutover plan.
-- Confirm `AGENTS.md`, `docs/diffs/`, and `docs/agents/` remain active.
+- Confirm `docs/diffs/` remains active as locked project history. Build-agent instructions are not active on `main` and belong only on local `dev`.
 
 ## Required Rust Verification
 

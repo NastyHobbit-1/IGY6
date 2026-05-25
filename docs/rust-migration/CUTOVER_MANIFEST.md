@@ -98,7 +98,7 @@ Keep entries should document active governance and active Rust files:
 }
 ```
 
-`AGENTS.md`, `docs/diffs/`, and `docs/agents/` remain active unless a future
+`docs/diffs/` remains active as locked project history. Build-agent instructions are not active on `main` and belong only on local `dev` unless a future
 DIFF explicitly replaces the governance system.
 
 ## Rewrite Entries

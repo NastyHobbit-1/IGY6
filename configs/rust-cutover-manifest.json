@@ -1653,43 +1653,35 @@
       ]
     }
   },
-    "archive_plan": {
-        "move": [],
-        "keep": [
-            {
-                "path": "AGENTS.md",
-                "reason": "governance entrypoint remains active after cutover"
-            },
-            {
-                "path": "docs/diffs/",
-                "reason": "DIFF governance remains active after cutover"
-            },
-            {
-                "path": "docs/agents/",
-                "reason": "agent operating instructions remain active after cutover"
-            },
-            {
-                "path": "configs/rust-cutover-manifest.json",
-                "reason": "manifest remains the cutover audit record"
-            },
-            {
-                "path": "infra/docker-compose.yml",
-                "reason": "active local deployment config with Rust api and Rust worker daemon services"
-            },
-            {
-                "path": "archive/legacy-python/services-api/",
-                "reason": "archived legacy FastAPI API source retained for route parity history, migration archaeology, and rollback analysis; not an active runtime service"
-            },
-            {
-                "path": "archive/legacy-python/services-worker/",
-                "reason": "archived legacy Python/Celery worker source retained for rollback history; not an active runtime service"
-            },
-            {
-                "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
-                "reason": "rollback expectations remain active documentation"
-            }
-        ],
-        "rewrite": [],
-        "create_if_missing": []
-    }
+  "archive_plan": {
+    "move": [],
+    "keep": [
+      {
+        "path": "docs/diffs/",
+        "reason": "DIFF governance remains active after cutover"
+      },
+      {
+        "path": "configs/rust-cutover-manifest.json",
+        "reason": "manifest remains the cutover audit record"
+      },
+      {
+        "path": "infra/docker-compose.yml",
+        "reason": "active local deployment config with Rust api and Rust worker daemon services"
+      },
+      {
+        "path": "archive/legacy-python/services-api/",
+        "reason": "archived legacy FastAPI API source retained for route parity history, migration archaeology, and rollback analysis; not an active runtime service"
+      },
+      {
+        "path": "archive/legacy-python/services-worker/",
+        "reason": "archived legacy Python/Celery worker source retained for rollback history; not an active runtime service"
+      },
+      {
+        "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
+        "reason": "rollback expectations remain active documentation"
+      }
+    ],
+    "rewrite": [],
+    "create_if_missing": []
+  }
 }
