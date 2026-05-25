@@ -111,6 +111,18 @@ Compose config, route parity, Rust worker help/check, and the post-cutover
 smoke suite. It does not create `.env`, create data-root folders, start
 services, stop services, install dependencies, pull images, or process queues.
 
+Runtime lifecycle validation:
+
+```bash
+scripts/runtime-lifecycle-check.sh --check
+```
+
+The lifecycle check validates Docker Compose config, planned startup,
+shutdown, and restart command shapes, active service names, Rust API/worker
+ownership, absence of `legacy-api` and `beat`, and rollback posture. It does
+not start, stop, or restart services by default and does not touch `.env`,
+runtime/private data, Docker volumes, or broad worker queues.
+
 Rust worker canary plan:
 
 ```bash

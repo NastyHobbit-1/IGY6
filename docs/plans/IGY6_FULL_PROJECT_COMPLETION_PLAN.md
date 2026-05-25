@@ -46,7 +46,7 @@ Planned DIFFs:
 
 - Runtime smoke suite — completed by DIFF-168
 - Fresh clone startup validation — completed by DIFF-169
-- Startup/shutdown/restart validation
+- Startup/shutdown/restart validation — completed by DIFF-170
 - Worker retry/failure/recovery hardening
 - Runtime logging and diagnostics
 - Backup/restore and data-root validation
@@ -290,8 +290,8 @@ Polished/shareable release path:
 
 ## Next DIFF After This Plan
 
-Recommended next Track 1 DIFF after DIFF-169:
+Recommended next Track 1 DIFF after DIFF-170:
 
 ```text
-Startup/shutdown/restart validation
+Worker retry/failure/recovery hardening
 ```

@@ -1227,6 +1227,38 @@
       "does not verify end-to-end product workflows"
     ]
   },
+  "runtime_lifecycle_validation": {
+    "diff": "DIFF-170",
+    "status": "complete",
+    "command": "scripts/runtime-lifecycle-check.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "planned_start_command": "docker compose -f infra/docker-compose.yml --env-file .env up --build",
+    "planned_shutdown_command": "docker compose -f infra/docker-compose.yml --env-file .env down",
+    "planned_restart_commands": [
+      "docker compose -f infra/docker-compose.yml --env-file .env down",
+      "docker compose -f infra/docker-compose.yml --env-file .env up --build -d"
+    ],
+    "verifies": [
+      "Docker Compose config validates from .env.example",
+      "base Compose service names are postgres, redis, qdrant, neo4j, mlflow, phoenix, api, worker, and web",
+      "base Compose defines no legacy-api or beat service",
+      "api is built from crates/igy6-gateway/Dockerfile",
+      "worker is built from crates/igy6-worker/Dockerfile and runs igy6-worker --daemon",
+      "startup, shutdown, and restart command shapes are documented",
+      "shutdown command shape does not remove Docker volumes",
+      "rollback posture points to archived legacy worker source and Compose validation"
+    ],
+    "does_not_verify": [
+      "does not mutate .env",
+      "does not create, read, or mutate IGY6_DATA_ROOT",
+      "does not start, stop, or restart Docker Compose services",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not verify live service health after restart"
+    ]
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {

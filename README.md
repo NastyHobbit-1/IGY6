@@ -167,6 +167,18 @@ This check confirms the repository has the tracked files, example
 configuration, Compose config, Rust worker command surface, route parity, and
 post-cutover smoke path needed before a live startup.
 
+Validate startup, shutdown, and restart command shapes without starting or
+stopping services:
+
+```bash
+scripts/runtime-lifecycle-check.sh --check
+```
+
+The lifecycle check confirms the planned `up --build`, `down`, and restart
+commands, active Compose service names, Rust API/worker ownership, absence of
+`legacy-api` and `beat`, and rollback posture. It does not mutate `.env`, touch
+`IGY6_DATA_ROOT`, start/stop services, remove volumes, or process queues.
+
 ## Simple WSL Aliases
 
 Add aliases like these to your shell profile, adjusting the path:
