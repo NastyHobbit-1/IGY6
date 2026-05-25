@@ -131,7 +131,7 @@ Purpose: make docs match the actual post-cutover product.
 
 Planned DIFFs:
 
-- User quickstart
+- User quickstart / README entry point polish — completed by DIFF-171
 - Operator guide
 - Runtime architecture guide
 - Troubleshooting guide
@@ -290,7 +290,7 @@ Polished/shareable release path:
 
 ## Next DIFF After This Plan
 
-Recommended next Track 1 DIFF after DIFF-170:
+Recommended next Track 1 DIFF after DIFF-171:
 
 ```text
 Worker retry/failure/recovery hardening

@@ -26,6 +26,10 @@ DIFF-165 archives the inactive Python/Celery worker source under
 `archive/legacy-python/services-worker` and records the final Rust-only
 application runtime audit. Rollback now uses that archive path or git history
 when restoring a Python/Celery worker topology.
+DIFF-168, DIFF-169, and DIFF-170 add non-destructive post-cutover validation
+commands for smoke checks, fresh-clone startup readiness, and lifecycle command
+shape checks. DIFF-171 updates documentation only and does not change runtime
+ownership or rollback mechanics.
 
 ## Current Cutover State
 
@@ -78,6 +82,9 @@ docker compose -f infra/docker-compose.yml --env-file .env up --build worker
 
 ## Manual Verification Points
 
+- `scripts/post-cutover-smoke.sh --check`
+- `scripts/fresh-clone-startup-check.sh --check`
+- `scripts/runtime-lifecycle-check.sh --check`
 - `scripts/rust-cutover.sh --check`
 - `python3 scripts/post-cutover-runtime-audit.py`
 - `npm --prefix apps/web run build`

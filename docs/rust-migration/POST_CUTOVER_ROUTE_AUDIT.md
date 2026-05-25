@@ -289,6 +289,15 @@ repository files only and verifies that active Compose/runtime docs point to
 the Rust gateway and Rust worker daemon while archived Python source remains
 history/rollback-only.
 
+DIFF-168, DIFF-169, and DIFF-170 add non-destructive validation around the
+post-cutover runtime: `scripts/post-cutover-smoke.sh --check`,
+`scripts/fresh-clone-startup-check.sh --check`, and
+`scripts/runtime-lifecycle-check.sh --check`. DIFF-171 polishes the current
+README/docs entry points without changing runtime ownership. Historical
+sections below preserve earlier DIFF states, including older periods where
+FastAPI fallback, Python/Celery worker, or beat remained active; those entries
+are chronology, not the current runtime posture.
+
 ## Rust-Native Gateway Routes
 
 These routes are handled directly by `crates/igy6-gateway`:

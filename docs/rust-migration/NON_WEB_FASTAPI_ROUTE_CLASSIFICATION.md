@@ -11,10 +11,12 @@ handling. DIFF-139 archives the tracked legacy FastAPI API source at
 from Rust. The web route guard remains at `web_routes_requiring_fallback=0`, so
 the API route surface no longer requires FastAPI fallback.
 
-This is an API archive decision only. It does not replace or archive the
-Python/Celery worker services. The machine-readable source of truth is
+This document began as an API archive decision companion. The later worker
+cutover completed in DIFF-165: Python/Celery worker source is archived, Celery
+beat is inactive, and Rust-only application API/worker runtime is now claimed.
+The machine-readable source of truth is
 `configs/legacy-fastapi-route-classification.json`; this document is the
-human-readable companion.
+human-readable route-classification companion.
 
 DIFF-133 migrated these graph/vector memory routes to Rust-native handlers:
 
@@ -82,5 +84,8 @@ The Rust root identity, `/health/live`, `/health/ready`, and
 - Legacy FastAPI API source is archived at
   `archive/legacy-python/services-api` after DIFF-139.
 - No FastAPI routes are missing from Rust after DIFF-139.
-- Full repository Rust-only operation is not claimed because Python worker
-  services remain in scope for later DIFF review.
+- Rust-only application API/worker runtime is claimed after DIFF-165. The claim
+  does not mean Next.js web, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, or
+  Phoenix were rewritten in Rust.
+- Legacy Python/Celery worker source is archived at
+  `archive/legacy-python/services-worker` after DIFF-165.

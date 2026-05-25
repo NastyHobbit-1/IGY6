@@ -25,6 +25,12 @@ repo-defined beat schedule or periodic task registration. The Rust gateway
 dispatch route is safe-limited: it records dispatch metadata and audit events
 but does not invoke Celery or arbitrary runtime execution.
 
+DIFF-168 through DIFF-170 add the current non-destructive validation ladder:
+post-cutover smoke, fresh-clone startup readiness, and runtime lifecycle
+command-shape checks. DIFF-171 keeps this document aligned with the current
+Rust-only application API/worker runtime posture; historical DIFF records and
+archives may still mention older Python/Celery states.
+
 ## Pipeline
 
 ```text
