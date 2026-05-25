@@ -45,6 +45,11 @@ Supporting infrastructure:
 
 Archived legacy Python code remains in the repository only for history and rollback review. It is not the active runtime path on `main`.
 
+Rollback review material includes `archive/legacy-python/services-api` and
+`archive/legacy-python/services-worker`. Restoring the prior Python/Celery
+worker would require an explicit later rollback procedure and Docker Compose
+validation; it is not part of the active runtime.
+
 ## What IGY6 Can Do Now
 
 Current verified/product-facing capabilities include:
@@ -59,6 +64,9 @@ Current verified/product-facing capabilities include:
 - Create evidence-oriented records.
 - Upsert chunk vectors into Qdrant.
 - Track work items and processing state.
+- Preview plain-language requests with an explicit category, request summary,
+  clarification posture, approval posture, and work-item posture before taking
+  action.
 - Inspect runtime status, route parity, and post-cutover validation results.
 - Use local LLM routing configuration where enabled, with evidence-oriented fallback behavior.
 - Review approvals, audit events, reports, evidence records, and runtime diagnostics where records exist.
@@ -204,6 +212,14 @@ scripts/run.sh
 scripts/stop.sh
 scripts/restart.sh
 scripts/status.sh
+```
+
+The wrapper scripts use these Docker Compose lifecycle command shapes:
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env up --build
+docker compose -f infra/docker-compose.yml --env-file .env down
+docker compose -f infra/docker-compose.yml --env-file .env config
 ```
 
 Run non-destructive runtime validation:
