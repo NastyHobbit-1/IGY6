@@ -1,40 +1,146 @@
 # IGY6
 
-IGY6 is a private, local-first evidence workspace for collecting information, processing it into searchable evidence, and using that evidence to answer questions, review activity, and produce reports.
+IGY6 is a private, local-first evidence and decision-support workspace.
 
-It is built for personal/local operation. The application keeps runtime data outside the repository, preserves an audit trail, and favors evidence-backed answers over unsupported claims.
+It is designed to help a user collect authorized information, turn that information into traceable evidence, search and reason over that evidence, review system activity, and produce decision-ready outputs without sending private runtime data to a hosted service by default.
 
-## What IGY6 Does
+IGY6 is not just a chatbot and not just a RAG demo. The goal is a local intelligence layer over approved information: sources, artifacts, documents, chunks, evidence items, claims, patterns, reports, approvals, audit events, and outcomes.
 
-IGY6 helps you:
+## What IGY6 Is For
 
-- add authorized text-based data and source records;
-- track background processing from raw input to documents, chunks, evidence, and memory;
-- search and review local evidence;
-- ask questions that are grounded in stored evidence;
-- inspect approvals, audit events, processing status, and reports;
-- keep local runtime data separate from source code.
+IGY6 is built for questions like:
 
-IGY6 is not a hosted chatbot, a generic RAG demo, or an unrestricted automation agent. Sensitive or system-changing actions are expected to stay explicit, auditable, and approval-aware.
+- What information has been collected?
+- What evidence supports this answer?
+- What changed recently?
+- What work is still processing?
+- What sources, artifacts, documents, and chunks exist?
+- What answers can be generated from stored evidence?
+- What reports or review items are available?
+- What actions need approval?
+- What is known, what is uncertain, and what is unsupported?
 
-## Current Runtime
+The core design principle is evidence-first operation. Answers, reports, and review surfaces should connect back to stored records whenever possible. Unsupported statements should be treated as assumptions, estimates, or insufficient-evidence results rather than hidden facts.
 
-The active application runtime is Rust-based for the API and worker path:
+## Current Product Status
 
-- `api` runs the Rust gateway.
-- `worker` runs the Rust worker daemon.
-- Legacy FastAPI and Python/Celery worker code is archived only for history and rollback.
-- Celery beat is inactive.
+IGY6 currently runs as a Rust-only application API and worker runtime with a Next.js web interface and local supporting services.
 
-Supporting services intentionally remain as supporting infrastructure:
+Active runtime ownership:
 
-- Next.js web UI
-- PostgreSQL
-- Redis
-- Qdrant
-- Neo4j
-- MLflow
-- Phoenix
+- Rust API gateway: active.
+- Rust worker daemon: active.
+- Next.js web UI: active.
+- Legacy Python/FastAPI API: archived, inactive.
+- Legacy Python/Celery worker: archived, inactive.
+- Celery beat: inactive.
+
+Supporting infrastructure:
+
+- PostgreSQL for relational state, evidence metadata, work items, approvals, reports, and audit records.
+- Qdrant for vector memory.
+- Neo4j for graph/relationship memory surfaces.
+- Redis as supporting infrastructure.
+- MLflow and Phoenix as supporting observability/experiment infrastructure.
+
+Archived legacy Python code remains in the repository only for history and rollback review. It is not the active runtime path on `main`.
+
+## What IGY6 Can Do Now
+
+Current verified/product-facing capabilities include:
+
+- Start, stop, restart, and inspect the local stack with simple scripts.
+- Run a Rust API gateway and Rust worker daemon through Docker Compose.
+- Use a tabbed normal-user web UI instead of a developer-heavy dashboard.
+- Add source records and supported text-oriented data through the UI/API surfaces.
+- Process supported text input through the worker pipeline.
+- Normalize text into documents.
+- Split documents into chunks.
+- Create evidence-oriented records.
+- Upsert chunk vectors into Qdrant.
+- Track work items and processing state.
+- Inspect runtime status, route parity, and post-cutover validation results.
+- Use local LLM routing configuration where enabled, with evidence-oriented fallback behavior.
+- Review approvals, audit events, reports, evidence records, and runtime diagnostics where records exist.
+
+The current system is strongest for UTF-8 text-oriented workflows and repository-visible local development/runtime validation.
+
+## Important Current Limits
+
+IGY6 is still under active development.
+
+Current limits:
+
+- Manual upload is best for UTF-8 text.
+- Binary PDF, image, audio, and video parsing are not claimed as complete unless a later scoped change adds and verifies them.
+- Some source types may be planned, metadata-only, or partially wired.
+- Empty UI states are real empty states, not demo data.
+- Graph reasoning, forecasting, self-improvement experiments, and advanced reporting depend on the records and routes currently present.
+- Sensitive or system-changing actions must remain explicit, auditable, and approval-aware.
+
+The README should not imply that every planned intelligence feature is fully complete. The project goal is broader than the current implementation, and the documentation separates those two things.
+
+## Architecture Overview
+
+High-level runtime shape:
+
+```text
+User
+  |
+  v
+Next.js web UI
+  |
+  v
+Rust API gateway
+  |
+  +--> PostgreSQL control/evidence/audit store
+  +--> Rust worker daemon
+  +--> Qdrant vector memory
+  +--> Neo4j graph memory
+  +--> Redis / MLflow / Phoenix supporting services
+```
+
+Core Rust crates include:
+
+- `crates/igy6-gateway/`: Rust HTTP gateway and route handling.
+- `crates/igy6-worker/`: Rust worker runtime and queue processing logic.
+- `crates/igy6-agent-api/`: typed local agent command-plane classification and capability logic.
+- `crates/igy6-llm/`: local LLM provider and routing support.
+- `crates/igy6-evidence-answer/`: evidence-grounded answer packet construction and fallback behavior.
+- `crates/igy6-artifacts/`: content-addressed artifact handling.
+- `crates/igy6-normalization/`: text normalization.
+- `crates/igy6-chunking/`: deterministic chunking.
+- `crates/igy6-vector-memory/`: vector generation and Qdrant request logic.
+- `crates/igy6-write-api/`: write API planning and validation logic.
+- `crates/igy6-work-queue-reports/`: work queue and report contract logic.
+
+## Web Interface
+
+The web UI is organized for normal use first, with technical detail moved out of the default path.
+
+Tabs:
+
+- **Home**: readiness, attention items, and next actions.
+- **Add Data**: source and upload entry points.
+- **Work**: processing status and background work.
+- **Results**: evidence, answers, reports, and searchable output.
+- **Settings**: safety, approvals, and local configuration posture.
+- **Advanced**: diagnostics and lower-level troubleshooting tools.
+
+See [`docs/ui/README.md`](docs/ui/README.md) for the tab-by-tab user guide and workflow examples.
+
+## Main Workflow
+
+A typical local workflow:
+
+1. Start IGY6.
+2. Open the web UI.
+3. Confirm readiness on **Home**.
+4. Add supported data in **Add Data**.
+5. Watch processing in **Work**.
+6. Review evidence and outputs in **Results**.
+7. Use **Settings** for safety and approval posture.
+8. Use **Advanced** only when diagnostics are needed.
 
 ## Quickstart
 
@@ -51,84 +157,43 @@ Open the web UI:
 http://127.0.0.1:3000
 ```
 
-Check service status:
+Check status:
 
 ```bash
 scripts/status.sh
 ```
 
-Stop IGY6 safely:
+Stop safely:
 
 ```bash
 scripts/stop.sh
 ```
 
-Restart IGY6:
+Restart:
 
 ```bash
 scripts/restart.sh
 ```
 
-The stop script uses a normal Docker Compose shutdown and does not remove volumes. Do not use `docker compose down -v` unless you intentionally want to remove Docker volume data.
+The stop script uses normal Docker Compose shutdown and does not remove volumes. Do not use `docker compose down -v` unless you intentionally want to remove Docker volume data.
 
-## Main User Workflow
+## Runtime Data Rule
 
-1. Start IGY6 with `scripts/run.sh`.
-2. Open the web UI at `http://127.0.0.1:3000`.
-3. Use **Home** to confirm the system is ready.
-4. Use **Add Data** to add supported information.
-5. Use **Work** to check processing.
-6. Use **Results** to review evidence, answers, and reports.
-7. Use **Settings** for safety/configuration review.
-8. Use **Advanced** only for diagnostics and technical troubleshooting.
-
-For a full tab-by-tab guide, see [`docs/ui/README.md`](docs/ui/README.md).
-
-## Web UI Tabs
-
-- **Home**: readiness, attention items, and next actions.
-- **Add Data**: user-friendly entry point for sources and text-oriented uploads.
-- **Work**: processing status and background work.
-- **Results**: evidence, answers, reports, and searchable output.
-- **Settings**: safety, approvals, local configuration, and policy posture.
-- **Advanced**: diagnostics and lower-level tools for troubleshooting.
-
-The main interface is intended for normal use. Technical details belong in **Advanced**, not on the default screen.
-
-## Data and Privacy Rule
-
-Runtime/private data belongs under `IGY6_DATA_ROOT`, not in the repository.
+Runtime and private data belongs outside the repository under `IGY6_DATA_ROOT`.
 
 Do not commit:
 
 - `.env`;
-- storage folders;
-- artifacts;
-- exported private data;
-- credentials, tokens, cookies, or secrets;
-- collected personal data.
+- storage directories;
+- runtime artifacts;
+- private exports;
+- credentials;
+- tokens;
+- cookies;
+- collected personal data;
+- Docker volume data.
 
-The repository should contain source code, documentation, configuration templates, tests, scripts, and archive/history only.
-
-## What Is Supported Now
-
-Current supported/product-facing posture:
-
-- Rust API and worker runtime.
-- Docker Compose local stack.
-- Normal-user tabbed web interface.
-- Runtime status and validation scripts.
-- Text-oriented manual upload path.
-- Worker processing for normalization, chunking, and vector upsert.
-- Evidence-oriented review and answer flows where records exist.
-- Archived legacy Python code for history/rollback only.
-
-Current limitations:
-
-- Manual upload is best for UTF-8 text.
-- Binary PDF, image, audio, and video parsing are not claimed unless a later change adds and verifies them.
-- Some source/collector workflows may be planned, metadata-only, or dependent on current API-backed records.
-- Empty UI states are real empty states, not demo data.
+The repository should contain source code, tests, documentation, scripts, configuration templates, and historical archive material only.
 
 ## Useful Commands
 
@@ -141,13 +206,14 @@ scripts/restart.sh
 scripts/status.sh
 ```
 
-Run non-destructive validation:
+Run non-destructive runtime validation:
 
 ```bash
 scripts/post-cutover-smoke.sh --check
 scripts/fresh-clone-startup-check.sh --check
 scripts/runtime-lifecycle-check.sh --check
 python3 scripts/post-cutover-runtime-audit.py
+scripts/rust-cutover.sh --check
 ```
 
 Build the web UI:
@@ -156,7 +222,7 @@ Build the web UI:
 npm --prefix apps/web run build
 ```
 
-Run Rust checks when changing Rust code:
+Run Rust checks:
 
 ```bash
 cargo fmt --all --check
@@ -174,25 +240,25 @@ cargo test --workspace
 
 ## Troubleshooting
 
-If the UI does not open:
+Check services:
 
 ```bash
 scripts/status.sh
 ```
 
-If the system looks unhealthy:
+Run the post-cutover smoke suite:
 
 ```bash
 scripts/post-cutover-smoke.sh --check
 ```
 
-If start/stop/restart behavior is unclear:
+Validate startup/shutdown/restart command posture:
 
 ```bash
 scripts/runtime-lifecycle-check.sh --check
 ```
 
-View logs directly through Docker Compose when needed:
+View logs:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web
@@ -200,20 +266,34 @@ docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 ap
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 worker
 ```
 
-## Documentation
+## Documentation Map
 
-Primary user/operator docs:
+Product and operator docs:
 
-- [`docs/ui/README.md`](docs/ui/README.md): tab-by-tab web UI guide.
-- [`docs/runtime/PROCESSING_STATUS.md`](docs/runtime/PROCESSING_STATUS.md): processing and worker status.
-- [`docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md`](docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md): remaining product-completion plan.
-- [`docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`](docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md): runtime cutover audit history.
+- [`docs/ui/README.md`](docs/ui/README.md): web UI guide and workflow examples.
+- [`docs/runtime/PROCESSING_STATUS.md`](docs/runtime/PROCESSING_STATUS.md): current processing/runtime posture.
+- [`docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md`](docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md): full project completion plan.
+- [`docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`](docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md): Rust cutover and route audit history.
 - [`docs/rust-migration/RUST_CUTOVER_ROLLBACK.md`](docs/rust-migration/RUST_CUTOVER_ROLLBACK.md): rollback posture.
 
-Historical migration files and locked DIFF records may describe older Python/FastAPI/Celery states. Treat those as chronology unless a current-status section says otherwise.
+Historical DIFF records may mention earlier Python/FastAPI/Celery states, build instructions, or migration steps. Treat locked DIFFs as chronology, not as the current runtime description.
 
-## Development and Governance
+## Branch and Repository Policy
 
-The project uses DIFF-governed changes. Work one scoped DIFF at a time, keep the repo runnable, and do not edit locked DIFF records.
+The public `main` branch is product/runtime-facing. It should not contain private build prompts, local Codex instructions, or personal coordination notes.
 
-Contributor and agent instructions are intentionally kept out of the public-facing README. See `AGENTS.md` only if you are contributing to the repository process.
+Private build-agent instructions belong only on a local development branch, not on `main`.
+
+## Development Notes
+
+Use scoped changes. Keep the repository runnable after each change. Do not edit locked historical DIFF records. Do not commit runtime/private data.
+
+For product work, prefer small changes with explicit verification:
+
+```bash
+git diff --check
+cargo fmt --all --check
+cargo clippy --workspace --all-targets
+cargo test --workspace
+npm --prefix apps/web run build
+```

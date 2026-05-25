@@ -155,8 +155,7 @@ run_check() {
   require_command python3
   require_command git
   require_file "${MANIFEST}"
-  require_file "${REPO_ROOT}/AGENTS.md"
-  require_file "${REPO_ROOT}/infra/docker-compose.yml"
+    require_file "${REPO_ROOT}/infra/docker-compose.yml"
 
   validate_manifest
   run_cargo_checks_if_present
@@ -292,7 +291,7 @@ execute_manifest_plan() {
   info "Applying manifest archive/create plan in ${MODE} mode..."
   dry_run_or_execute_moves
   dry_run_or_execute_creates
-  info "Keeping AGENTS.md, docs/diffs/, and docs/agents/ active."
+  info "Keeping docs/diffs/ active as locked project history. Build-agent instructions are dev-only and not active on main."
 }
 
 execute_cutover() {
