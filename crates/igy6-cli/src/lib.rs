@@ -452,7 +452,9 @@ fn require_exact_len(
 fn find_repo_root(start: &Path) -> Result<PathBuf, CliError> {
     for candidate in start.ancestors() {
         if candidate.join("Cargo.toml").is_file()
-            && candidate.join("configs/rust-cutover-manifest.json").is_file()
+            && candidate
+                .join("configs/rust-cutover-manifest.json")
+                .is_file()
             && candidate.join("infra/docker-compose.yml").is_file()
         {
             return Ok(candidate.to_path_buf());
