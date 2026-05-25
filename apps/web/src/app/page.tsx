@@ -263,17 +263,17 @@ type TermHelpContent = {
 const TERM_HELP: Record<string, TermHelpContent> = {
   source: {
     title: "Source",
-    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and scaffolded or planned types such as local_pc_diagnostics, router_network, web_public, and web_authorized_account.",
+    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and planned types such as local_pc_diagnostics, router_network, web_public, and web_authorized_account.",
     manage: "Manage sources in Data & Knowledge; raw route controls are in Advanced.",
     purpose: "Sources define what evidence IGY6 is allowed to use before collection, normalization, search, reports, or review.",
     warning: "A registered source does not grant broad PC or account access; permissions and approvals still apply."
   },
   sourceType: {
     title: "Source Type",
-    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or scaffolded router/web/PC diagnostic types.",
+    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or planned router/web/PC diagnostic types.",
     manage: "Choose the type when creating a source in Data & Knowledge or the advanced source API workflow.",
     purpose: "The type controls which collection workflow and safety expectations apply.",
-    warning: "Some source types are scaffolded and not full collectors yet."
+    warning: "Some source types are planned and not full collectors yet."
   },
   sourcePermission: {
     title: "Source Permission",
@@ -410,14 +410,14 @@ const TERM_HELP: Record<string, TermHelpContent> = {
   },
   workItem: {
     title: "Work Item",
-    explanation: "A Work Item is a queued, running, completed, failed, or canceled task for worker processing.",
+    explanation: "A Work Item is a queued, running, completed, failed, or canceled task for Rust worker processing.",
     manage: "Review work items in Work & Processing and dispatch supported queued items from Advanced controls.",
     purpose: "Work items keep long-running local processing out of the API request path.",
     warning: "Queued work items require intent verification metadata before dispatch."
   },
   dispatch: {
     title: "Dispatch",
-    explanation: "Dispatch starts a queued work item by sending it to the worker.",
+    explanation: "Dispatch records a bounded request for supported queued work and keeps execution behind the current Rust worker/runtime checks.",
     manage: "Use Work & Processing Advanced dispatch controls with a queued work item ID.",
     purpose: "It advances supported worker tasks such as normalization, chunking, and vector upsert.",
     warning: "Dispatch is not autonomous action; unsupported work types are rejected."
@@ -657,6 +657,14 @@ function StatusPill({ state }: { state: string }) {
 function EmptyState({ label }: { label: string }) {
   return <p className="empty">{label}</p>;
 }
+
+const RUNTIME_POSTURE = [
+  { label: "Rust API", value: "active", state: "runtime-active" },
+  { label: "Rust worker", value: "active", state: "runtime-active" },
+  { label: "FastAPI fallback", value: "inactive / archived", state: "archived" },
+  { label: "Python/Celery worker", value: "inactive / archived", state: "archived" },
+  { label: "Celery beat", value: "inactive", state: "retired" }
+];
 
 function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResponse> }) {
   const data = envSettings.data;
@@ -1760,7 +1768,7 @@ export default async function Home() {
         <section className="sidebarList" aria-label="Recent work">
           <div className="sidebarHeading">
             <span>Recent work</span>
-            <StatusPill state="scaffolded" />
+            <StatusPill state="rust-worker" />
           </div>
           {recentWorkItems.map((workItem) => (
             <article className="miniRecord" key={workItem.id}>
@@ -1785,6 +1793,7 @@ export default async function Home() {
           </div>
           <div className="topStatus">
             <StatusPill state="local-first" />
+            <StatusPill state="rust-runtime" />
             <StatusPill state="evidence-only" />
             <StatusPill state="no-external-model" />
             <StatusPill state={health.data.status} />
@@ -1795,10 +1804,19 @@ export default async function Home() {
           <div className="panelHeader">
             <div>
               <p className="eyebrow">Home</p>
-              <h2>System Status And Next Actions</h2>
+              <h2>Runtime Status And Main Workflows</h2>
             </div>
             <StatusPill state={health.data.status} />
           </div>
+          <section className="runtimePosture" aria-label="Current runtime posture">
+            {RUNTIME_POSTURE.map((item) => (
+              <article key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <StatusPill state={item.state} />
+              </article>
+            ))}
+          </section>
           <section className="metrics compact" aria-label="Home overview">
             <article><span>Service readiness</span><strong>{Object.keys(checks).length ? `${Object.values(checks).filter((check) => check.status === "ok").length}/${Object.keys(checks).length}` : "Unknown"}</strong></article>
             <article><span>Recent data activity</span><strong>{recentRuns.length + recentArtifacts.length}</strong></article>
@@ -1806,18 +1824,24 @@ export default async function Home() {
             <article><span>Pending approvals</span><strong>{pendingApprovals.length}</strong></article>
             <article><span>Recent audit events</span><strong>{recentAuditEvents.length}</strong></article>
           </section>
-          <div className="quickStartGrid">
+          <div className="primaryWorkflowGrid" aria-label="Primary workflows">
             <article>
-              <h3>For normal PC users</h3>
-              <p>Upload a warranty PDF text extract, router troubleshooting note, bill note, or folder inventory, then ask Assistant what changed or what to do next.</p>
+              <span>1</span>
+              <h3>Add authorized data</h3>
+              <p>Create a scoped source and upload approved UTF-8 text such as notes, logs, or exports.</p>
+              <a href="#uploads-collection">Open upload workflow</a>
             </article>
             <article>
-              <h3>For coders</h3>
-              <p>Upload a build log or route parity summary, ask for likely failures with evidence, then review work items and audit events.</p>
+              <span>2</span>
+              <h3>Check processing</h3>
+              <p>Review Rust worker queue status, completed work, failures, and audit records.</p>
+              <a href="#work-processing">Open processing</a>
             </article>
             <article>
-              <h3>Next recommended action</h3>
+              <span>3</span>
+              <h3>Ask with evidence</h3>
               <p>{sources.data.length === 0 ? "Create a manual_upload source in Data & Knowledge." : evidenceItems.data.length === 0 ? "Upload approved text and check processing." : "Ask Assistant a question over local evidence."}</p>
+              <a href="#assistant">Open Assistant</a>
             </article>
           </div>
         </section>
@@ -1869,9 +1893,9 @@ export default async function Home() {
             <summary>
               <span>
                 <strong>Advanced Route Console</strong>
-                <em>Existing route controls · no new actions added</em>
+                <em>Existing API-backed controls · no new workflow behavior</em>
               </span>
-              <StatusPill state="scaffolded" />
+              <StatusPill state="advanced" />
             </summary>
             <MvpActionConsole />
           </details>
@@ -2183,7 +2207,7 @@ export default async function Home() {
                 <span key={step}>{step}</span>
               ))}
             </div>
-            <p className="agentRuntimeReason">Dispatch is safe-limited: Rust records dispatch metadata and deterministic status transitions; it does not invoke Celery or arbitrary runtime execution from user input.</p>
+            <p className="agentRuntimeReason">Dispatch is safe-limited: the Rust API records dispatch metadata and deterministic status transitions without arbitrary runtime execution from user input. Supported queued processing is owned by the Rust worker daemon.</p>
             <section className="quad analysisGrid">
               <div>
                 <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
@@ -2277,7 +2301,7 @@ export default async function Home() {
                   <article className="item evidenceItem"><div><strong>Approval-required default</strong><span>System-changing actions require explicit local approval.</span></div><StatusPill state="enabled" /></article>
                   <article className="item evidenceItem"><div><strong>Allowed operation classes</strong><span>Read-only checks, retrieval preview, approved stack controls, approved collection.</span></div><StatusPill state="bounded" /></article>
                   <article className="item evidenceItem"><div><strong>External model policy</strong><span>Local-first evidence workflows do not send data to external models by default.</span></div><StatusPill state="blocked" /></article>
-                  <article className="item evidenceItem"><div><strong>Runtime capability</strong><span>{agentCapabilities.data.runtime.reason ?? "Capability status is reported by the API runtime."}</span></div><StatusPill state={agentCapabilities.data.runtime.docker_control_available ? "runtime-ready" : "runtime-blocked"} /></article>
+                  <article className="item evidenceItem"><div><strong>Runtime capability</strong><span>{agentCapabilities.data.runtime.reason ?? "Capability status is reported by the Rust API runtime."}</span></div><StatusPill state={agentCapabilities.data.runtime.docker_control_available ? "runtime-ready" : "runtime-blocked"} /></article>
                 </div>
               </div>
 

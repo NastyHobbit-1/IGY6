@@ -162,14 +162,21 @@ includesAll("empty and next-step guidance states", page, [
 
 includesAll("safety posture", page, [
   "local-first",
+  "Rust API",
+  "Rust worker",
+  "FastAPI fallback",
+  "inactive / archived",
+  "Celery beat",
   "evidence-only",
   "no-external-model",
   "approval-gated",
   "Dispatch is safe-limited",
-  "does not invoke Celery or arbitrary runtime execution"
+  "Supported queued processing is owned by the Rust worker daemon"
 ]);
 
 includesAll("supporting styles", styles, [
+  ".runtimePosture",
+  ".primaryWorkflowGrid",
   ".advancedPanel",
   ".workflowSteps",
   ".workflowTabs",
