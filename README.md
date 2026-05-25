@@ -232,6 +232,8 @@ The web UI is organized around these workflows:
 Manual upload currently works best with UTF-8 text. Binary PDF/image/audio
 parsing is not claimed unless a later DIFF adds it.
 
+For a full tab-by-tab user guide, see `docs/ui/README.md`.
+
 ## Optional Local LLM
 
 IGY6 does not call an external model by default. Optional local Ollama support
