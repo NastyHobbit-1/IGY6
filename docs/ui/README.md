@@ -427,6 +427,10 @@ Advanced diagnostics:
 
 - Advanced can show technical names, raw JSON, route details, and service
   checks.
+- Action Preview shows what IGY6 thinks a plain-language request means before
+  it runs a supported action or asks for approval.
+- Ambiguous, unsupported, or risky requests show clarification or approval
+  posture instead of silently becoming work.
 - It is for troubleshooting, not everyday use.
 
 ## Workflows
@@ -497,10 +501,13 @@ Example questions:
 ### Workflow E: Use Advanced Only When Needed
 
 1. Open Advanced only for troubleshooting or raw diagnostics.
-2. Review service readiness or old-runtime status if needed.
-3. Use route console controls only when you know the exact source, approval,
+2. Preview a request when you need to check whether IGY6 understands it as a
+   question, data-add request, report request, feedback, outcome, action,
+   diagnostics, project status, or unclear request.
+3. Review service readiness or old-runtime status if needed.
+4. Use route console controls only when you know the exact source, approval,
    work item, or report IDs.
-4. Return to normal tabs for everyday work.
+5. Return to normal tabs for everyday work.
 
 ## Troubleshooting
 
