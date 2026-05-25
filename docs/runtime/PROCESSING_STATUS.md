@@ -87,6 +87,18 @@ Post-cutover runtime audit:
 python3 scripts/post-cutover-runtime-audit.py
 ```
 
+Post-cutover Rust-only runtime smoke suite:
+
+```bash
+scripts/post-cutover-smoke.sh --check
+```
+
+The smoke suite validates current Rust-only runtime posture, Docker Compose
+ownership, route parity, the post-cutover audit, and Rust worker help/check
+without starting services, stopping services, running broad worker queues,
+mutating `.env`, or touching `IGY6_DATA_ROOT`. Live API health probes are
+optional unless `--require-running` is supplied.
+
 Rust worker canary plan:
 
 ```bash

@@ -144,6 +144,18 @@ Run the post-cutover audit without touching runtime data:
 python3 scripts/post-cutover-runtime-audit.py
 ```
 
+Run the Rust-only post-cutover smoke suite without starting services or touching
+runtime data:
+
+```bash
+scripts/post-cutover-smoke.sh --check
+```
+
+By default the post-cutover smoke suite validates static runtime ownership,
+Compose config, route parity, the cutover audit, and Rust worker help/check. If
+a local Rust API stack is already running, it also probes live health endpoints;
+use `--require-running` when those live probes must be fatal.
+
 ## Simple WSL Aliases
 
 Add aliases like these to your shell profile, adjusting the path:

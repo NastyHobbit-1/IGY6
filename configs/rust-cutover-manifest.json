@@ -1167,6 +1167,38 @@
     ],
     "current_runtime_posture": "Rust gateway API and Rust worker daemon are the active application runtime; Next.js web, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix remain expected non-Rust supporting components."
   },
+  "post_cutover_runtime_smoke_suite": {
+    "diff": "DIFF-168",
+    "status": "complete",
+    "command": "scripts/post-cutover-smoke.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "optional_live_api_probe": {
+      "default_required": false,
+      "require_running_flag": "--require-running",
+      "default_api_url": "http://127.0.0.1:8000"
+    },
+    "verifies": [
+      "manifest JSON and Rust-only application API/worker runtime posture",
+      "post-cutover runtime audit",
+      "Rust/FastAPI route parity guard",
+      "Rust cutover check",
+      "Docker Compose config builds api from crates/igy6-gateway/Dockerfile and worker from crates/igy6-worker/Dockerfile",
+      "Docker Compose config does not define legacy-api, Python/Celery worker, Celery beat, or services/worker references",
+      "Rust worker --help renders",
+      "Rust worker --check reports Python/Celery worker and beat are not required and Rust-only runtime is claimed",
+      "optional live Rust API health and migration-status endpoints when a stack is already running"
+    ],
+    "does_not_verify": [
+      "does not start or stop Docker Compose services",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not mutate .env",
+      "does not touch runtime/private data or IGY6_DATA_ROOT contents",
+      "does not verify product user journeys or UI feature behavior"
+    ]
+  },
   "legacy_python_review": {
     "diff": "DIFF-139",
     "services_api": {
