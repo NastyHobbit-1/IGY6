@@ -153,8 +153,60 @@ Do not run live service start/stop or destructive verification for this DIFF.
 
 ## Result
 
-Pending.
+Completed.
+
+Created `docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md` on
+`dev`.
+
+The roadmap records:
+
+- current Rust API gateway, Rust worker daemon, Next.js UI, and local service
+  runtime posture;
+- current normal-user workflow through Home, Add Data, Work, Results, Settings,
+  and Advanced;
+- completed, partial, missing, and unsupported capabilities;
+- risks and blockers that must not be hidden by product wording;
+- an ordered next-DIFF plan;
+- rough DIFF-count estimates for a basic usable product, solid local MVP, and
+  full adaptive-intelligence product;
+- recommended DIFF-179 through DIFF-193 scopes;
+- verification commands used during read-only inspection;
+- owner decisions still needed.
+
+No runtime code, Rust crates, Next.js UI code, Docker Compose, `.env`,
+`.env.example`, migrations, API routes, worker behavior, local LLM behavior, or
+runtime/private data were changed.
 
 ## Verification Result
 
-Pending.
+Passed for the DIFF-178 documentation scope.
+
+Commands run:
+
+```bash
+git status --short
+git branch --show-current
+git log --oneline --decorate -5
+git diff --stat
+git diff --name-status
+git diff --check
+```
+
+Read-only inspection also covered the required files and directories listed in
+this DIFF, including `AGENTS.md`, `docs/agents/CODEX_PROMPT_BASELINE.md`,
+`docs/BRANCH_POLICY.md`, `README.md`, `docs/ui/README.md`,
+`configs/rust-cutover-manifest.json`, `infra/docker-compose.yml`,
+`apps/web/src/app/page.tsx`, `apps/web/src/app/api/`, the required Rust crates,
+`docs/diffs/DIFF_PROCESS.md`, `docs/diffs/DIFF_TEMPLATE.md`, and relevant
+recent DIFF records.
+
+`git diff --check` passed.
+
+Changed files are limited to:
+
+- `docs/diffs/DIFF-178-product-completion-roadmap-gap-audit.md`
+- `docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md`
+
+Optional live/runtime checks were not run because this DIFF is planning-only and
+explicitly prohibits starting, stopping, restarting, or mutating runtime
+services or runtime/private data.
