@@ -132,8 +132,47 @@ Do not run live service start/stop/restart for this DIFF.
 
 ## Result
 
-Pending.
+Completed.
+
+Added a normal-user guided manual text intake form to the Add Data / Uploads
+panel. The form clearly limits the path to pasted UTF-8 text, lets the user
+create a new `manual_upload` source or select an existing enabled manual upload
+source, creates the source permission context through the existing `/sources`
+contract when needed, and submits text through the existing
+`/collection-runs/manual-upload` contract when the selected permission does not
+require approval.
+
+The guided path hides raw source and permission IDs from the primary workflow.
+If the selected permission requires approval, it creates a
+`manual_upload_collection` approval request and reports a pending state instead
+of uploading before approval. Advanced raw route controls remain available for
+diagnostics and approval-ID-driven collection. The UI guide now documents the
+guided manual text flow, Work/Results next steps, and the absence of
+binary/media parsing.
 
 ## Verification Result
 
-Pending.
+Passed:
+
+- `git status --short` confirmed only DIFF-180-scoped files were modified.
+- `git branch --show-current` confirmed the active branch is `dev`.
+- `git diff --name-status` confirmed changed files are limited to
+  `apps/web/src/app/page.tsx`, `apps/web/src/app/globals.css`,
+  `docs/ui/README.md`, and this DIFF record.
+- `git diff --check` passed.
+- `npm --prefix apps/web run build` passed.
+- Scoped review confirmed the UI changes use existing source, approval, and
+  manual upload routes and do not add backend/runtime behavior, migrations,
+  dependencies, Docker Compose changes, service configuration changes, or
+  collector expansion.
+- Scoped text review confirmed no binary PDF, image OCR, audio/video
+  transcription, browser/web/router collector, or unsupported source-type
+  completion claim was added.
+- Branch/log review confirmed no `dev` to `main` merge was performed during
+  this DIFF.
+
+Not run:
+
+- Live synthetic upload walkthrough was not run because this DIFF prohibits
+  starting, stopping, or restarting services, and the verification pass did not
+  assume an already-running local stack.
