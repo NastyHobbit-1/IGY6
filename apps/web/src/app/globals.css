@@ -167,6 +167,7 @@ a {
 .sidebarButton,
 .inlineAction,
 .previewForm button,
+.guidedManualActions button,
 .actionBox button,
 .settingsActions button,
 .agentCommandActions button {
@@ -205,6 +206,7 @@ a {
 .sidebarButton:focus-visible,
 .inlineAction:focus-visible,
 .previewForm button:focus-visible,
+.guidedManualActions button:focus-visible,
 .actionBox button:focus-visible,
 .settingsActions button:focus-visible,
 .agentCommandActions button:focus-visible,
@@ -217,6 +219,7 @@ a {
 
 .sidebarSearch,
 .previewForm label,
+.guidedManualForm label,
 .agentCommandGrid label {
   display: grid;
   gap: 7px;
@@ -226,6 +229,7 @@ a {
 }
 
 .previewForm small,
+.guidedManualForm small,
 .agentCommandGrid small {
   color: #9fb0c6;
   font-weight: 600;
@@ -235,6 +239,9 @@ a {
 .sidebarSearch input,
 .previewForm textarea,
 .previewForm input,
+.guidedManualForm input,
+.guidedManualForm select,
+.guidedManualForm textarea,
 .actionBox input,
 .actionBox select,
 .actionBox textarea,
@@ -255,6 +262,9 @@ a {
 .actionBox input,
 .actionBox select,
 .actionBox textarea,
+.guidedManualForm input,
+.guidedManualForm select,
+.guidedManualForm textarea,
 .settingControl input,
 .settingsActions input,
 .agentCommandGrid input,
@@ -268,6 +278,7 @@ a {
 }
 
 .previewForm textarea,
+.guidedManualForm textarea,
 .actionBox textarea,
 .agentCommandGrid textarea {
   resize: vertical;
@@ -891,6 +902,71 @@ a {
   line-height: 1.45;
   padding: 14px;
   white-space: pre-wrap;
+}
+
+.guidedManualText {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding-bottom: 16px;
+}
+
+.guidedManualNotice,
+.guidedManualResult {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 10px;
+  background: rgba(14, 23, 38, 0.72);
+  color: #c7d2e1;
+  line-height: 1.5;
+  padding: 12px;
+}
+
+.guidedManualNotice strong,
+.guidedManualResult strong {
+  color: #f8fafc;
+}
+
+.guidedManualForm,
+.guidedManualNewSource {
+  display: grid;
+  gap: 10px;
+}
+
+.guidedManualNewSource {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.guidedManualNewSource .checkLine {
+  grid-column: 1 / -1;
+}
+
+.guidedManualActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.guidedManualActions button {
+  padding: 0 14px;
+}
+
+.guidedManualActions span,
+.guidedManualResult li,
+.guidedManualResult span {
+  color: #94a3b8;
+  font-size: 0.84rem;
+}
+
+.guidedManualResult ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
 }
 
 .reminderCard p {
@@ -1599,6 +1675,7 @@ a {
   .quad,
   .quickStartGrid,
   .fieldGuide,
+  .guidedManualNewSource,
   .actionGrid,
   .agentActionList,
   .agentCommandGrid,
@@ -1619,6 +1696,7 @@ a {
   .item,
   .item.evidenceItem,
   .previewForm,
+  .guidedManualForm,
   .message {
     grid-template-columns: 1fr;
   }

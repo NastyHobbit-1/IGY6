@@ -126,15 +126,24 @@ Sources:
 
 Guided Upload:
 
-- Shows the manual upload flow.
-- Explains that current manual upload works best with UTF-8 text.
+- Provides a normal-user manual text form for pasted UTF-8 text.
+- Lets you create a new `manual_upload` source or choose an existing enabled
+  manual upload source without entering raw source or permission IDs.
+- Explains that current guided upload is text-only and does not parse binary
+  PDF, image, audio, video, screenshot, web page, or OCR input.
+- If the selected source permission requires approval, creates an approval
+  request and shows a pending state instead of uploading before approval.
 - Shows recent collection runs after upload or dry-run records exist.
 
 ### Buttons And Actions
 
-The visible normal-user action is to follow the Add Data flow and then move to
-Work or Results. Detailed source creation and upload forms are currently in the
-Advanced Route Console.
+- `Submit manual text` sends pasted UTF-8 text through the existing manual
+  upload collection path when the source permission allows immediate
+  collection.
+- Approval-required source permissions stop in a pending state and tell you to
+  review approvals before collection continues.
+- Advanced keeps the raw source, permission, approval, and upload controls for
+  low-level troubleshooting.
 
 ### What To Do Here
 
@@ -146,6 +155,16 @@ Good examples:
 - A router troubleshooting note.
 - A build log snippet.
 - A project verification summary.
+
+Basic flow:
+
+1. Choose an existing manual source or create a new manual text source.
+2. Enter a source name and description if creating a source.
+3. Paste authorized UTF-8 text.
+4. Submit the manual text.
+5. Open Work to inspect processing status.
+6. Open Results to inspect collection runs, artifacts, documents, chunks, and
+   evidence after processing.
 
 ### Empty, Loading, And Error States
 
