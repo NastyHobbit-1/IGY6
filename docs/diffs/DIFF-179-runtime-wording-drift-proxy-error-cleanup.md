@@ -117,8 +117,83 @@ Do not run live service start/stop/restart for this DIFF.
 
 ## Result
 
-Pending.
+Completed.
+
+Cleaned active current-runtime wording drift without changing routes,
+contracts, Docker Compose, runtime services, worker behavior, local LLM
+behavior, migrations, dependencies, or runtime/private data.
+
+Changes made:
+
+- Replaced stale `FastAPI returned a non-JSON response` and
+  `Failed to reach FastAPI ...` text in active Next.js API proxy error paths
+  with `Rust API` wording.
+- Replaced visible runtime posture labels in the web UI from retired service
+  names to neutral legacy labels: `Legacy API`, `Legacy worker`, and
+  `Legacy scheduler`.
+- Replaced active settings wording exposed by the Rust gateway from
+  `Redis / Celery` to `Redis`.
+- Reworded retained `CELERY_*` setting descriptions as archived rollback
+  settings rather than active service settings.
+- Removed active `beat restart` wording from Redis/archived-Celery settings
+  warnings.
+
+Scoped search classification:
+
+- Active-runtime drift fixed:
+  - `apps/web/src/app/api/**`: stale `FastAPI returned...` and
+    `Failed to reach FastAPI...` proxy error text.
+  - `apps/web/src/app/page.tsx`: visible runtime posture labels that used
+    retired service names.
+  - `crates/igy6-gateway/src/lib.rs`: active Settings API group/description
+    wording that exposed Celery/beat as if they were current runtime settings.
+- Historical/archive/rollback references kept:
+  - `README.md`, `docs/ui/README.md`, and
+    `docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md` references
+    that explicitly say legacy Python/FastAPI/Python-Celery/Celery beat are
+    archived, inactive, retired, or unsupported as active runtime.
+  - `configs/rust-cutover-manifest.json` migration, rollback, and route-parity
+    history entries.
+  - `crates/igy6-gateway/src/lib.rs` route-parity/test/status references that
+    explicitly report fallback as removed, disabled, or absent.
+- Irrelevant/no change:
+  - generic `fallback` variable/function names for local data fallback and
+    deterministic answer fallback.
+  - `fastapi_fallback` status keys that are compatibility/status fields and
+    report `false`, `removed`, or `none`.
 
 ## Verification Result
 
-Pending.
+Passed.
+
+Commands run:
+
+```bash
+git status --short
+git branch --show-current
+git log --oneline --decorate -5
+git diff --name-status
+git diff --check
+npm --prefix apps/web run build
+rg -n "FastAPI" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "Python/Celery" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "Celery" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "\\bbeat\\b|\\bBeat\\b" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "legacy-api" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "fallback" apps/web/src/app/api apps/web/src/app/page.tsx README.md docs/ui/README.md docs/plans/IGY6_PRODUCT_COMPLETION_ROADMAP_AND_GAP_AUDIT.md crates/igy6-gateway configs/rust-cutover-manifest.json
+rg -n "FastAPI|Python/Celery|Celery|\\bbeat\\b|\\bBeat\\b|legacy-api|fallback" apps/web/src/app/api apps/web/src/app/page.tsx
+rg -n "FastAPI returned|Failed to reach FastAPI|Python/Celery worker|Celery beat|FastAPI fallback|legacy-api" apps/web/src/app/api apps/web/src/app/page.tsx
+```
+
+Results:
+
+- `git branch --show-current` returned `dev`.
+- `git diff --check` passed.
+- `npm --prefix apps/web run build` passed.
+- Scoped active UI/proxy search found no active FastAPI, Python/Celery, Celery
+  beat, or legacy-api wording describing retired Python services as live
+  backend/runtime services.
+- Remaining active `apps/web` search hits are generic `fallback` variable names
+  used for local data fallback, not retired runtime-service claims.
+- No live service start, stop, restart, Docker volume, database, Qdrant, Neo4j,
+  `.env`, or runtime/private data operation was run.

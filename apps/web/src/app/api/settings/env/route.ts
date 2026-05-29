@@ -5,12 +5,12 @@ export async function GET(): Promise<Response> {
     const response = await fetch(`${apiBaseUrl}/settings/env`, {
       cache: "no-store",
     });
-    const payload = await response.json().catch(() => ({ detail: "FastAPI returned a non-JSON response" }));
+    const payload = await response.json().catch(() => ({ detail: "Rust API returned a non-JSON response" }));
     return Response.json(payload, { status: response.status });
   } catch (error) {
     return Response.json(
       {
-        detail: error instanceof Error ? error.message : "Failed to reach FastAPI settings endpoint",
+        detail: error instanceof Error ? error.message : "Failed to reach Rust API settings endpoint",
       },
       { status: 502 },
     );

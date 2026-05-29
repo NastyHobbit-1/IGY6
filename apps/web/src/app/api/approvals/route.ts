@@ -16,12 +16,12 @@ export async function POST(request: Request): Promise<Response> {
       body: JSON.stringify(body),
       cache: "no-store",
     });
-    const payload = await response.json().catch(() => ({ detail: "FastAPI returned a non-JSON response" }));
+    const payload = await response.json().catch(() => ({ detail: "Rust API returned a non-JSON response" }));
     return Response.json(payload, { status: response.status });
   } catch (error) {
     return Response.json(
       {
-        detail: error instanceof Error ? error.message : "Failed to reach FastAPI approvals",
+        detail: error instanceof Error ? error.message : "Failed to reach Rust API approvals",
       },
       { status: 502 },
     );
