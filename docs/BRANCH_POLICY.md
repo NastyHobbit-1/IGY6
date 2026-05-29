@@ -4,6 +4,9 @@
 
 This document defines the current branch and local-file policy for IGY6.
 
+For public-safe Codex and coding-agent operating instructions, see
+[`docs/CODEX_WORKFLOW.md`](CODEX_WORKFLOW.md).
+
 ## Main Branch
 
 `main` is the normal working branch for product, runtime, documentation, and

@@ -286,6 +286,8 @@ docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 wo
 
 Product and operator docs:
 
+- [`docs/CODEX_WORKFLOW.md`](docs/CODEX_WORKFLOW.md): public-safe workflow
+  instructions for Codex and future coding agents.
 - [`docs/ui/README.md`](docs/ui/README.md): web UI guide and workflow examples.
 - [`docs/runtime/PROCESSING_STATUS.md`](docs/runtime/PROCESSING_STATUS.md): current processing/runtime posture.
 - [`docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md`](docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md): full project completion plan.
@@ -303,7 +305,8 @@ return to `main`.
 Private build prompts, local Codex or agent instructions, and personal
 coordination notes are local-only and should stay out of tracked history. See
 [`docs/BRANCH_POLICY.md`](docs/BRANCH_POLICY.md) for the ignored local-only
-paths.
+paths and [`docs/CODEX_WORKFLOW.md`](docs/CODEX_WORKFLOW.md) for tracked
+agent workflow instructions.
 
 ## Development Notes
 
