@@ -15,6 +15,14 @@ npm-debug.log*
 
 .DS_Store
 
+# Local-only/private agent coordination files.
+.codex
+AGENTS.md
+Adaptive_Intelligence_System_Coder_Build_Instructions_v2.md
+docs/agents/
+docs/plans/DEV_BRANCH_POLICY.md
+docs/plans/IGY6_DEV_BUILD_PLAN.md
+
 storage/artifacts/*
 !storage/artifacts/.gitkeep
 storage/exports/*

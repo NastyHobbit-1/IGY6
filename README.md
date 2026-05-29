@@ -296,9 +296,14 @@ Historical DIFF records may mention earlier Python/FastAPI/Celery states, build 
 
 ## Branch and Repository Policy
 
-The public `main` branch is product/runtime-facing. It should not contain private build prompts, local Codex instructions, or personal coordination notes.
+`main` is the normal working branch for product, runtime, documentation, and
+DIFF-governed development. Optional feature branches may branch from `main` and
+return to `main`.
 
-Private build-agent instructions belong only on a local development branch, not on `main`.
+Private build prompts, local Codex or agent instructions, and personal
+coordination notes are local-only and should stay out of tracked history. See
+[`docs/BRANCH_POLICY.md`](docs/BRANCH_POLICY.md) for the ignored local-only
+paths.
 
 ## Development Notes
 
