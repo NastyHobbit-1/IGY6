@@ -661,9 +661,9 @@ function EmptyState({ label }: { label: string }) {
 const RUNTIME_POSTURE = [
   { label: "Rust API", value: "active", state: "runtime-active" },
   { label: "Rust worker", value: "active", state: "runtime-active" },
-  { label: "FastAPI fallback", value: "inactive / archived", state: "archived" },
-  { label: "Python/Celery worker", value: "inactive / archived", state: "archived" },
-  { label: "Celery beat", value: "inactive", state: "retired" }
+  { label: "Legacy API", value: "inactive / archived", state: "archived" },
+  { label: "Legacy worker", value: "inactive / archived", state: "archived" },
+  { label: "Legacy scheduler", value: "inactive", state: "retired" }
 ];
 
 const USER_READINESS = [

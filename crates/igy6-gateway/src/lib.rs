@@ -6018,7 +6018,7 @@ const SAFE_BACKUP_ROOT: &str = "/workspace/storage";
 const SETTING_GROUPS: &[(&str, &str)] = &[
     ("app", "App / Web"),
     ("postgres", "PostgreSQL"),
-    ("redis", "Redis / Celery"),
+    ("redis", "Redis"),
     ("qdrant", "Qdrant"),
     ("neo4j", "Neo4j"),
     ("mlflow", "MLflow"),
@@ -6042,8 +6042,8 @@ const SETTING_DEFINITIONS: &[SettingDefinition] = &[
     SettingDefinition { key: "REDIS_HOST", group: "redis", description: "Redis service hostname." },
     SettingDefinition { key: "REDIS_PORT", group: "redis", description: "Published local Redis port." },
     SettingDefinition { key: "REDIS_URL", group: "redis", description: "Redis URL used by API health checks." },
-    SettingDefinition { key: "CELERY_BROKER_URL", group: "redis", description: "Celery broker Redis URL." },
-    SettingDefinition { key: "CELERY_RESULT_BACKEND", group: "redis", description: "Celery result backend Redis URL." },
+    SettingDefinition { key: "CELERY_BROKER_URL", group: "redis", description: "Archived Celery broker Redis URL retained for rollback history." },
+    SettingDefinition { key: "CELERY_RESULT_BACKEND", group: "redis", description: "Archived Celery result backend Redis URL retained for rollback history." },
     SettingDefinition { key: "QDRANT_HOST", group: "qdrant", description: "Qdrant service hostname." },
     SettingDefinition { key: "QDRANT_PORT", group: "qdrant", description: "Published local Qdrant port." },
     SettingDefinition { key: "QDRANT_URL", group: "qdrant", description: "Qdrant API URL used by API and worker." },
@@ -6844,7 +6844,7 @@ fn add_restart_warnings(restart_changed: &[String], warnings: &mut Vec<SettingsV
         ) {
             "Database changes may require stack recreate and migration checks."
         } else if key.starts_with("REDIS") || key.starts_with("CELERY") {
-            "Redis/Celery changes may require API, worker, and beat restart."
+            "Redis or archived Celery setting changes may require API and worker restart/recreate."
         } else if key.starts_with("QDRANT") {
             "Qdrant changes may require vector collection review."
         } else if key.starts_with("NEO4J") {
