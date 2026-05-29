@@ -1172,6 +1172,10 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
   const intentPanel = root.querySelector("[data-agent-intent]");
   const resultPanel = root.querySelector("[data-agent-result]");
   const statusPanel = root.querySelector("[data-agent-status]");
+  const summaryPanel = root.querySelector("[data-agent-understanding-summary]");
+  const categoryPanel = root.querySelector("[data-agent-understanding-category]");
+  const posturePanel = root.querySelector("[data-agent-understanding-posture]");
+  const nextStepPanel = root.querySelector("[data-agent-understanding-next]");
   const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
   let latestIntent = null;
 
@@ -1188,6 +1192,21 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
 
   const capabilityFor = (actionName) => {
     return (capabilitiesPayload.actions || []).find((action) => action.name === actionName) || null;
+  };
+
+  const renderUnderstanding = (intent) => {
+    const understanding = intent?.request_understanding;
+    if (!understanding) return;
+    if (summaryPanel) summaryPanel.textContent = understanding.wants || "IGY6 needs more detail before it can continue.";
+    if (categoryPanel) categoryPanel.textContent = "Category: " + (understanding.category || "unclear");
+    const posture = [];
+    posture.push(understanding.evidence_required ? "Evidence needed" : "No evidence lookup required first");
+    posture.push(understanding.clarification_needed ? "Needs clarification" : "Clear enough to preview");
+    posture.push(understanding.approval_required ? "Approval required" : "No approval required for preview");
+    posture.push(understanding.work_item_should_be_created ? "May become work after confirmation" : "No work item now");
+    posture.push(understanding.unsupported_or_unsafe ? "Unsupported or unsafe as written" : "Supported posture");
+    if (posturePanel) posturePanel.textContent = posture.join(" | ");
+    if (nextStepPanel) nextStepPanel.textContent = understanding.next_step || "";
   };
 
   const setButtons = () => {
@@ -1215,6 +1234,7 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
     });
     const payload = await response.json();
     latestIntent = payload;
+    renderUnderstanding(payload);
     showJson(intentPanel, response.ok ? "Agent intent preview" : "Intent preview failed", payload);
     const capability = payload.proposed_action ? capabilityFor(payload.proposed_action) : null;
     const runtimeNote = capability?.reason || capabilitiesPayload.runtime?.reason || "Runtime allows this action class.";
@@ -1312,7 +1332,7 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
 
       <div className="agentNotice">
         <strong>Preview first.</strong>
-        <span>IGY6 maps your request to a fixed local action. It never runs arbitrary shell text, never calls an external model, and stack-control actions require an approved matching approval record.</span>
+        <span>IGY6 first summarizes what it thinks you want. Ambiguous, unsupported, or risky requests stay in clarification or approval posture instead of silently becoming work.</span>
       </div>
       {capabilities.error ? <p className="errorText">{capabilities.error}</p> : null}
 
@@ -1345,7 +1365,7 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
       <section className="agentCommandGrid">
         <label>
           <span>Action request</span>
-          <small>Plain English request. Everyday example: "Show project health." Coder example: "Show latest DIFF."</small>
+          <small>Plain English request. Example: "What did I upload today?", "Create a report about failed builds", or "Show project health."</small>
           <textarea data-agent-command-input rows={3} placeholder="Show project health." defaultValue="Show project health." />
         </label>
       </section>
@@ -1360,6 +1380,16 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
       <p className="agentStatus" data-agent-status>
         Stack-control actions: {stackActions.every((action) => action.executable_in_api_runtime) ? "executable from API runtime" : "blocked unless API runtime has Docker CLI, Compose, and Docker control access."}
       </p>
+
+      <section className="agentUnderstanding">
+        <div>
+          <span>IGY6 understood this as</span>
+          <strong data-agent-understanding-summary>Preview a request to see the request summary.</strong>
+        </div>
+        <p data-agent-understanding-category>Category: not previewed</p>
+        <p data-agent-understanding-posture>Evidence, clarification, approval, and work-item posture will appear here.</p>
+        <p data-agent-understanding-next>Next step will appear here.</p>
+      </section>
 
       <details className="advancedPanel">
         <summary>Advanced: raw parameters, approval ID, response JSON, and route details</summary>

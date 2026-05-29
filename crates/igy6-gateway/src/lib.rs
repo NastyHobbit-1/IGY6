@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{
-    action_definition, classify_agent_intent, AgentActionDefinition, AgentIntentRequest,
-    ACTION_REGISTRY,
+    action_definition, classify_agent_intent, understand_user_request, AgentActionDefinition,
+    AgentIntentRequest, ACTION_REGISTRY,
 };
 use igy6_artifacts::{ArtifactStore, StoredArtifact};
 use igy6_evidence_answer::{
@@ -8626,6 +8626,7 @@ fn agent_action_definition_json(definition: &AgentActionDefinition, parameters: 
         original_message: definition.name.to_string(),
         interpreted_intent: definition.interpreted_intent.to_string(),
         proposed_action: Some(definition.name),
+        request_understanding: understand_user_request(definition.interpreted_intent),
         action_type: definition.action_type.clone(),
         approval_required: definition.approval_required,
         risk_level: definition.risk_level.clone(),
@@ -9919,10 +9920,11 @@ fn agent_intent_json(body: &str) -> String {
 
 fn agent_intent_response_json(response: &igy6_agent_api::AgentIntentResponse) -> String {
     format!(
-        "{{\"original_message\":\"{}\",\"interpreted_intent\":\"{}\",\"proposed_action\":{},\"action_type\":\"{}\",\"approval_required\":{},\"risk_level\":\"{}\",\"required_parameters\":{},\"missing_parameters\":{},\"safety_notes\":{},\"executable_now\":{},\"reason\":{}}}",
+        "{{\"original_message\":\"{}\",\"interpreted_intent\":\"{}\",\"proposed_action\":{},\"request_understanding\":{},\"action_type\":\"{}\",\"approval_required\":{},\"risk_level\":\"{}\",\"required_parameters\":{},\"missing_parameters\":{},\"safety_notes\":{},\"executable_now\":{},\"reason\":{}}}",
         escape_json(&response.original_message),
         escape_json(&response.interpreted_intent),
         option_json(response.proposed_action),
+        request_understanding_json(&response.request_understanding),
         action_type_json(&response.action_type),
         response.approval_required,
         risk_level_json(&response.risk_level),
@@ -9931,6 +9933,23 @@ fn agent_intent_response_json(response: &igy6_agent_api::AgentIntentResponse) ->
         json_string_array(&response.safety_notes),
         response.executable_now,
         option_string_json(response.reason.as_deref())
+    )
+}
+
+fn request_understanding_json(understanding: &igy6_agent_api::RequestUnderstanding) -> String {
+    format!(
+        "{{\"category\":\"{}\",\"wants\":\"{}\",\"evidence_required\":{},\"clarification_needed\":{},\"approval_required\":{},\"work_item_should_be_created\":{},\"unsupported_or_unsafe\":{},\"reason\":{},\"missing_information\":{},\"assumptions\":{},\"next_step\":\"{}\"}}",
+        request_category_json(&understanding.category),
+        escape_json(&understanding.wants),
+        understanding.evidence_required,
+        understanding.clarification_needed,
+        understanding.approval_required,
+        understanding.work_item_should_be_created,
+        understanding.unsupported_or_unsafe,
+        option_string_json(understanding.reason.as_deref()),
+        json_owned_string_array(&understanding.missing_information),
+        json_owned_string_array(&understanding.assumptions),
+        escape_json(&understanding.next_step)
     )
 }
 
@@ -10097,6 +10116,24 @@ fn risk_level_json(value: &igy6_agent_api::RiskLevel) -> &'static str {
     }
 }
 
+fn request_category_json(value: &igy6_agent_api::RequestCategory) -> &'static str {
+    match value {
+        igy6_agent_api::RequestCategory::EvidenceQuestion => "evidence_question",
+        igy6_agent_api::RequestCategory::AddData => "add_data",
+        igy6_agent_api::RequestCategory::CheckWorkStatus => "check_work_status",
+        igy6_agent_api::RequestCategory::CreateReport => "create_report",
+        igy6_agent_api::RequestCategory::RequestAction => "request_action",
+        igy6_agent_api::RequestCategory::SystemChangingAction => "system_changing_action",
+        igy6_agent_api::RequestCategory::Feedback => "feedback",
+        igy6_agent_api::RequestCategory::RecordOutcome => "record_outcome",
+        igy6_agent_api::RequestCategory::Correction => "correction",
+        igy6_agent_api::RequestCategory::Diagnostics => "diagnostics",
+        igy6_agent_api::RequestCategory::ProjectStatus => "project_status",
+        igy6_agent_api::RequestCategory::ExperimentOrImprovement => "experiment_or_improvement",
+        igy6_agent_api::RequestCategory::Unclear => "unclear",
+    }
+}
+
 fn escape_json(value: &str) -> String {
     let mut escaped = String::new();
     for character in value.chars() {
@@ -10191,7 +10228,63 @@ mod tests {
         assert!(response
             .body
             .contains("\"proposed_action\":\"show_project_health\""));
+        assert!(response.body.contains("\"request_understanding\""));
+        assert!(response.body.contains("\"category\":\"diagnostics\""));
         assert!(response.body.contains("\"approval_required\":false"));
+    }
+
+    #[test]
+    fn agent_intent_returns_request_understanding_for_work_and_approval_posture() {
+        let report = handle_gateway_request(
+            &request(
+                "POST",
+                "/agent/intent",
+                "{\"message\":\"Create a report about failed builds\"}",
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+        );
+        assert_eq!(report.status_code, 200);
+        assert!(report.body.contains("\"category\":\"create_report\""));
+        assert!(report.body.contains("\"work_item_should_be_created\":true"));
+        assert!(report.body.contains("\"clarification_needed\":true"));
+
+        let risky = handle_gateway_request(
+            &request(
+                "POST",
+                "/agent/intent",
+                "{\"message\":\"restart the stack\"}",
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+        );
+        assert_eq!(risky.status_code, 200);
+        assert!(risky
+            .body
+            .contains("\"category\":\"system_changing_action\""));
+        assert!(risky.body.contains("\"approval_required\":true"));
+    }
+
+    #[test]
+    fn agent_intent_returns_unsupported_for_destructive_request_without_work() {
+        let response = handle_gateway_request(
+            &request(
+                "POST",
+                "/agent/intent",
+                "{\"message\":\"run rm -rf target\"}",
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+        );
+        assert_eq!(response.status_code, 200);
+        assert!(response
+            .body
+            .contains("\"category\":\"system_changing_action\""));
+        assert!(response.body.contains("\"unsupported_or_unsafe\":true"));
+        assert!(response
+            .body
+            .contains("\"work_item_should_be_created\":false"));
+        assert!(response.body.contains("\"proposed_action\":null"));
     }
 
     #[test]
