@@ -1,6 +1,10 @@
 # DIFF-176: Request Understanding Clarification Flow
 
-Status: Active
+Status: Complete
+
+Reconciliation note: DIFF-181 changed this status from Active to Complete.
+Git history shows DIFF-176 implementation commits before DIFF-180, and later
+DIFFs build on the request-understanding clarification flow as completed work.
 
 ## Type
 

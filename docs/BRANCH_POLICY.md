@@ -28,21 +28,27 @@ This document defines the current branch boundary for IGY6.
 
 ## Dev Branch
 
-`dev` may contain development-only build instructions and agent coordination material.
+`dev` is the ongoing work branch for development and build-agent assisted work.
+
+`dev` may contain development-only build instructions and agent coordination
+material.
+
+Do not remove private/dev/build instruction files from `dev`.
 
 `dev` must not be merged directly into `main`.
 
-Runtime/product changes from `dev` must be moved to `main` through a clean branch or cherry-pick that excludes dev-only instruction files.
+Do not merge `main` into `dev` unless the owner explicitly instructs it.
 
-## Clean Promotion Rule
+Do not cherry-pick cleanup commits from `main` into `dev` unless the owner
+explicitly instructs it.
 
-When a runtime/product DIFF is completed on `dev`, promote it to `main` by:
+## Main Branch Promotion
 
-1. creating a clean branch from `main`;
-2. cherry-picking only the runtime/product commit;
-3. verifying forbidden files are absent;
-4. opening a pull request from the clean branch into `main`;
-5. merging only that clean branch.
+`main` is the public/runtime-clean branch.
+
+Later, only necessary public/runtime-safe files should be selectively promoted
+to `main` when the owner explicitly requests promotion. Any promotion must
+exclude private/dev/build instruction files.
 
 ## Forbidden Main Files
 
@@ -59,4 +65,4 @@ The following are not allowed on `main` unless a later DIFF explicitly changes t
 - `docs/plans/DEV_BRANCH_POLICY.md`
 - `docs/plans/IGY6_DEV_BUILD_PLAN.md`
 
-Tracked product docs such as `docs/agents/README.md` and `docs/plans/IGY6_FULL_PROJECT_COMPLETION_PLAN.md` are allowed when they do not contain build-agent private instructions.
+Private/dev/build instruction files stay on `dev`.

@@ -25,7 +25,16 @@ Work on `dev` for development and build-agent assisted work.
 
 Do not merge `dev` into `main`.
 
-Runtime/product changes must be promoted to `main` through a clean branch from `main` and a cherry-pick of only the scoped runtime/product commit.
+Do not merge `main` into `dev` unless the owner explicitly instructs it.
+
+Do not cherry-pick cleanup commits from `main` into `dev` unless the owner
+explicitly instructs it.
+
+Keep private/dev/build instruction files on `dev`.
+
+`main` remains the public/runtime-clean branch. Later, only necessary
+public/runtime-safe files should be selectively promoted to `main` when the
+owner explicitly requests promotion.
 
 Dev-only files must stay off `main`, including:
 
@@ -209,11 +218,6 @@ Every Codex final response must include:
 ## Promotion Rule
 
 If runtime/product work is ready for `main`, do not merge `dev` into `main`.
-
-Promote by:
-
-1. creating a clean branch from `main`;
-2. cherry-picking only the scoped runtime/product commit;
-3. verifying forbidden files are absent;
-4. opening a PR from the clean branch to `main`;
-5. merging only the clean branch.
+Wait for explicit owner instructions before promoting any files or commits.
+Promote only necessary public/runtime-safe files to `main`, and verify
+forbidden private/dev files are absent from the promotion target.
