@@ -1054,10 +1054,99 @@ function ChatRetrievalPreview() {
     return;
   }
 
+  const shortId = (value) => {
+    if (!value || typeof value !== "string") return "unknown";
+    return value.length > 12 ? value.slice(0, 8) + "..." : value;
+  };
+
+  const formatScore = (value) => {
+    const score = Number(value);
+    return Number.isFinite(score) ? score.toFixed(3) : "unscored";
+  };
+
+  const textPreview = (value, fallback) => {
+    const text = typeof value === "string" ? value.replace(/\\s+/g, " ").trim() : "";
+    if (!text) return fallback;
+    return text.length > 280 ? text.slice(0, 277) + "..." : text;
+  };
+
+  const retrievalMode = (hit) => {
+    return hit.qdrant_payload?.retrieval_mode
+      || hit.qdrant_payload?.embedding_method
+      || hit.qdrant_payload?.payload?.retrieval_mode
+      || "text or vector search";
+  };
+
+  const addMeta = (parent, label, value) => {
+    const meta = document.createElement("span");
+    meta.textContent = label + ": " + value;
+    parent.appendChild(meta);
+  };
+
+  const renderReviewSummary = (payload, hits) => {
+    const summary = document.createElement("article");
+    summary.className = "item evidenceItem";
+    summary.setAttribute("data-retrieval-review-summary", "");
+
+    const left = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = hits.length > 0 ? "Evidence retrieved" : "No evidence found";
+    const detail = document.createElement("span");
+    detail.textContent = hits.length > 0
+      ? "Evidence-backed review: use the chunks and evidence items below as support."
+      : "Insufficient evidence: try a narrower question or add/process more local evidence.";
+    left.append(title, detail);
+
+    const right = document.createElement("div");
+    addMeta(right, "answer_status", payload.answer_status || "unknown");
+    addMeta(right, "hits", String(hits.length));
+    addMeta(right, "collection", payload.retrieval_context?.collection_exists === false ? "missing" : "available");
+    summary.append(left, right);
+    return summary;
+  };
+
+  const renderHit = (hit, index) => {
+    const item = document.createElement("article");
+    item.className = "item evidenceItem";
+    item.setAttribute("data-retrieval-review-hit", String(index + 1));
+
+    const left = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = hit.document?.title || "Evidence hit " + (index + 1);
+    const snippet = document.createElement("span");
+    snippet.textContent = textPreview(
+      hit.chunk?.text_content || hit.evidence_items?.[0]?.statement,
+      "No text preview returned for this hit."
+    );
+    left.append(title, snippet);
+
+    const right = document.createElement("div");
+    addMeta(right, "score", formatScore(hit.score));
+    addMeta(right, "mode", retrievalMode(hit));
+    addMeta(right, "chunk", shortId(hit.chunk?.id || hit.qdrant_payload?.chunk_id));
+    addMeta(right, "document", shortId(hit.document?.id || hit.qdrant_payload?.document_id));
+    addMeta(right, "source", hit.source?.name || shortId(hit.source?.id));
+    addMeta(right, "evidence", String(hit.evidence_items?.length ?? 0));
+
+    item.append(left, right);
+
+    const evidenceItems = Array.isArray(hit.evidence_items) ? hit.evidence_items.slice(0, 2) : [];
+    for (const evidenceItem of evidenceItems) {
+      const evidenceLine = document.createElement("p");
+      evidenceLine.className = "messageMeta";
+      evidenceLine.textContent = "Evidence item: " + textPreview(evidenceItem.statement, evidenceItem.evidence_type || "recorded evidence");
+      item.appendChild(evidenceLine);
+    }
+
+    return item;
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.textContent = "Retrieving context";
     results.replaceChildren();
+    results.removeAttribute("data-answer-status");
+    results.removeAttribute("data-hit-count");
 
     try {
       const response = await fetch(apiBaseUrl + "/chat/retrieval-preview", {
@@ -1071,44 +1160,44 @@ function ChatRetrievalPreview() {
 
       if (!response.ok) {
         status.textContent = "Error: " + response.status + " " + response.statusText;
+        const error = document.createElement("article");
+        error.className = "item evidenceItem";
+        error.setAttribute("data-retrieval-review-error", "");
+        const body = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = "Retrieval failed";
+        const detail = document.createElement("span");
+        detail.textContent = "No evidence-backed review is available until the retrieval request succeeds.";
+        body.append(title, detail);
+        error.appendChild(body);
+        results.appendChild(error);
         return;
       }
 
       const payload = await response.json();
       const hits = payload.retrieval_context?.hits ?? [];
-      status.textContent = "answer_status: " + payload.answer_status + " | hits: " + hits.length;
+      const answerStatus = payload.answer_status || "unknown";
+      status.textContent = "answer_status: " + answerStatus + " | hits: " + hits.length;
+      results.setAttribute("data-answer-status", answerStatus);
+      results.setAttribute("data-hit-count", String(hits.length));
+      results.appendChild(renderReviewSummary(payload, hits));
 
-      if (hits.length === 0) {
-        const empty = document.createElement("p");
-        empty.className = "empty";
-        empty.textContent = "No retrieval context returned.";
-        results.appendChild(empty);
-        return;
-      }
-
-      for (const hit of hits) {
-        const item = document.createElement("article");
-        item.className = "item evidenceItem";
-
-        const left = document.createElement("div");
-        const title = document.createElement("strong");
-        title.textContent = hit.document?.title || hit.chunk?.id || "retrieval hit";
-        const detail = document.createElement("span");
-        detail.textContent = "score " + hit.score + " | chunk " + (hit.chunk?.id || "unknown");
-        left.append(title, detail);
-
-        const right = document.createElement("div");
-        const evidence = document.createElement("span");
-        evidence.textContent = (hit.evidence_items?.length ?? 0) + " evidence items";
-        const source = document.createElement("span");
-        source.textContent = "source " + (hit.source?.name || hit.source?.id || "none");
-        right.append(evidence, source);
-
-        item.append(left, right);
-        results.appendChild(item);
+      if (hits.length > 0) {
+        hits.forEach((hit, index) => results.appendChild(renderHit(hit, index)));
       }
     } catch (error) {
       status.textContent = "Error: " + (error instanceof Error ? error.message : "Unknown error");
+      const item = document.createElement("article");
+      item.className = "item evidenceItem";
+      item.setAttribute("data-retrieval-review-error", "");
+      const body = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = "Retrieval failed";
+      const detail = document.createElement("span");
+      detail.textContent = "No evidence-backed review is available until the local API responds.";
+      body.append(title, detail);
+      item.appendChild(body);
+      results.appendChild(item);
     }
   });
 })();
@@ -1138,6 +1227,7 @@ function ChatRetrievalPreview() {
       </form>
       <div className="previewNote">
         Retrieval context only. <TermHelp term="noExternalModel" label="No external model" /> answer, hidden reasoning, external model call, persistence, or action execution.
+        <span data-retrieval-review-guidance> Evidence-backed only when hits are present; empty results mean insufficient evidence, not proof the information does not exist.</span>
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <script dangerouslySetInnerHTML={{ __html: script }} />
