@@ -307,7 +307,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/agent/actions/") => agent_action_request_response(&request.body, database_url),
         ("POST", "/agent/intent") => json_response(200, "OK", agent_intent_json(&request.body), false),
         ("POST", "/chat/retrieval-preview") => {
-            json_response(200, "OK", retrieval_preview_json(&request.body), false)
+            retrieval_preview_response(&request.body, database_url)
         }
         ("POST", "/chat/evidence-answer") => {
             json_response(200, "OK", evidence_answer_json(&request.body), false)
@@ -836,6 +836,10 @@ fn improvement_create_response(body: &str, database_url: Option<&str>) -> Gatewa
 
 fn retrieval_chunk_search_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     action_route_response(search_retrieval_chunks(body, database_url))
+}
+
+fn retrieval_preview_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    action_route_response(live_retrieval_preview(body, database_url))
 }
 
 fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -2849,6 +2853,90 @@ fn search_retrieval_chunks(body: &str, database_url: Option<&str>) -> Result<Str
         "hits": hits
     })
     .to_string())
+}
+
+fn live_retrieval_preview(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_chat_retrieval_search(body)?;
+    let search_body = serde_json::json!({
+        "query": payload.query,
+        "limit": payload.limit
+    })
+    .to_string();
+    let mut context: Value =
+        serde_json::from_str(&search_retrieval_chunks(&search_body, database_url)?)
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let text_hits = context
+        .get("hits")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    if text_hits == 0 {
+        context = hydrated_vector_retrieval_chunks(&search_body, database_url)?;
+    }
+    let hits = context
+        .get("hits")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let hit_count = hits.as_array().map(Vec::len).unwrap_or_default();
+    Ok(serde_json::json!({
+        "query": payload.query,
+        "collection_name": context.get("collection_name").cloned().unwrap_or_else(|| serde_json::json!("igy6_chunks")),
+        "collection_exists": context.get("collection_exists").and_then(Value::as_bool).unwrap_or(false),
+        "answer_status": if hit_count > 0 { "retrieved" } else { "insufficient_evidence" },
+        "retrieval_context": context,
+        "items": hits,
+        "message": if hit_count > 0 {
+            "Retrieved live local evidence from the Rust API."
+        } else {
+            "No matching local evidence was found."
+        }
+    })
+    .to_string())
+}
+
+fn hydrated_vector_retrieval_chunks(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<Value, GatewayError> {
+    let payload = parse_retrieval_search(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let vector_context: Value = serde_json::from_str(&search_vector_chunks(body)?)
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut hits = Vec::new();
+    for hit in vector_context
+        .get("hits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(payload.limit as usize)
+    {
+        let Some(chunk_id) = hit.get("chunk_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let trail_text = retrieval_chunk_trail_json(&mut client, chunk_id)?;
+        let trail: Value = serde_json::from_str(&trail_text)
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        hits.push(serde_json::json!({
+            "score": hit.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+            "qdrant_payload": hit.get("payload").cloned().unwrap_or_else(|| serde_json::json!({})),
+            "chunk": trail.get("chunk").cloned().unwrap_or(Value::Null),
+            "document": trail.get("document").cloned().unwrap_or(Value::Null),
+            "source": trail.get("source").cloned().unwrap_or(Value::Null),
+            "raw_artifact": trail.get("raw_artifact").cloned().unwrap_or(Value::Null),
+            "evidence_items": trail.get("evidence_items").cloned().unwrap_or_else(|| serde_json::json!([]))
+        }));
+    }
+    Ok(serde_json::json!({
+        "query": payload.query,
+        "collection_name": vector_context.get("collection_name").cloned().unwrap_or_else(|| serde_json::json!("igy6_chunks")),
+        "collection_exists": vector_context.get("collection_exists").and_then(Value::as_bool).unwrap_or(false),
+        "hits": hits
+    }))
 }
 
 fn ensure_vector_chunk_collection() -> Result<String, GatewayError> {
@@ -5738,6 +5826,26 @@ fn parse_retrieval_search(body: &str) -> Result<RetrievalSearchPayload, GatewayE
     let object = parse_json_object(body, "Retrieval search request body")?;
     Ok(RetrievalSearchPayload {
         query: required_text_field(&object, "query")?,
+        limit: optional_i32_field_with_default(&object, "limit", 10, 1, 50)?,
+    })
+}
+
+fn parse_chat_retrieval_search(body: &str) -> Result<RetrievalSearchPayload, GatewayError> {
+    let object = parse_json_object(body, "Retrieval preview request body")?;
+    let query = object
+        .get("query")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("message").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return Err(GatewayError::Validation(
+            "message or query is required.".to_string(),
+        ));
+    }
+    Ok(RetrievalSearchPayload {
+        query,
         limit: optional_i32_field_with_default(&object, "limit", 10, 1, 50)?,
     })
 }
@@ -10288,7 +10396,7 @@ mod tests {
     }
 
     #[test]
-    fn retrieval_preview_and_evidence_answer_are_contract_only() {
+    fn retrieval_preview_requires_live_database_and_evidence_answer_is_contract_only() {
         let response = handle_gateway_request(
             &request(
                 "POST",
@@ -10298,10 +10406,10 @@ mod tests {
             None,
             NO_FALLBACK_ORIGIN,
         );
-        assert_eq!(response.status_code, 200);
+        assert_eq!(response.status_code, 503);
         assert!(response
             .body
-            .contains("\"answer_status\":\"not_generated\""));
+            .contains("\"DATABASE_URL is required for Rust DB route\""));
 
         let response = handle_gateway_request(
             &request(
