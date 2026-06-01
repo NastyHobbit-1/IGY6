@@ -2007,6 +2007,221 @@ function BasicReportWorkflow({
   );
 }
 
+function EvidenceFeedbackWorkflow({
+  evidenceItems,
+  reports,
+  workItems,
+  feedback,
+  outcomes
+}: {
+  evidenceItems: ApiResult<EvidenceItemRecord[]>;
+  reports: ApiResult<ReportRecord[]>;
+  workItems: ApiResult<WorkItemRecord[]>;
+  feedback: ApiResult<FeedbackRecord[]>;
+  outcomes: ApiResult<OutcomeRecord[]>;
+}) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const feedbackTargets = [
+    ...evidenceItems.data.slice(0, 6).map((item) => ({
+      type: "evidence_item",
+      id: item.id,
+      label: `Evidence item ${item.id}`
+    })),
+    ...reports.data.slice(0, 3).map((report) => ({
+      type: "report",
+      id: report.id,
+      label: `Report ${report.id}`
+    })),
+    ...workItems.data.slice(0, 3).map((workItem) => ({
+      type: "work_item",
+      id: workItem.id,
+      label: `Work item ${workItem.id}`
+    }))
+  ];
+  const outcomeTargets = [
+    ...reports.data.slice(0, 4).map((report) => ({
+      type: "report",
+      id: report.id,
+      label: `Report ${report.id}`
+    })),
+    ...workItems.data.slice(0, 4).map((workItem) => ({
+      type: "work_item",
+      id: workItem.id,
+      label: `Work item ${workItem.id}`
+    }))
+  ];
+  const defaultEvidenceId = evidenceItems.data[0]?.id ?? "";
+  const script = `
+(() => {
+  const root = document.querySelector("[data-evidence-feedback-workflow]");
+  if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const result = root.querySelector("[data-evidence-feedback-result]");
+  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const selected = (name) => {
+    const option = root.querySelector("[name='" + name + "']")?.selectedOptions?.[0];
+    return {
+      id: option?.value || "",
+      type: option?.getAttribute("data-target-type") || ""
+    };
+  };
+  const show = (state, message, payload) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = state;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(title, body);
+    if (payload) {
+      const details = document.createElement("dl");
+      details.setAttribute("data-feedback-outcome-status", "");
+      [
+        ["record", payload.id],
+        ["target", (payload.target_type || "") + " " + (payload.target_id || "")],
+        ["label", payload.label || payload.outcome_status || "recorded"]
+      ].forEach(([label, detail]) => {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const description = document.createElement("dd");
+        description.textContent = detail || "not returned";
+        details.append(term, description);
+      });
+      result.appendChild(details);
+    }
+  };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+    return payload;
+  };
+  root.querySelector("[data-feedback-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = selected("feedback_target");
+    try {
+      const payload = await postJson("/feedback", {
+        target_type: target.type,
+        target_id: target.id,
+        label: value("feedback_label"),
+        note: value("feedback_note") || null,
+        metadata_json: { created_from: "results_feedback_outcome_capture" }
+      });
+      show("Feedback recorded", "IGY6 persisted the review feedback.", payload);
+    } catch (error) {
+      show("Feedback failed", String(error));
+    }
+  });
+  root.querySelector("[data-outcome-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const target = selected("outcome_target");
+    const evidenceIds = value("outcome_evidence_ids")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    try {
+      const payload = await postJson("/outcomes", {
+        target_type: target.type,
+        target_id: target.id,
+        outcome_status: value("outcome_status"),
+        summary: value("outcome_summary") || null,
+        evidence_ids: evidenceIds,
+        metadata_json: { created_from: "results_feedback_outcome_capture" }
+      });
+      show("Outcome recorded", "IGY6 persisted the outcome and updated the supported target.", payload);
+    } catch (error) {
+      show("Outcome failed", String(error));
+    }
+  });
+})();
+`;
+
+  return (
+    <section
+      className="guidedManualText"
+      data-evidence-feedback-workflow
+      data-api-base-url={browserApiBaseUrl}
+    >
+      <div className="guidedManualNotice">
+        <strong>Review outcome capture</strong>
+        <span>
+          Record feedback on retrieved evidence or a supported report/work item outcome. Feedback and outcomes are persisted by existing local API routes.
+        </span>
+      </div>
+      <form className="guidedManualForm" data-feedback-form>
+        <label>
+          <span>Feedback target</span>
+          <select name="feedback_target" disabled={feedbackTargets.length === 0}>
+            {feedbackTargets.map((target) => (
+              <option key={`${target.type}:${target.id}`} value={target.id} data-target-type={target.type}>{target.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Feedback label</span>
+          <select name="feedback_label" defaultValue="useful">
+            <option value="useful">useful</option>
+            <option value="verified">verified</option>
+            <option value="incomplete">incomplete</option>
+            <option value="wrong">wrong</option>
+            <option value="not_useful">not_useful</option>
+          </select>
+        </label>
+        <label>
+          <span>Feedback note</span>
+          <textarea name="feedback_note" rows={2} placeholder="Optional review note." />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit" disabled={feedbackTargets.length === 0}>Record feedback</button>
+          <span>{feedbackTargets.length > 0 ? "Targets come from current evidence, reports, and work items." : "No supported feedback target is available yet."}</span>
+        </div>
+      </form>
+      <form className="guidedManualForm" data-outcome-form>
+        <label>
+          <span>Outcome target</span>
+          <select name="outcome_target" disabled={outcomeTargets.length === 0}>
+            {outcomeTargets.map((target) => (
+              <option key={`${target.type}:${target.id}`} value={target.id} data-target-type={target.type}>{target.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Outcome status</span>
+          <select name="outcome_status" defaultValue="useful">
+            <option value="useful">useful</option>
+            <option value="correct">correct</option>
+            <option value="partial">partial</option>
+            <option value="wrong">wrong</option>
+            <option value="not_useful">not_useful</option>
+            <option value="inconclusive">inconclusive</option>
+          </select>
+        </label>
+        <label>
+          <span>Evidence ids</span>
+          <input name="outcome_evidence_ids" defaultValue={defaultEvidenceId} placeholder="Optional comma-separated evidence ids." />
+        </label>
+        <label>
+          <span>Outcome summary</span>
+          <textarea name="outcome_summary" rows={2} placeholder="Optional outcome summary." />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit" disabled={outcomeTargets.length === 0}>Record outcome</button>
+          <span>{outcomeTargets.length > 0 ? "Outcomes are only offered for API-supported targets." : "No supported report or work item target is available yet."}</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-evidence-feedback-result>
+        <strong>{feedback.data.length + outcomes.data.length > 0 ? "Review records exist" : "No review record selected"}</strong>
+        <span>{feedback.data.length + outcomes.data.length > 0 ? "Recent feedback and outcomes remain visible in Safety & Audit." : "Record feedback after reviewing retrieved evidence, or record an outcome when a supported target exists."}</span>
+      </div>
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 function MvpActionConsole() {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const script = `
@@ -3046,6 +3261,7 @@ export default async function Home() {
             <div className="fieldGuide">
               <article><strong>Report reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Project: "Summarize the latest verification notes."</span></article>
             </div>
+            <EvidenceFeedbackWorkflow evidenceItems={evidenceItems} reports={reports} workItems={workItems} feedback={feedback} outcomes={outcomes} />
             <BasicReportWorkflow reports={reports} evidenceCount={evidenceItems.data.length} documentCount={documents.data.length} chunkCount={chunks.data.length} />
             <section className="quad analysisGrid">
               <div>

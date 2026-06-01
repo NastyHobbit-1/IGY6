@@ -4894,14 +4894,14 @@ fn create_outcome(body: &str, database_url: Option<&str>) -> Result<String, Gate
     );
     transaction
         .execute(
-            "INSERT INTO outcomes (id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::jsonb, $8::jsonb)",
+            "INSERT INTO outcomes (id, target_type, target_id, outcome_status, summary, occurred_at, evidence_ids, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::text::timestamptz, $7::jsonb, $8::jsonb)",
             &[
                 &outcome_id,
                 &payload.target_type,
                 &payload.target_id,
                 &payload.outcome_status,
-                &payload.summary,
-                &payload.occurred_at,
+                &payload.summary.as_deref(),
+                &payload.occurred_at.as_deref(),
                 &evidence_ids_json,
                 &payload.metadata_json,
             ],
