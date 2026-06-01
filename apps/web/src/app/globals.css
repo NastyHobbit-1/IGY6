@@ -969,6 +969,42 @@ a {
   padding-left: 18px;
 }
 
+.guidedManualResult dl,
+.workStatusIds {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.guidedManualResult dl {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.guidedManualResult dt,
+.workStatusIds dt {
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.guidedManualResult dd,
+.workStatusIds dd {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workStatusItem {
+  align-items: start;
+}
+
+.workStatusIds div {
+  display: grid;
+  gap: 3px;
+}
+
 .reminderCard p {
   color: #b8c4d6;
   font-size: 0.88rem;

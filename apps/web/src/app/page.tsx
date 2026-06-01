@@ -130,8 +130,10 @@ type WorkItemRecord = {
   work_type: string;
   status: string;
   requested_by_actor_id: string;
+  payload_json?: Record<string, unknown> | null;
   error_message: string | null;
   created_at: string;
+  updated_at?: string | null;
 };
 
 type ApprovalRecord = {
@@ -657,6 +659,67 @@ function StatusPill({ state }: { state: string }) {
 
 function EmptyState({ label }: { label: string }) {
   return <p className="empty">{label}</p>;
+}
+
+function jsonString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function jsonStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function workItemRelatedIds(workItem: WorkItemRecord): Array<{ label: string; values: string[] }> {
+  const payload = workItem.payload_json ?? {};
+  const related = [
+    { label: "collection", values: [jsonString(payload.collection_run_id)].filter(Boolean) as string[] },
+    { label: "source", values: [jsonString(payload.source_id)].filter(Boolean) as string[] },
+    { label: "permission", values: [jsonString(payload.source_permission_id)].filter(Boolean) as string[] },
+    { label: "artifact", values: jsonStringList(payload.raw_artifact_ids) },
+    { label: "document", values: jsonStringList(payload.document_ids) },
+    { label: "chunk", values: jsonStringList(payload.chunk_ids) },
+    { label: "parent work", values: [jsonString(payload.parent_work_item_id)].filter(Boolean) as string[] }
+  ];
+  return related.filter((item) => item.values.length > 0);
+}
+
+function workItemGuidance(workItem: WorkItemRecord): { outcome: string; next: string } {
+  switch (workItem.status) {
+    case "queued":
+    case "pending_intent_verification":
+      return {
+        outcome: "Waiting for background processing.",
+        next: "Refresh Work after the worker has had time to claim it. Use Advanced dispatch only when you know this specific queued item should be dispatched."
+      };
+    case "running":
+      return {
+        outcome: "Processing is in progress.",
+        next: "Refresh Work to see the updated state. Avoid resubmitting the same upload while this item is running."
+      };
+    case "completed":
+      return {
+        outcome: "Processing completed successfully.",
+        next: "Open Results to inspect documents, chunks, evidence, and Ask over evidence."
+      };
+    case "failed":
+      return {
+        outcome: workItem.error_message ?? "Processing failed and needs review.",
+        next: "Read the error and verify the source, permission, and uploaded UTF-8 text. No automatic retry action is exposed here."
+      };
+    case "canceled":
+      return {
+        outcome: "Processing was canceled.",
+        next: "Review the source and collection record before creating new work."
+      };
+    default:
+      return {
+        outcome: "Status is recorded by the local API.",
+        next: "Refresh Work or inspect Advanced raw queue JSON if this state is unexpected."
+      };
+  }
 }
 
 const RUNTIME_POSTURE = [
@@ -1534,7 +1597,7 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
   const approvalHint = root.querySelector("[data-guided-approval-hint]");
   const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
   const checked = (name) => Boolean(root.querySelector("[name='" + name + "']")?.checked);
-  const writeResult = (state, message, nextSteps, payload) => {
+  const writeResult = (state, message, nextSteps, payload, details) => {
     if (result) {
       result.innerHTML = "";
       const title = document.createElement("strong");
@@ -1542,6 +1605,18 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
       const body = document.createElement("span");
       body.textContent = message;
       result.append(title, body);
+      if (details?.length) {
+        const detailList = document.createElement("dl");
+        detailList.setAttribute("data-guided-manual-work-status", "");
+        details.forEach((detail) => {
+          const term = document.createElement("dt");
+          term.textContent = detail.label;
+          const description = document.createElement("dd");
+          description.textContent = detail.value;
+          detailList.append(term, description);
+        });
+        result.appendChild(detailList);
+      }
       if (nextSteps?.length) {
         const list = document.createElement("ul");
         nextSteps.forEach((step) => {
@@ -1679,11 +1754,22 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
           title: value("guided_text_title") || null
         }
       });
+      const summary = upload?.summary_json || {};
+      const workItemId = summary.normalization_work_item_id || "not returned";
+      const artifactIds = Array.isArray(summary.raw_artifact_ids) ? summary.raw_artifact_ids.join(", ") : "not returned";
       writeResult(
         "Manual text submitted",
-        "IGY6 accepted the UTF-8 text through the existing manual upload collection path.",
-        ["Open Work to inspect processing status and any queued work.", "Open Results to inspect collection runs, artifacts, documents, chunks, and evidence after processing.", "Use Ask over evidence after results appear."],
-        { source: { name: source.name, type: source.source_type }, upload }
+        "IGY6 accepted the UTF-8 text and queued normalization work for background processing.",
+        ["Open Work and look for the work item below.", "When the work item completes, open Results to inspect documents, chunks, and evidence.", "Use Ask over evidence after results appear."],
+        { source: { name: source.name, type: source.source_type, id: source.id }, upload },
+        [
+          { label: "source", value: source.id },
+          { label: "collection run", value: upload?.id || "not returned" },
+          { label: "work item", value: workItemId },
+          { label: "work type", value: "collection_normalization" },
+          { label: "raw artifact", value: artifactIds },
+          { label: "current status", value: "queued, then running, then completed when normalization finishes" }
+        ]
       );
     } catch (error) {
       writeResult(
@@ -2102,7 +2188,7 @@ export default async function Home() {
   const recentHypotheses = hypotheses.data.slice(0, 4);
   const recentPredictions = predictions.data.slice(0, 4);
   const recentRecommendations = recommendations.data.slice(0, 4);
-  const recentWorkItems = workItems.data.slice(0, 4);
+  const recentWorkItems = workItems.data.slice(0, 8);
   const recentApprovals = approvals.data.slice(0, 4);
   const recentFeedback = feedback.data.slice(0, 4);
   const recentOutcomes = outcomes.data.slice(0, 4);
@@ -2656,12 +2742,35 @@ export default async function Home() {
               <div>
                 <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
                 <div className="stack">
-                  {recentWorkItems.map((workItem) => (
-                    <article className="item evidenceItem" key={workItem.id}>
-                      <div><strong>{workItem.work_type}</strong><span>{workItem.error_message ?? `requested by ${workItem.requested_by_actor_id}`}</span></div>
-                      <div><StatusPill state={workItem.status} /><span>{formatDate(workItem.created_at)}</span></div>
-                    </article>
-                  ))}
+                  {recentWorkItems.map((workItem) => {
+                    const guidance = workItemGuidance(workItem);
+                    const relatedIds = workItemRelatedIds(workItem);
+                    return (
+                      <article className="item evidenceItem workStatusItem" key={workItem.id} data-work-status-item>
+                        <div>
+                          <strong>{workItem.work_type}</strong>
+                          <span>Work item: {workItem.id}</span>
+                          <span>{guidance.outcome}</span>
+                          {relatedIds.length > 0 ? (
+                            <dl className="workStatusIds" aria-label={`Related records for ${workItem.id}`}>
+                              {relatedIds.map((related) => (
+                                <div key={`${workItem.id}-${related.label}`}>
+                                  <dt>{related.label}</dt>
+                                  <dd>{related.values.slice(0, 3).join(", ")}{related.values.length > 3 ? ` +${related.values.length - 3} more` : ""}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : null}
+                        </div>
+                        <div>
+                          <StatusPill state={workItem.status} />
+                          <span>created {formatDate(workItem.created_at)}</span>
+                          <span>updated {formatDate(workItem.updated_at ?? workItem.created_at)}</span>
+                          <span>{guidance.next}</span>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
                 {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
               </div>
