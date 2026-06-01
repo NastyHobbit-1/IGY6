@@ -171,7 +171,10 @@ type ReportRecord = {
   report_type: string;
   status: string;
   requested_by_actor_id: string;
+  artifact_path?: string | null;
+  metadata_json?: Record<string, unknown> | null;
   created_at: string;
+  updated_at?: string | null;
 };
 
 type AuditEventRecord = {
@@ -1852,6 +1855,158 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
   );
 }
 
+function BasicReportWorkflow({
+  reports,
+  evidenceCount,
+  documentCount,
+  chunkCount
+}: {
+  reports: ApiResult<ReportRecord[]>;
+  evidenceCount: number;
+  documentCount: number;
+  chunkCount: number;
+}) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const reportReady = evidenceCount > 0 || documentCount > 0 || chunkCount > 0;
+  const script = `
+(() => {
+  const root = document.querySelector("[data-basic-report-workflow]");
+  if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const form = root.querySelector("[data-basic-report-form]");
+  const result = root.querySelector("[data-basic-report-result]");
+  const submit = root.querySelector("[data-basic-report-submit]");
+  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const checked = (name) => Boolean(root.querySelector("[name='" + name + "']")?.checked);
+  const show = (state, message, payload) => {
+    if (result) {
+      result.innerHTML = "";
+      const title = document.createElement("strong");
+      title.textContent = state;
+      const body = document.createElement("span");
+      body.textContent = message;
+      result.append(title, body);
+      if (payload) {
+        const details = document.createElement("dl");
+        details.setAttribute("data-basic-report-status", "");
+        [
+          ["report", payload.id],
+          ["status", payload.status],
+          ["type", payload.report_type],
+          ["artifact", payload.artifact_path || "not rendered"]
+        ].forEach(([label, detail]) => {
+          const term = document.createElement("dt");
+          term.textContent = label;
+          const description = document.createElement("dd");
+          description.textContent = detail || "not returned";
+          details.append(term, description);
+        });
+        result.appendChild(details);
+      }
+    }
+  };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+    return payload;
+  };
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = "Creating...";
+    }
+    try {
+      const report = await postJson("/reports", {
+        title: value("basic_report_title") || "Evidence inventory report",
+        report_type: value("basic_report_type") || "summary",
+        status: "requested",
+        metadata_json: {
+          created_from: "results_basic_report_workflow",
+          evidence_items_visible: Number(root.getAttribute("data-evidence-count") || 0),
+          documents_visible: Number(root.getAttribute("data-document-count") || 0),
+          chunks_visible: Number(root.getAttribute("data-chunk-count") || 0)
+        }
+      });
+      let finalReport = report;
+      if (checked("basic_report_render")) {
+        finalReport = await postJson("/reports/" + report.id + "/render", {
+          notes: value("basic_report_notes") || null
+        });
+      }
+      show(
+        finalReport.status === "ready" ? "Report ready" : "Report created",
+        finalReport.status === "ready"
+          ? "IGY6 rendered a local markdown metadata report artifact."
+          : "IGY6 created the report metadata record. Render it from Advanced or rerun this workflow with rendering enabled.",
+        finalReport
+      );
+    } catch (error) {
+      show("Report workflow failed", String(error));
+    } finally {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = "Create report";
+      }
+    }
+  });
+})();
+`;
+
+  return (
+    <section
+      className="guidedManualText"
+      data-basic-report-workflow
+      data-api-base-url={browserApiBaseUrl}
+      data-evidence-count={evidenceCount}
+      data-document-count={documentCount}
+      data-chunk-count={chunkCount}
+    >
+      <div className="guidedManualNotice">
+        <strong>Basic report workflow</strong>
+        <span>
+          Current reports are local markdown metadata summaries. They preserve boundaries by counting stored records and do not read raw artifact contents or call external models.
+        </span>
+      </div>
+      <form className="guidedManualForm" data-basic-report-form>
+        <label>
+          <span>Report title</span>
+          <input name="basic_report_title" defaultValue="Evidence inventory report" />
+        </label>
+        <label>
+          <span>Report type</span>
+          <select name="basic_report_type" defaultValue="summary">
+            <option value="summary">summary</option>
+            <option value="incident_review">incident_review</option>
+            <option value="status_brief">status_brief</option>
+          </select>
+        </label>
+        <label>
+          <span>Render notes</span>
+          <textarea name="basic_report_notes" rows={2} placeholder="Optional local note for the rendered markdown report." />
+        </label>
+        <label className="checkLine">
+          <input name="basic_report_render" type="checkbox" defaultChecked /> Render markdown artifact now
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit" data-basic-report-submit disabled={!reportReady}>Create report</button>
+          <span>{reportReady ? "Uses existing /reports and /reports/:id/render routes." : "Add supported text and wait for evidence before creating a useful report."}</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-basic-report-result>
+        <strong>{reports.data.length > 0 ? "Reports are available" : "No reports yet"}</strong>
+        <span>{reports.data.length > 0 ? "Create a new metadata report or review recent reports below." : "Create a report after evidence exists, or keep using Ask over evidence."}</span>
+      </div>
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 function MvpActionConsole() {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const script = `
@@ -2891,14 +3046,15 @@ export default async function Home() {
             <div className="fieldGuide">
               <article><strong>Report reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Project: "Summarize the latest verification notes."</span></article>
             </div>
+            <BasicReportWorkflow reports={reports} evidenceCount={evidenceItems.data.length} documentCount={documents.data.length} chunkCount={chunks.data.length} />
             <section className="quad analysisGrid">
               <div>
                 <div className="subHeader"><h3>Reports</h3>{reports.error ? <span className="errorText">{reports.error}</span> : null}</div>
                 <div className="stack">
                   {recentReports.map((report) => (
                     <article className="item evidenceItem" key={report.id}>
-                      <div><strong>{report.title}</strong><span>{report.report_type}</span></div>
-                      <div><StatusPill state={report.status} /><span>{report.requested_by_actor_id}</span></div>
+                      <div><strong>{report.title}</strong><span>{report.report_type} · {report.id}</span></div>
+                      <div><StatusPill state={report.status} /><span>{report.artifact_path ? "markdown artifact ready" : "metadata only"}</span></div>
                     </article>
                   ))}
                 </div>
