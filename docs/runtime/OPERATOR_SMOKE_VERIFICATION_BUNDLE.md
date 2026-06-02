@@ -11,6 +11,33 @@ compose config -> data-root presence -> web build -> stack start -> live/ready
 It is local-first and uses synthetic text only. It must not print `.env`
 contents, secrets, runtime artifacts, or files under `IGY6_DATA_ROOT`.
 
+## Automated Script
+
+Use the operator smoke script from the repository root:
+
+```bash
+scripts/operator-smoke-check.sh --help
+scripts/operator-smoke-check.sh --check
+scripts/operator-smoke-check.sh --run
+```
+
+`--check` verifies prerequisites and configuration only. It checks required
+commands, required repo files, Compose config, `IGY6_DATA_ROOT` key presence
+without printing the value, `IGY6_DATA_ROOT` directory presence without listing
+contents, and the checked host ports. It does not start the stack and does not
+mutate runtime data.
+
+`--run` performs the full local smoke path with synthetic text. It runs the web
+build, checks ports before startup, starts the stack, probes API live/ready and
+the web UI, calls `scripts/e2e-manual-upload-smoke.py --run`, checks the
+Results UI markers, verifies retrieval preview, stops the stack if the script
+started it, and confirms the checked ports are clear.
+
+Success means every step prints `PASS` and the script exits `0`. Failure means
+one or more steps print `FAIL` and the script exits nonzero. The script does not
+print `.env` contents, secret values, runtime artifact contents, or private data
+from `IGY6_DATA_ROOT`; it uses only synthetic smoke data.
+
 ## Preconditions
 
 - Run from the repository root on `dev`.
