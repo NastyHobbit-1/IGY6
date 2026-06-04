@@ -740,6 +740,49 @@ function workItemGuidance(workItem: WorkItemRecord): { outcome: string; next: st
   }
 }
 
+function workItemDispatchVisibility(workItem: WorkItemRecord): Array<{ label: string; value: string; state: string }> {
+  const supportedTypes: Record<string, string> = {
+    collection_normalization: "collection.normalize_collection_run",
+    document_chunking: "evidence.generate_document_chunks",
+    chunk_vector_upsert: "memory.vector.upsert_chunks"
+  };
+  const payload = workItem.payload_json ?? {};
+  const taskName = supportedTypes[workItem.work_type];
+  const intentVerified = Boolean(payload.intent_verification) || payload.intent_verification_recorded === true;
+  const safeDispatchOnly = payload.safe_dispatch_only === true || payload.rust_gateway_execution === "not_executed";
+  const statusState = ["queued", "pending_intent_verification"].includes(workItem.status)
+    ? "waiting"
+    : ["running"].includes(workItem.status)
+      ? "running"
+      : ["completed"].includes(workItem.status)
+        ? "completed"
+        : ["failed"].includes(workItem.status)
+          ? "failed"
+          : "recorded";
+  return [
+    {
+      label: "support",
+      value: taskName ? `supported: ${taskName}` : "unsupported by bounded dispatch",
+      state: taskName ? "supported" : "unsupported"
+    },
+    {
+      label: "state",
+      value: workItem.status,
+      state: statusState
+    },
+    {
+      label: "intent",
+      value: intentVerified ? "intent verification recorded" : "intent verification not visible",
+      state: intentVerified ? "verified" : "not-verified"
+    },
+    {
+      label: "dispatch",
+      value: safeDispatchOnly ? "dispatch metadata only / no arbitrary execution" : "worker-managed or not dispatched here",
+      state: safeDispatchOnly ? "safe-dispatch-only" : "worker-managed"
+    }
+  ];
+}
+
 const RUNTIME_POSTURE = [
   { label: "Rust API", value: "active", state: "runtime-active" },
   { label: "Rust worker", value: "active", state: "runtime-active" },
@@ -3584,17 +3627,26 @@ export default async function Home() {
               <div>
                 <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
                 <div className="stack">
-                  {recentWorkItems.map((workItem) => {
-                    const guidance = workItemGuidance(workItem);
-                    const relatedIds = workItemRelatedIds(workItem);
-                    return (
-                      <article className="item evidenceItem workStatusItem" key={workItem.id} data-work-status-item>
-                        <div>
-                          <strong>{workItem.work_type}</strong>
-                          <span>Work item: {workItem.id}</span>
-                          <span>{guidance.outcome}</span>
-                          {relatedIds.length > 0 ? (
-                            <dl className="workStatusIds" aria-label={`Related records for ${workItem.id}`}>
+	                  {recentWorkItems.map((workItem) => {
+	                    const guidance = workItemGuidance(workItem);
+	                    const relatedIds = workItemRelatedIds(workItem);
+	                    const dispatchVisibility = workItemDispatchVisibility(workItem);
+	                    return (
+	                      <article className="item evidenceItem workStatusItem" key={workItem.id} data-work-status-item>
+	                        <div>
+	                          <strong>{workItem.work_type}</strong>
+	                          <span>Work item: {workItem.id}</span>
+	                          <span>{guidance.outcome}</span>
+	                          <dl className="workStatusIds" aria-label={`Dispatch visibility for ${workItem.id}`} data-work-dispatch-visibility>
+	                            {dispatchVisibility.map((detail) => (
+	                              <div key={`${workItem.id}-dispatch-${detail.label}`}>
+	                                <dt>{detail.label}</dt>
+	                                <dd>{detail.value}</dd>
+	                              </div>
+	                            ))}
+	                          </dl>
+	                          {relatedIds.length > 0 ? (
+	                            <dl className="workStatusIds" aria-label={`Related records for ${workItem.id}`}>
                               {relatedIds.map((related) => (
                                 <div key={`${workItem.id}-${related.label}`}>
                                   <dt>{related.label}</dt>
