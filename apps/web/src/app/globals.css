@@ -593,6 +593,50 @@ a {
   margin-top: 12px;
 }
 
+.agentPlanner {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.agentPlannerCard {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 10px;
+  background: rgba(8, 13, 22, 0.7);
+  padding: 12px;
+}
+
+.agentPlannerCard strong,
+.agentPlannerCard span {
+  overflow-wrap: anywhere;
+}
+
+.agentPlannerCard strong {
+  color: #e5edf8;
+  font-size: 0.82rem;
+}
+
+.agentPlannerCard span {
+  color: #b8c4d6;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.agentPlannerCard em {
+  width: fit-content;
+  border: 1px solid rgba(125, 166, 255, 0.24);
+  border-radius: 999px;
+  color: #bfdbfe;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+  padding: 4px 7px;
+}
+
 .workspaceGrid {
   display: grid;
   gap: 14px;

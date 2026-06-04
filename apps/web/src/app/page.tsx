@@ -1329,12 +1329,13 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
   const intentPanel = root.querySelector("[data-agent-intent]");
   const resultPanel = root.querySelector("[data-agent-result]");
   const statusPanel = root.querySelector("[data-agent-status]");
-  const summaryPanel = root.querySelector("[data-agent-understanding-summary]");
-  const categoryPanel = root.querySelector("[data-agent-understanding-category]");
-  const posturePanel = root.querySelector("[data-agent-understanding-posture]");
-  const nextStepPanel = root.querySelector("[data-agent-understanding-next]");
-  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
-  let latestIntent = null;
+	  const summaryPanel = root.querySelector("[data-agent-understanding-summary]");
+	  const categoryPanel = root.querySelector("[data-agent-understanding-category]");
+	  const posturePanel = root.querySelector("[data-agent-understanding-posture]");
+	  const nextStepPanel = root.querySelector("[data-agent-understanding-next]");
+	  const plannerPanel = root.querySelector("[data-agent-intake-planner]");
+	  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
+	  let latestIntent = null;
 
   const showJson = (node, label, payload) => {
     if (!node) return;
@@ -1347,9 +1348,92 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
     return JSON.parse(raw);
   };
 
-  const capabilityFor = (actionName) => {
-    return (capabilitiesPayload.actions || []).find((action) => action.name === actionName) || null;
-  };
+	  const capabilityFor = (actionName) => {
+	    return (capabilitiesPayload.actions || []).find((action) => action.name === actionName) || null;
+	  };
+
+	  const plannerCopy = (understanding, intent, capability) => {
+	    if (understanding.unsupported_or_unsafe) {
+	      return {
+	        state: "unsupported",
+	        title: "Unsupported or unsafe as written",
+	        body: understanding.reason || intent.reason || "IGY6 will not turn this request into work or execution.",
+	        next: "Rewrite the request as evidence review, data intake, report creation, feedback, outcome recording, or a listed bounded action."
+	      };
+	    }
+	    if (understanding.clarification_needed) {
+	      return {
+	        state: "clarification-needed",
+	        title: "Clarification needed",
+	        body: (understanding.missing_information || []).join(", ") || "IGY6 needs more detail before it can choose a safe next step.",
+	        next: understanding.next_step || "Add the missing target, evidence scope, or desired output."
+	      };
+	    }
+	    if (understanding.approval_required || intent.approval_required) {
+	      return {
+	        state: "approval-required",
+	        title: "Approval required before action",
+	        body: capability?.interpreted_intent || "This request may affect the local runtime or another sensitive workflow.",
+	        next: "Review the proposed bounded action and create an approval only if it matches what you want."
+	      };
+	    }
+	    if (understanding.evidence_required) {
+	      return {
+	        state: "evidence-needed",
+	        title: "Evidence needed",
+	        body: "IGY6 should use stored local evidence before answering or creating a report.",
+	        next: "Use Ask over evidence, or add/process more data if retrieval has no matches."
+	      };
+	    }
+	    if (understanding.work_item_should_be_created) {
+	      return {
+	        state: "work-confirmation",
+	        title: "May become bounded work after confirmation",
+	        body: "The request looks like a workflow request, but this planner does not create work in this DIFF.",
+	        next: understanding.next_step || "Review the request and use an existing supported workflow."
+	      };
+	    }
+	    return {
+	      state: intent.proposed_action ? "bounded-action" : "review-only",
+	      title: intent.proposed_action ? "Bounded action matched" : "Review next step",
+	      body: capability?.interpreted_intent || understanding.wants || "IGY6 can summarize the request posture.",
+	      next: understanding.next_step || "Use the existing visible workflow that matches this category."
+	    };
+	  };
+
+	  const addPlannerRow = (parent, label, value, state) => {
+	    const item = document.createElement("article");
+	    item.className = "agentPlannerCard";
+	    item.setAttribute("data-agent-planner-card", label);
+	    const title = document.createElement("strong");
+	    title.textContent = label;
+	    const body = document.createElement("span");
+	    body.textContent = value || "not returned";
+	    item.append(title, body);
+	    if (state) {
+	      const pill = document.createElement("em");
+	      pill.textContent = state;
+	      item.appendChild(pill);
+	    }
+	    parent.appendChild(item);
+	  };
+
+	  const renderPlanner = (intent) => {
+	    if (!plannerPanel) return;
+	    plannerPanel.innerHTML = "";
+	    const understanding = intent?.request_understanding;
+	    if (!understanding) {
+	      addPlannerRow(plannerPanel, "Planner", "Preview a request to see the next safe step.", "waiting");
+	      return;
+	    }
+	    const capability = intent.proposed_action ? capabilityFor(intent.proposed_action) : null;
+	    const copy = plannerCopy(understanding, intent, capability);
+	    addPlannerRow(plannerPanel, "Status", copy.title, copy.state);
+	    addPlannerRow(plannerPanel, "Category", understanding.category || "unclear", understanding.category || "unclear");
+	    addPlannerRow(plannerPanel, "Evidence", understanding.evidence_required ? "Stored evidence should be checked first." : "No evidence lookup required before this preview.", understanding.evidence_required ? "needed" : "not-needed");
+	    addPlannerRow(plannerPanel, "Approval", understanding.approval_required || intent.approval_required ? "Explicit approval is required before execution." : "No approval is required for this preview.", understanding.approval_required || intent.approval_required ? "required" : "not-required");
+	    addPlannerRow(plannerPanel, "Next safe step", copy.next, "guidance");
+	  };
 
   const renderUnderstanding = (intent) => {
     const understanding = intent?.request_understanding;
@@ -1362,9 +1446,10 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
     posture.push(understanding.approval_required ? "Approval required" : "No approval required for preview");
     posture.push(understanding.work_item_should_be_created ? "May become work after confirmation" : "No work item now");
     posture.push(understanding.unsupported_or_unsafe ? "Unsupported or unsafe as written" : "Supported posture");
-    if (posturePanel) posturePanel.textContent = posture.join(" | ");
-    if (nextStepPanel) nextStepPanel.textContent = understanding.next_step || "";
-  };
+	    if (posturePanel) posturePanel.textContent = posture.join(" | ");
+	    if (nextStepPanel) nextStepPanel.textContent = understanding.next_step || "";
+	    renderPlanner(intent);
+	  };
 
   const setButtons = () => {
     if (!executeButton || !approvalButton || !executeApprovedButton) return;
@@ -1538,15 +1623,23 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
         Stack-control actions: {stackActions.every((action) => action.executable_in_api_runtime) ? "executable from API runtime" : "blocked unless API runtime has Docker CLI, Compose, and Docker control access."}
       </p>
 
-      <section className="agentUnderstanding">
-        <div>
-          <span>IGY6 understood this as</span>
-          <strong data-agent-understanding-summary>Preview a request to see the request summary.</strong>
-        </div>
-        <p data-agent-understanding-category>Category: not previewed</p>
-        <p data-agent-understanding-posture>Evidence, clarification, approval, and work-item posture will appear here.</p>
-        <p data-agent-understanding-next>Next step will appear here.</p>
-      </section>
+	      <section className="agentUnderstanding">
+	        <div>
+	          <span>IGY6 understood this as</span>
+	          <strong data-agent-understanding-summary>Preview a request to see the request summary.</strong>
+	        </div>
+	        <p data-agent-understanding-category>Category: not previewed</p>
+	        <p data-agent-understanding-posture>Evidence, clarification, approval, and work-item posture will appear here.</p>
+	        <p data-agent-understanding-next>Next step will appear here.</p>
+	      </section>
+
+	      <section className="agentPlanner" data-agent-intake-planner aria-label="Agent task intake planner">
+	        <article className="agentPlannerCard" data-agent-planner-card="Planner">
+	          <strong>Planner</strong>
+	          <span>Preview a request to see the next safe step.</span>
+	          <em>waiting</em>
+	        </article>
+	      </section>
 
       <details className="advancedPanel">
         <summary>Advanced: raw parameters, approval ID, response JSON, and route details</summary>
