@@ -19,6 +19,7 @@ Use the operator smoke script from the repository root:
 scripts/operator-smoke-check.sh --help
 scripts/operator-smoke-check.sh --check
 scripts/operator-smoke-check.sh --run
+scripts/operator-smoke-check.sh --run --record
 ```
 
 `--check` verifies prerequisites and configuration only. It checks required
@@ -39,6 +40,30 @@ Success means every step prints `PASS` and the script exits `0`. Failure means
 one or more steps print `FAIL` and the script exits nonzero. The script does not
 print `.env` contents, secret values, runtime artifact contents, or private data
 from `IGY6_DATA_ROOT`; it uses only synthetic smoke data.
+
+`--run --record` runs the same full smoke path and writes a safe JSON result
+summary under `.igy6-local/smoke-results/`, for example:
+
+```text
+.igy6-local/smoke-results/operator-smoke-YYYYMMDDTHHMMSSZ.json
+```
+
+`--run-record` is accepted as an equivalent shorthand. Recording is optional;
+plain `--run` remains non-recording. If the run fails, the script still writes a
+failure summary when practical and exits nonzero.
+
+The result directory is ignored by Git. Result files are intended as local
+development "last known good" markers and should be inspected before sharing.
+Safe fields include the schema version, UTC creation time, branch, HEAD, script
+name, mode, overall status, PASS/FAIL step summaries, a redacted synthetic token
+marker plus token hash, API/web HTTP status summaries, endpoint/retrieval counts,
+checked ports, whether `IGY6_DATA_ROOT` was present, whether the script started
+and stopped the stack, and a failure reason when present.
+
+Result files intentionally do not record `.env` contents, secret values, raw
+uploaded text, raw runtime/private data, `IGY6_DATA_ROOT` paths or contents,
+database rows, Docker socket credentials, auth tokens, or full logs with
+potentially sensitive output.
 
 ## Docker Permission Preflight
 

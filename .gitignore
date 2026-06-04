@@ -27,6 +27,7 @@ storage/neo4j/
 storage/mlflow/
 storage/phoenix/
 IGY6_Data/
+.igy6-local/smoke-results/
 
 mlruns/
 *.sqlite
