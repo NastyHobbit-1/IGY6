@@ -22,21 +22,46 @@ scripts/operator-smoke-check.sh --run
 ```
 
 `--check` verifies prerequisites and configuration only. It checks required
-commands, required repo files, Compose config, `IGY6_DATA_ROOT` key presence
-without printing the value, `IGY6_DATA_ROOT` directory presence without listing
-contents, and the checked host ports. It does not start the stack and does not
-mutate runtime data.
+commands, required repo files, Docker client/daemon/socket access, Compose
+config, `IGY6_DATA_ROOT` key presence without printing the value,
+`IGY6_DATA_ROOT` directory presence without listing contents, and the checked
+host ports. It does not start the stack and does not mutate runtime data.
 
 `--run` performs the full local smoke path with synthetic text. It runs the web
-build, checks ports before startup, starts the stack, probes API live/ready and
-the web UI, calls `scripts/e2e-manual-upload-smoke.py --run`, checks the
-Results UI markers, verifies retrieval preview, stops the stack if the script
-started it, and confirms the checked ports are clear.
+build, checks Docker access and ports before startup, starts the stack, probes
+API live/ready and the web UI, calls
+`scripts/e2e-manual-upload-smoke.py --run`, checks the Results UI markers,
+verifies retrieval preview, stops the stack if the script started it, and
+confirms the checked ports are clear. If Docker access fails, `--run` refuses
+before starting the stack.
 
 Success means every step prints `PASS` and the script exits `0`. Failure means
 one or more steps print `FAIL` and the script exits nonzero. The script does not
 print `.env` contents, secret values, runtime artifact contents, or private data
 from `IGY6_DATA_ROOT`; it uses only synthetic smoke data.
+
+## Docker Permission Preflight
+
+The script checks Docker before validating Compose or starting the stack. It
+reports these operator environment problems clearly:
+
+- `docker` command missing.
+- Docker daemon unavailable.
+- Permission denied connecting to `/var/run/docker.sock`.
+- Current user cannot run Docker commands.
+
+When Docker access fails, use these manual checks:
+
+```bash
+id
+ls -l /var/run/docker.sock
+docker ps
+```
+
+If Docker is installed and running but the socket denies access, the likely fix
+is to add the current user to the `docker` group, then restart the shell or WSL
+session. Do not run that fix from this smoke script; it is an operator system
+change and must be done intentionally outside IGY6 verification.
 
 ## Preconditions
 
@@ -60,6 +85,9 @@ git branch -vv
 2. Validate Compose without printing secrets:
 
 ```bash
+id
+ls -l /var/run/docker.sock
+docker ps
 docker compose -f infra/docker-compose.yml --env-file .env config --quiet
 grep -q '^IGY6_DATA_ROOT=' .env && echo "IGY6_DATA_ROOT key present" || echo "IGY6_DATA_ROOT key missing"
 test -d ../IGY6_Data && echo "IGY6_DATA_ROOT directory exists" || echo "IGY6_DATA_ROOT directory missing"
@@ -156,6 +184,8 @@ No output means the checked ports are clear.
 ## Failure Handling
 
 - If Compose config fails, stop and fix configuration before starting the stack.
+- If Docker access fails, do not start the stack. Confirm `id`,
+  `/var/run/docker.sock` permissions, and `docker ps` manually.
 - If `IGY6_DATA_ROOT` is missing, do not create ad hoc runtime folders inside
   the repository.
 - If a port is already listening, stop the conflicting local process or choose a

@@ -35,6 +35,7 @@ Safety:
   - Does not kill existing processes.
   - Stops the stack on exit if this script started it.
   - Does not remove volumes, images, files, or runtime data.
+  - Does not change Docker permissions, user groups, or system services.
 EOF
 }
 
@@ -74,8 +75,7 @@ require_command() {
   fi
 }
 
-require_commands() {
-  require_command docker
+require_basic_commands() {
   require_command curl
   require_command npm
   require_command python3
@@ -84,6 +84,50 @@ require_commands() {
   else
     fail "need ss, netstat, or lsof for port conflict checks"
   fi
+}
+
+print_docker_guidance() {
+  info "Docker access manual checks:"
+  info "  id"
+  info "  ls -l /var/run/docker.sock"
+  info "  docker ps"
+  info "Likely permission fix, if Docker is installed and running: add the current user to the docker group, then restart the shell or WSL session."
+  info "This script will not run that fix automatically."
+}
+
+require_docker_access() {
+  local docker_output
+  local docker_status
+
+  if ! command -v docker >/dev/null 2>&1; then
+    fail "docker command is missing"
+    print_docker_guidance
+    return
+  fi
+  pass "docker command is available"
+
+  set +e
+  docker_output="$(docker ps 2>&1)"
+  docker_status=$?
+  set -e
+
+  if [[ "${docker_status}" -eq 0 ]]; then
+    pass "Docker daemon is accessible"
+    pass "current user can run docker commands"
+  else
+    if printf '%s' "${docker_output}" | grep -qiE 'permission denied|/var/run/docker\.sock'; then
+      fail "permission denied connecting to /var/run/docker.sock"
+      fail "current user cannot run docker commands"
+    elif printf '%s' "${docker_output}" | grep -qiE 'cannot connect to the docker daemon|docker daemon|is the docker daemon running'; then
+      fail "Docker daemon is unavailable"
+      fail "current user cannot run docker commands"
+    else
+      fail "current user cannot run docker commands"
+    fi
+    print_docker_guidance
+    return
+  fi
+
   if docker compose version >/dev/null 2>&1; then
     pass "Docker Compose plugin is available"
   else
@@ -309,9 +353,11 @@ cleanup() {
 run_check_mode() {
   cd "${REPO_ROOT}"
   require_repo_root
-  require_commands
+  require_basic_commands
   check_env_file
   check_data_root_dir
+  require_docker_access
+  finish_step
   compose_config
   check_ports_clear "preflight"
   finish_step
@@ -320,9 +366,11 @@ run_check_mode() {
 run_full_mode() {
   cd "${REPO_ROOT}"
   require_repo_root
-  require_commands
+  require_basic_commands
   check_env_file
   check_data_root_dir
+  require_docker_access
+  finish_step
   compose_config
   run_web_build
   check_ports_clear "before start"
