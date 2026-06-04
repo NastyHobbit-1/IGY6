@@ -143,6 +143,7 @@ type ApprovalRecord = {
   requested_by_actor_id: string;
   decided_by_actor_id: string | null;
   decision_reason: string | null;
+  request_payload_json?: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -1301,9 +1302,17 @@ function ChatRetrievalPreview() {
   );
 }
 
-function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapabilitiesResponse> }) {
+function AgentCommandPanel({
+  capabilities,
+  approvals
+}: {
+  capabilities: ApiResult<AgentCapabilitiesResponse>;
+  approvals: ApiResult<ApprovalRecord[]>;
+}) {
   const data = capabilities.data;
   const stackActions = data.actions.filter((action) => action.script_backed);
+  const approvedAgentApprovals = approvals.data.filter((approval) => approval.request_type === "agent_action" && approval.status === "approved");
+  const pendingAgentApprovals = approvals.data.filter((approval) => approval.request_type === "agent_action" && approval.status === "pending");
   const actionLabels: Record<string, string> = {
     show_project_health: "Show project health",
     show_git_status: "Show git status",
@@ -1322,19 +1331,23 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
   const commandInput = root.querySelector("[data-agent-command-input]");
   const paramsInput = root.querySelector("[data-agent-params]");
   const approvalInput = root.querySelector("[data-agent-approval-id]");
-  const previewButton = root.querySelector("[data-agent-preview]");
-  const executeButton = root.querySelector("[data-agent-execute]");
-  const approvalButton = root.querySelector("[data-agent-request-approval]");
-  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
-  const intentPanel = root.querySelector("[data-agent-intent]");
-  const resultPanel = root.querySelector("[data-agent-result]");
-  const statusPanel = root.querySelector("[data-agent-status]");
+	  const previewButton = root.querySelector("[data-agent-preview]");
+	  const executeButton = root.querySelector("[data-agent-execute]");
+	  const approvalButton = root.querySelector("[data-agent-request-approval]");
+	  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
+	  const actionSelect = root.querySelector("[data-agent-action-select]");
+	  const approvalSelect = root.querySelector("[data-agent-approval-select]");
+	  const intentPanel = root.querySelector("[data-agent-intent]");
+	  const resultPanel = root.querySelector("[data-agent-result]");
+	  const statusPanel = root.querySelector("[data-agent-status]");
+	  const bridgePanel = root.querySelector("[data-agent-approval-bridge]");
 	  const summaryPanel = root.querySelector("[data-agent-understanding-summary]");
 	  const categoryPanel = root.querySelector("[data-agent-understanding-category]");
 	  const posturePanel = root.querySelector("[data-agent-understanding-posture]");
 	  const nextStepPanel = root.querySelector("[data-agent-understanding-next]");
 	  const plannerPanel = root.querySelector("[data-agent-intake-planner]");
 	  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
+	  const approvalPayload = JSON.parse(root.querySelector("[data-agent-approvals-json]")?.textContent || "[]");
 	  let latestIntent = null;
 
   const showJson = (node, label, payload) => {
@@ -1350,6 +1363,41 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
 
 	  const capabilityFor = (actionName) => {
 	    return (capabilitiesPayload.actions || []).find((action) => action.name === actionName) || null;
+	  };
+
+	  const approvalMatches = (approval, actionName, parameters) => {
+	    const payload = approval?.request_payload_json || {};
+	    return approval?.status === "approved"
+	      && approval?.request_type === "agent_action"
+	      && payload.action_name === actionName
+	      && JSON.stringify(payload.parameters || {}) === JSON.stringify(parameters || {});
+	  };
+
+	  const matchingApproval = (actionName, parameters) => {
+	    return (approvalPayload || []).find((approval) => approvalMatches(approval, actionName, parameters)) || null;
+	  };
+
+	  const renderBridge = (intent) => {
+	    if (!bridgePanel) return;
+	    const parameters = (() => {
+	      try { return parseParams(); } catch (_) { return {}; }
+	    })();
+	    const actionName = intent?.proposed_action || actionSelect?.value || "";
+	    const capability = actionName ? capabilityFor(actionName) : null;
+	    const approval = actionName ? matchingApproval(actionName, parameters) : null;
+	    if (approval && approvalInput) approvalInput.value = approval.id;
+	    const actionLabel = actionName || "No action selected";
+	    const approvalState = !capability
+	      ? "unsupported"
+	      : capability.approval_required
+	        ? approval
+	          ? "approved"
+	          : "approval needed"
+	        : "not required";
+	    bridgePanel.textContent = "Action: " + actionLabel
+	      + " | class: " + (capability?.action_type || "unknown")
+	      + " | approval: " + approvalState
+	      + " | execution: " + (capability?.executable_in_api_runtime === false ? "runtime blocked" : "bounded route only");
 	  };
 
 	  const plannerCopy = (understanding, intent, capability) => {
@@ -1449,6 +1497,7 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
 	    if (posturePanel) posturePanel.textContent = posture.join(" | ");
 	    if (nextStepPanel) nextStepPanel.textContent = understanding.next_step || "";
 	    renderPlanner(intent);
+	    renderBridge(intent);
 	  };
 
   const setButtons = () => {
@@ -1480,13 +1529,14 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
     showJson(intentPanel, response.ok ? "Agent intent preview" : "Intent preview failed", payload);
     const capability = payload.proposed_action ? capabilityFor(payload.proposed_action) : null;
     const runtimeNote = capability?.reason || capabilitiesPayload.runtime?.reason || "Runtime allows this action class.";
-    if (statusPanel) {
-      statusPanel.textContent = payload.proposed_action
-        ? "Runtime: " + (capability?.executable_in_api_runtime ? "executable" : "blocked") + " | " + runtimeNote
-        : "Rejected by typed registry. No shell command will run.";
-    }
-    setButtons();
-  };
+	    if (statusPanel) {
+	      statusPanel.textContent = payload.proposed_action
+	        ? "Runtime: " + (capability?.executable_in_api_runtime ? "executable" : "blocked") + " | " + runtimeNote
+	        : "Rejected by typed registry. No shell command will run.";
+	    }
+	    if (payload.proposed_action && actionSelect) actionSelect.value = payload.proposed_action;
+	    setButtons();
+	  };
 
   previewButton?.addEventListener("click", async () => {
     try {
@@ -1527,9 +1577,12 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
         })
       });
       const payload = await response.json();
-      if (payload?.id && approvalInput) approvalInput.value = payload.id;
-      showJson(resultPanel, response.ok ? "Approval request created" : "Approval request failed", payload);
-      setButtons();
+	      if (payload?.id && approvalInput) approvalInput.value = payload.id;
+	      showJson(resultPanel, response.ok ? "Approval request created" : "Approval request failed", payload);
+	      if (bridgePanel) bridgePanel.textContent = response.ok
+	        ? "Approval requested. Review it in Settings before running the approved action."
+	        : "Approval request failed. No action was executed.";
+	      setButtons();
     } catch (error) {
       showJson(resultPanel, "Approval request error", { detail: error instanceof Error ? error.message : "Unknown error" });
     }
@@ -1553,10 +1606,22 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
       showJson(resultPanel, "Approved action error", { detail: error instanceof Error ? error.message : "Unknown error" });
     }
   });
-
-  approvalInput?.addEventListener("input", setButtons);
-})();
-`;
+	  approvalInput?.addEventListener("input", setButtons);
+	  approvalSelect?.addEventListener("change", () => {
+	    if (approvalInput) approvalInput.value = approvalSelect.value || "";
+	    setButtons();
+	  });
+	  actionSelect?.addEventListener("change", () => {
+	    const selected = actionSelect.selectedOptions?.[0];
+	    if (commandInput && selected?.getAttribute("data-prompt")) {
+	      commandInput.value = selected.getAttribute("data-prompt");
+	    }
+	    latestIntent = null;
+	    renderBridge({ proposed_action: actionSelect.value, approval_required: capabilityFor(actionSelect.value)?.approval_required });
+	    setButtons();
+	  });
+	})();
+	`;
 
   return (
     <section className="panel agentCommandPanel" id="agent-command" data-agent-command>
@@ -1587,9 +1652,9 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
 
       {data.runtime.reason ? <p className="agentRuntimeReason">{data.runtime.reason}</p> : null}
 
-      <section className="agentActionList">
-        {data.actions.map((action) => (
-          <article className="agentActionCard" key={action.name}>
+	      <section className="agentActionList">
+	        {data.actions.map((action) => (
+	          <article className="agentActionCard" key={action.name}>
             <div>
               <strong>{actionLabels[action.name] ?? action.name.replaceAll("_", " ")}</strong>
               <span>{action.interpreted_intent}</span>
@@ -1601,8 +1666,47 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
             </div>
             {action.reason ? <p>{action.reason}</p> : null}
           </article>
-        ))}
-      </section>
+	        ))}
+	      </section>
+
+	      <section className="agentApprovalBridge">
+	        <div className="guidedManualNotice">
+	          <strong>Approval-to-action bridge</strong>
+	          <span>Choose a fixed action, preview it, then request or select a matching approval when the action requires one. No arbitrary commands or user-provided argv are accepted.</span>
+	        </div>
+	        <section className="agentCommandGrid">
+	          <label>
+	            <span>Bounded action</span>
+	            <select data-agent-action-select defaultValue="show_project_health">
+	              {data.actions.map((action) => (
+	                <option
+	                  key={action.name}
+	                  value={action.name}
+	                  data-prompt={actionLabels[action.name] ?? action.interpreted_intent}
+	                >
+	                  {actionLabels[action.name] ?? action.name.replaceAll("_", " ")} · {action.approval_required ? "approval required" : "read-only"}
+	                </option>
+	              ))}
+	            </select>
+	          </label>
+	          <label>
+	            <span>Approved agent approval</span>
+	            <select data-agent-approval-select defaultValue="" disabled={approvedAgentApprovals.length === 0}>
+	              <option value="">No approved approval selected</option>
+	              {approvedAgentApprovals.map((approval) => (
+	                <option key={approval.id} value={approval.id}>{approval.id}</option>
+	              ))}
+	            </select>
+	          </label>
+	        </section>
+	        <p className="agentStatus" data-agent-approval-bridge>
+	          {pendingAgentApprovals.length > 0
+	            ? `${pendingAgentApprovals.length} pending agent approval request(s) need review in Settings.`
+	            : approvedAgentApprovals.length > 0
+	              ? `${approvedAgentApprovals.length} approved agent approval(s) available for matching actions.`
+	              : "No approved agent action approval is available yet."}
+	        </p>
+	      </section>
 
       <section className="agentCommandGrid">
         <label>
@@ -1661,9 +1765,10 @@ function AgentCommandPanel({ capabilities }: { capabilities: ApiResult<AgentCapa
         </section>
         <p className="routeHint">Routes used: /agent/intent, /agent/actions/:action/execute, /approvals.</p>
       </details>
-      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
-    </section>
+	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
+	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
+	      <script dangerouslySetInnerHTML={{ __html: script }} />
+	    </section>
   );
 }
 
@@ -2925,7 +3030,7 @@ export default async function Home() {
 
           <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
           <ChatRetrievalPreview />
-          <AgentCommandPanel capabilities={agentCapabilities} />
+	          <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} />
         </section>
 
         <section className="panel diagnosticsPanel tabContent" id="advanced-diagnostics" data-tab-panel="advanced">

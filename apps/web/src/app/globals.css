@@ -245,10 +245,11 @@ a {
 .actionBox input,
 .actionBox select,
 .actionBox textarea,
-.settingControl input,
-.settingsActions input,
-.agentCommandGrid input,
-.agentCommandGrid textarea {
+	.settingControl input,
+	.settingsActions input,
+	.agentCommandGrid input,
+	.agentCommandGrid select,
+	.agentCommandGrid textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -266,9 +267,10 @@ a {
 .guidedManualForm select,
 .guidedManualForm textarea,
 .settingControl input,
-.settingsActions input,
-.agentCommandGrid input,
-.agentCommandGrid textarea {
+	.settingsActions input,
+	.agentCommandGrid input,
+	.agentCommandGrid select,
+	.agentCommandGrid textarea {
   padding: 9px 10px;
 }
 
@@ -635,6 +637,12 @@ a {
   font-style: normal;
   font-weight: 900;
   padding: 4px 7px;
+}
+
+.agentApprovalBridge {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .workspaceGrid {
