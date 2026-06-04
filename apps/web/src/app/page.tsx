@@ -180,6 +180,19 @@ type ImprovementRecord = {
   updated_at?: string | null;
 };
 
+type ExperimentRecord = {
+  id: string;
+  improvement_item_id: string | null;
+  status: string;
+  mlflow_run_id: string | null;
+  optuna_study_name: string | null;
+  metrics_json?: Record<string, unknown> | null;
+  artifacts_json?: Record<string, unknown> | null;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
 type ReportRecord = {
   id: string;
   title: string;
@@ -2638,6 +2651,175 @@ function EvidenceFeedbackWorkflow({
   );
 }
 
+function ImprovementExperimentReview({
+  improvements,
+  experiments
+}: {
+  improvements: ApiResult<ImprovementRecord[]>;
+  experiments: ApiResult<ExperimentRecord[]>;
+}) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const recentImprovements = improvements.data.slice(0, 6);
+  const recentExperiments = experiments.data.slice(0, 6);
+  const script = `
+(() => {
+  const root = document.querySelector("[data-improvement-experiment-review]");
+  if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const result = root.querySelector("[data-experiment-proposal-result]");
+  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const show = (state, message, payload) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = state;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(title, body);
+    if (payload) {
+      const details = document.createElement("dl");
+      details.setAttribute("data-experiment-proposal-status", "");
+      [
+        ["experiment", payload.id],
+        ["status", payload.status],
+        ["improvement", payload.improvement_item_id || "not linked"],
+        ["execution", "metadata only"]
+      ].forEach(([label, detail]) => {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        const description = document.createElement("dd");
+        description.textContent = detail || "not returned";
+        details.append(term, description);
+      });
+      result.appendChild(details);
+    }
+  };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+    return payload;
+  };
+  root.querySelector("[data-experiment-proposal-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const improvementId = value("experiment_improvement_id");
+    if (!improvementId) {
+      show("No improvement selected", "Create or select an improvement item before proposing experiment metadata.");
+      return;
+    }
+    try {
+      const payload = await postJson("/experiments", {
+        improvement_item_id: improvementId,
+        status: "planned",
+        metrics_json: {
+          proposed_success_metric: value("experiment_success_metric") || "manual review required"
+        },
+        artifacts_json: {},
+        metadata_json: {
+          created_from: "improvement_experiment_review",
+          proposal_scope: value("experiment_scope") || "review only",
+          execution_model: "not_started",
+          autonomous_method_change: false
+        },
+        actor_id: "local-owner"
+      });
+      show("Experiment proposal recorded", "IGY6 created planned experiment metadata only. No runner, MLflow/Optuna execution, or production method change ran.", payload);
+    } catch (error) {
+      show("Experiment proposal failed", String(error));
+    }
+  });
+})();
+`;
+
+  return (
+    <section
+      className="guidedManualText improvementExperimentReview"
+      data-improvement-experiment-review
+      data-api-base-url={browserApiBaseUrl}
+    >
+      <div className="guidedManualNotice">
+        <strong>Improvement and experiment review</strong>
+        <span>Review proposed improvements and planned experiment metadata. This is controlled review only; no autonomous method changes, MLflow/Optuna run, or Phoenix trace workflow is triggered here.</span>
+      </div>
+      {[improvements.error, experiments.error].filter(Boolean).length > 0 ? (
+        <p className="errorText">Some improvement or experiment endpoints returned errors.</p>
+      ) : null}
+      <section className="split">
+        <div>
+          <div className="subHeader"><h3><HelpHeading term="improvementItem">Improvement Items</HelpHeading></h3></div>
+          <div className="stack">
+            {recentImprovements.map((item) => (
+              <article className="item evidenceItem" key={item.id} data-improvement-review-item>
+                <div>
+                  <strong>{item.target_area}</strong>
+                  <span>{excerpt(item.objective, 140)}</span>
+                  <span>proposed by {item.proposed_by_actor_id}</span>
+                </div>
+                <div>
+                  <StatusPill state={item.status} />
+                  <span>{item.priority}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+          {recentImprovements.length === 0 ? <EmptyState label="No improvement items recorded yet." /> : null}
+        </div>
+        <div>
+          <div className="subHeader"><h3><HelpHeading term="experimentRun">Experiment Records</HelpHeading></h3></div>
+          <div className="stack">
+            {recentExperiments.map((experiment) => (
+              <article className="item evidenceItem" key={experiment.id} data-experiment-review-item>
+                <div>
+                  <strong>{experiment.status}</strong>
+                  <span>Improvement: {experiment.improvement_item_id ?? "not linked"}</span>
+                  <span>MLflow: {experiment.mlflow_run_id ?? "not executed"}</span>
+                  <span>Optuna: {experiment.optuna_study_name ?? "not executed"}</span>
+                </div>
+                <div>
+                  <StatusPill state="review-only" />
+                  <span>{formatDate(experiment.created_at)}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+          {recentExperiments.length === 0 ? <EmptyState label="No experiment records recorded yet." /> : null}
+        </div>
+      </section>
+      <form className="guidedManualForm" data-experiment-proposal-form>
+        <label>
+          <span>Improvement item</span>
+          <select name="experiment_improvement_id" disabled={recentImprovements.length === 0}>
+            {recentImprovements.map((item) => (
+              <option key={item.id} value={item.id}>{item.target_area} · {item.id}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Review scope</span>
+          <textarea name="experiment_scope" rows={2} placeholder="Describe the bounded comparison or review question. No runner starts from this form." />
+        </label>
+        <label>
+          <span>Success metric</span>
+          <input name="experiment_success_metric" placeholder="Example: fewer incomplete evidence answers after manual review" />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit" disabled={recentImprovements.length === 0}>Record planned experiment metadata</button>
+          <span>{recentImprovements.length > 0 ? "Creates a planned experiment record only." : "Create or receive an improvement item before proposing an experiment record."}</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-experiment-proposal-result>
+        <strong>{recentExperiments.length > 0 ? "Experiment metadata exists" : "No experiment proposal selected"}</strong>
+        <span>{recentExperiments.length > 0 ? "Recent records are listed above for review." : "Use this only to record metadata for later review."}</span>
+      </div>
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 function SourceEvidenceHistory({
   sources,
   collectionRuns,
@@ -2999,6 +3181,7 @@ export default async function Home() {
 	    feedback,
 	    outcomes,
 	    improvements,
+	    experiments,
 	    reports,
     auditEvents,
     envSettings,
@@ -3023,6 +3206,7 @@ export default async function Home() {
 	    getJson<FeedbackRecord[]>("/feedback", []),
 	    getJson<OutcomeRecord[]>("/outcomes", []),
 	    getJson<ImprovementRecord[]>("/improvements", []),
+	    getJson<ExperimentRecord[]>("/experiments", []),
 	    getJson<ReportRecord[]>("/reports", []),
     getJson<AuditEventRecord[]>("/audit-events", []),
     getJson<EnvSettingsResponse>("/settings/env", {
@@ -3541,7 +3725,7 @@ export default async function Home() {
                 <div><StatusPill state={graphSchema.error ? "error" : "ok"} /></div>
               </article>
             </section>
-            <section className="quad analysisGrid" id="analysis-panel">
+	            <section className="quad analysisGrid" id="analysis-panel">
               <div>
                 <div className="subHeader"><h3><HelpHeading term="pattern">Patterns</HelpHeading></h3>{patterns.error ? <span className="errorText">{patterns.error}</span> : null}</div>
                 <div className="stack">
@@ -3593,8 +3777,9 @@ export default async function Home() {
                 </div>
                 {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
               </div>
-            </section>
-            <section className="panelInset" id="data-search">
+	            </section>
+	            <ImprovementExperimentReview improvements={improvements} experiments={experiments} />
+	            <section className="panelInset" id="data-search">
               <h3>Search Your Data</h3>
               <p>Use Assistant for semantic retrieval now. Filter targets include sources, uploads, evidence, memory, and analysis records. Example question: "What did I upload today?"</p>
               <label className="inlineAction" htmlFor="tab-results">Open Results search</label>
