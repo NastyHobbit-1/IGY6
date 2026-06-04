@@ -154,6 +154,7 @@ type FeedbackRecord = {
   label: string;
   actor_id: string;
   note: string | null;
+  metadata_json?: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -163,7 +164,20 @@ type OutcomeRecord = {
   target_id: string;
   outcome_status: string;
   summary: string | null;
+  metadata_json?: Record<string, unknown> | null;
   created_at: string;
+};
+
+type ImprovementRecord = {
+  id: string;
+  target_area: string;
+  status: string;
+  objective: string;
+  proposed_by_actor_id: string;
+  priority: string;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
 };
 
 type ReportRecord = {
@@ -2210,13 +2224,15 @@ function EvidenceFeedbackWorkflow({
   reports,
   workItems,
   feedback,
-  outcomes
+  outcomes,
+  improvements
 }: {
   evidenceItems: ApiResult<EvidenceItemRecord[]>;
   reports: ApiResult<ReportRecord[]>;
   workItems: ApiResult<WorkItemRecord[]>;
   feedback: ApiResult<FeedbackRecord[]>;
   outcomes: ApiResult<OutcomeRecord[]>;
+  improvements: ApiResult<ImprovementRecord[]>;
 }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const feedbackTargets = [
@@ -2249,21 +2265,64 @@ function EvidenceFeedbackWorkflow({
     }))
   ];
   const defaultEvidenceId = evidenceItems.data[0]?.id ?? "";
+  const improvementFeedbackLabels = new Set(["wrong", "not_useful", "incomplete", "rejected"]);
+  const improvementOutcomeStatuses = new Set(["wrong", "not_useful", "partial", "inconclusive"]);
+  const feedbackSignals = feedback.data.filter((event) => event.target_type !== "source" && improvementFeedbackLabels.has(event.label));
+  const outcomeSignals = outcomes.data.filter((outcome) => improvementOutcomeStatuses.has(outcome.outcome_status));
+  const reviewSignals = [
+    ...feedbackSignals.slice(0, 6).map((event) => ({
+      kind: "feedback",
+      id: event.id,
+      targetType: event.target_type,
+      targetId: event.target_id,
+      label: event.label,
+      note: event.note ?? "",
+      existingImprovement: improvements.data.find((item) => item.metadata_json?.feedback_id === event.id)
+    })),
+    ...outcomeSignals.slice(0, 6).map((outcome) => ({
+      kind: "outcome",
+      id: outcome.id,
+      targetType: outcome.target_type,
+      targetId: outcome.target_id,
+      label: outcome.outcome_status,
+      note: outcome.summary ?? "",
+      existingImprovement: improvements.data.find((item) => item.metadata_json?.outcome_id === outcome.id)
+    }))
+  ];
   const script = `
 (() => {
   const root = document.querySelector("[data-evidence-feedback-workflow]");
   if (!root) return;
   const apiBaseUrl = root.getAttribute("data-api-base-url");
-  const result = root.querySelector("[data-evidence-feedback-result]");
-  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
-  const selected = (name) => {
+	  const result = root.querySelector("[data-evidence-feedback-result]");
+	  const improvementResult = root.querySelector("[data-improvement-review-result]");
+	  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+	  const selected = (name) => {
     const option = root.querySelector("[name='" + name + "']")?.selectedOptions?.[0];
     return {
       id: option?.value || "",
       type: option?.getAttribute("data-target-type") || ""
-    };
-  };
-  const show = (state, message, payload) => {
+	    };
+	  };
+	  const selectedSignal = () => {
+	    const option = root.querySelector("[name='improvement_signal']")?.selectedOptions?.[0];
+	    return {
+	      id: option?.value || "",
+	      kind: option?.getAttribute("data-signal-kind") || "",
+	      targetType: option?.getAttribute("data-target-type") || "",
+	      targetId: option?.getAttribute("data-target-id") || "",
+	      label: option?.getAttribute("data-signal-label") || ""
+	    };
+	  };
+	  const targetAreaFor = (targetType) => {
+	    if (targetType === "document") return "parsing";
+	    if (targetType === "evidence_item") return "retrieval";
+	    if (targetType === "prediction") return "prediction";
+	    if (targetType === "report") return "reporting";
+	    if (targetType === "work_item") return "safety";
+	    return "reasoning";
+	  };
+	  const show = (state, message, payload) => {
     if (!result) return;
     result.innerHTML = "";
     const title = document.createElement("strong");
@@ -2286,8 +2345,34 @@ function EvidenceFeedbackWorkflow({
         details.append(term, description);
       });
       result.appendChild(details);
-    }
-  };
+	    }
+	  };
+	  const showImprovement = (state, message, payload) => {
+	    if (!improvementResult) return;
+	    improvementResult.innerHTML = "";
+	    const title = document.createElement("strong");
+	    title.textContent = state;
+	    const body = document.createElement("span");
+	    body.textContent = message;
+	    improvementResult.append(title, body);
+	    if (payload) {
+	      const details = document.createElement("dl");
+	      details.setAttribute("data-improvement-review-status", "");
+	      [
+	        ["improvement", payload.id],
+	        ["target area", payload.target_area],
+	        ["status", payload.status],
+	        ["priority", payload.priority]
+	      ].forEach(([label, detail]) => {
+	        const term = document.createElement("dt");
+	        term.textContent = label;
+	        const description = document.createElement("dd");
+	        description.textContent = detail || "not returned";
+	        details.append(term, description);
+	      });
+	      improvementResult.appendChild(details);
+	    }
+	  };
   const postJson = async (path, body) => {
     const response = await fetch(apiBaseUrl + path, {
       method: "POST",
@@ -2314,7 +2399,7 @@ function EvidenceFeedbackWorkflow({
       show("Feedback failed", String(error));
     }
   });
-  root.querySelector("[data-outcome-form]")?.addEventListener("submit", async (event) => {
+	  root.querySelector("[data-outcome-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const target = selected("outcome_target");
     const evidenceIds = value("outcome_evidence_ids")
@@ -2332,11 +2417,39 @@ function EvidenceFeedbackWorkflow({
       });
       show("Outcome recorded", "IGY6 persisted the outcome and updated the supported target.", payload);
     } catch (error) {
-      show("Outcome failed", String(error));
-    }
-  });
-})();
-`;
+	      show("Outcome failed", String(error));
+	    }
+	  });
+	  root.querySelector("[data-improvement-review-form]")?.addEventListener("submit", async (event) => {
+	    event.preventDefault();
+	    const signal = selectedSignal();
+	    if (!signal.id) {
+	      showImprovement("No review signal", "Record weak feedback or an outcome before creating an improvement proposal.");
+	      return;
+	    }
+	    try {
+	      const payload = await postJson("/improvements", {
+	        target_area: targetAreaFor(signal.targetType),
+	        objective: value("improvement_objective") || ("Review " + signal.kind + " " + signal.label + " for " + signal.targetType + " " + signal.targetId + "."),
+	        priority: value("improvement_priority") || "normal",
+	        proposed_by_actor_id: "local-owner",
+	        metadata_json: {
+	          created_from: "results_improvement_review",
+	          signal_kind: signal.kind,
+	          signal_label: signal.label,
+	          target_type: signal.targetType,
+	          target_id: signal.targetId,
+	          feedback_id: signal.kind === "feedback" ? signal.id : null,
+	          outcome_id: signal.kind === "outcome" ? signal.id : null
+	        }
+	      });
+	      showImprovement("Improvement proposed", "IGY6 created review metadata only. No method changed and no experiment ran.", payload);
+	    } catch (error) {
+	      showImprovement("Improvement proposal failed", String(error));
+	    }
+	  });
+	})();
+	`;
 
   return (
     <section
@@ -2411,12 +2524,74 @@ function EvidenceFeedbackWorkflow({
           <span>{outcomeTargets.length > 0 ? "Outcomes are only offered for API-supported targets." : "No supported report or work item target is available yet."}</span>
         </div>
       </form>
-      <div className="guidedManualResult" data-evidence-feedback-result>
-        <strong>{feedback.data.length + outcomes.data.length > 0 ? "Review records exist" : "No review record selected"}</strong>
-        <span>{feedback.data.length + outcomes.data.length > 0 ? "Recent feedback and outcomes remain visible in Safety & Audit." : "Record feedback after reviewing retrieved evidence, or record an outcome when a supported target exists."}</span>
-      </div>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
-    </section>
+	      <div className="guidedManualResult" data-evidence-feedback-result>
+	        <strong>{feedback.data.length + outcomes.data.length > 0 ? "Review records exist" : "No review record selected"}</strong>
+	        <span>{feedback.data.length + outcomes.data.length > 0 ? "Recent feedback and outcomes remain visible in Safety & Audit." : "Record feedback after reviewing retrieved evidence, or record an outcome when a supported target exists."}</span>
+	      </div>
+	      <section className="improvementReview" data-improvement-review>
+	        <div className="guidedManualNotice">
+	          <strong>Improvement review</strong>
+	          <span>Weak feedback and unresolved outcomes can become proposed improvement items. This is review metadata only; IGY6 does not change methods or run experiments here.</span>
+	        </div>
+	        <div className="stack">
+	          {reviewSignals.slice(0, 6).map((signal) => (
+	            <article className="item evidenceItem" key={`${signal.kind}:${signal.id}`} data-improvement-signal>
+	              <div>
+	                <strong>{signal.kind} · {signal.label}</strong>
+	                <span>{signal.targetType} {signal.targetId}</span>
+	                <span>{signal.note || "No note recorded."}</span>
+	              </div>
+	              <div>
+	                <StatusPill state={signal.existingImprovement ? "improvement-exists" : "needs-review"} />
+	                <span>{signal.existingImprovement?.id ?? "No linked improvement item yet"}</span>
+	              </div>
+	            </article>
+	          ))}
+	        </div>
+	        {reviewSignals.length === 0 ? <EmptyState label="No weak feedback or unresolved outcome signals are available yet." /> : null}
+	        <form className="guidedManualForm" data-improvement-review-form>
+	          <label>
+	            <span>Review signal</span>
+	            <select name="improvement_signal" disabled={reviewSignals.length === 0}>
+	              {reviewSignals.map((signal) => (
+	                <option
+	                  key={`${signal.kind}:${signal.id}`}
+	                  value={signal.id}
+	                  data-signal-kind={signal.kind}
+	                  data-target-type={signal.targetType}
+	                  data-target-id={signal.targetId}
+	                  data-signal-label={signal.label}
+	                >
+	                  {signal.kind} {signal.label} · {signal.targetType} {signal.targetId}
+	                </option>
+	              ))}
+	            </select>
+	          </label>
+	          <label>
+	            <span>Improvement objective</span>
+	            <textarea name="improvement_objective" rows={2} placeholder="Review why this feedback/outcome was weak and define what should improve." />
+	          </label>
+	          <label>
+	            <span>Priority</span>
+	            <select name="improvement_priority" defaultValue="normal">
+	              <option value="low">low</option>
+	              <option value="normal">normal</option>
+	              <option value="high">high</option>
+	              <option value="urgent">urgent</option>
+	            </select>
+	          </label>
+	          <div className="guidedManualActions">
+	            <button type="submit" disabled={reviewSignals.length === 0}>Propose improvement item</button>
+	            <span>{reviewSignals.length > 0 ? "Uses existing /improvements persistence." : "Record a weak signal before proposing improvement work."}</span>
+	          </div>
+	        </form>
+	        <div className="guidedManualResult" data-improvement-review-result>
+	          <strong>{improvements.data.length > 0 ? "Improvement items exist" : "No improvement item selected"}</strong>
+	          <span>{improvements.data.length > 0 ? "Existing improvement records are listed in Method Review." : "Create a proposal only from a real review signal."}</span>
+	        </div>
+	      </section>
+	      <script dangerouslySetInnerHTML={{ __html: script }} />
+	    </section>
   );
 }
 
@@ -2776,11 +2951,12 @@ export default async function Home() {
     hypotheses,
     predictions,
     recommendations,
-    workItems,
-    approvals,
-    feedback,
-    outcomes,
-    reports,
+	    workItems,
+	    approvals,
+	    feedback,
+	    outcomes,
+	    improvements,
+	    reports,
     auditEvents,
     envSettings,
     agentCapabilities
@@ -2799,11 +2975,12 @@ export default async function Home() {
     getJson<HypothesisRecord[]>("/analysis/hypotheses", []),
     getJson<PredictionRecord[]>("/analysis/predictions", []),
     getJson<RecommendationRecord[]>("/analysis/recommendations", []),
-    getJson<WorkItemRecord[]>("/work-items", []),
-    getJson<ApprovalRecord[]>("/approvals", []),
-    getJson<FeedbackRecord[]>("/feedback", []),
-    getJson<OutcomeRecord[]>("/outcomes", []),
-    getJson<ReportRecord[]>("/reports", []),
+	    getJson<WorkItemRecord[]>("/work-items", []),
+	    getJson<ApprovalRecord[]>("/approvals", []),
+	    getJson<FeedbackRecord[]>("/feedback", []),
+	    getJson<OutcomeRecord[]>("/outcomes", []),
+	    getJson<ImprovementRecord[]>("/improvements", []),
+	    getJson<ReportRecord[]>("/reports", []),
     getJson<AuditEventRecord[]>("/audit-events", []),
     getJson<EnvSettingsResponse>("/settings/env", {
       file_status: {
@@ -3556,7 +3733,7 @@ export default async function Home() {
             <div className="fieldGuide">
               <article><strong>Report reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Project: "Summarize the latest verification notes."</span></article>
             </div>
-            <EvidenceFeedbackWorkflow evidenceItems={evidenceItems} reports={reports} workItems={workItems} feedback={feedback} outcomes={outcomes} />
+            <EvidenceFeedbackWorkflow evidenceItems={evidenceItems} reports={reports} workItems={workItems} feedback={feedback} outcomes={outcomes} improvements={improvements} />
             <BasicReportWorkflow reports={reports} evidenceCount={evidenceItems.data.length} documentCount={documents.data.length} chunkCount={chunks.data.length} />
             <section className="quad analysisGrid">
               <div>
