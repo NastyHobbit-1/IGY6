@@ -1424,6 +1424,7 @@ function AgentCommandPanel({
 	  const executeButton = root.querySelector("[data-agent-execute]");
 	  const approvalButton = root.querySelector("[data-agent-request-approval]");
 	  const savePlanButton = root.querySelector("[data-agent-save-plan]");
+	  const evidenceButton = root.querySelector("[data-agent-check-evidence]");
 	  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
 	  const actionSelect = root.querySelector("[data-agent-action-select]");
 	  const approvalSelect = root.querySelector("[data-agent-approval-select]");
@@ -1436,6 +1437,7 @@ function AgentCommandPanel({
 	  const posturePanel = root.querySelector("[data-agent-understanding-posture]");
 	  const nextStepPanel = root.querySelector("[data-agent-understanding-next]");
 	  const plannerPanel = root.querySelector("[data-agent-intake-planner]");
+	  const evidencePanel = root.querySelector("[data-agent-planner-evidence]");
 	  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
 	  const approvalPayload = JSON.parse(root.querySelector("[data-agent-approvals-json]")?.textContent || "[]");
 	  let latestIntent = null;
@@ -1583,6 +1585,40 @@ function AgentCommandPanel({
 	    };
 	  };
 
+	  const evidenceLabel = (hit, index) => {
+	    const evidence = Array.isArray(hit.evidence_items) ? hit.evidence_items[0] : null;
+	    const parts = [];
+	    if (evidence?.id) parts.push("evidence " + evidence.id);
+	    if (hit.chunk?.id || hit.qdrant_payload?.chunk_id) parts.push("chunk " + (hit.chunk?.id || hit.qdrant_payload?.chunk_id));
+	    if (hit.document?.id || hit.qdrant_payload?.document_id) parts.push("document " + (hit.document?.id || hit.qdrant_payload?.document_id));
+	    if (hit.source?.id) parts.push("source " + hit.source.id);
+	    return parts.length ? parts.join(" | ") : "hit " + (index + 1);
+	  };
+
+	  const renderEvidenceSummary = (payload) => {
+	    const hits = Array.isArray(payload?.retrieval_context?.hits) ? payload.retrieval_context.hits : [];
+	    const labels = hits.slice(0, 5).map(evidenceLabel);
+	    const summary = {
+	      answer_status: payload?.answer_status || "unknown",
+	      retrieved_count: hits.length,
+	      labels,
+	      missing_evidence: hits.length === 0
+	    };
+	    if (evidencePanel) {
+	      evidencePanel.innerHTML = "";
+	      addPlannerRow(
+	        evidencePanel,
+	        hits.length > 0 ? "Evidence check" : "Missing evidence",
+	        hits.length > 0
+	          ? "Retrieved " + hits.length + " relevant local evidence hit(s)."
+	          : "No relevant local evidence was retrieved. Add/process data or narrow the request before proceeding.",
+	        hits.length > 0 ? "retrieved" : "missing"
+	      );
+	      labels.forEach((label) => addPlannerRow(evidencePanel, "Evidence label", label, "safe-id"));
+	    }
+	    return summary;
+	  };
+
 	  const addPlannerRow = (parent, label, value, state) => {
 	    const item = document.createElement("article");
 	    item.className = "agentPlannerCard";
@@ -1639,6 +1675,7 @@ function AgentCommandPanel({
     executeButton.disabled = true;
     approvalButton.disabled = true;
     if (savePlanButton) savePlanButton.disabled = !latestIntent?.request_understanding;
+    if (evidenceButton) evidenceButton.disabled = !latestIntent?.request_understanding;
     executeApprovedButton.disabled = true;
     if (!latestIntent?.proposed_action || latestIntent.missing_parameters?.length) return;
     const capability = capabilityFor(latestIntent.proposed_action);
@@ -1740,6 +1777,35 @@ function AgentCommandPanel({
       }
     } catch (error) {
       showJson(resultPanel, "Task plan save error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  evidenceButton?.addEventListener("click", async () => {
+    try {
+      if (!latestIntent?.request_understanding) return;
+      evidenceButton.disabled = true;
+      if (evidencePanel) evidencePanel.textContent = "Checking local evidence...";
+      const response = await fetch("/api/chat/retrieval-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: commandInput?.value || latestIntent.request_understanding.wants || "",
+          limit: 5
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        showJson(resultPanel, "Evidence check failed", { detail: payload?.detail || response.statusText });
+        if (evidencePanel) evidencePanel.textContent = "Evidence check failed. No plan action was taken.";
+        return;
+      }
+      const summary = renderEvidenceSummary(payload);
+      showJson(resultPanel, "Evidence check summary", summary);
+    } catch (error) {
+      showJson(resultPanel, "Evidence check error", { detail: error instanceof Error ? error.message : "Unknown error" });
+      if (evidencePanel) evidencePanel.textContent = "Evidence check failed. No plan action was taken.";
+    } finally {
+      evidenceButton.disabled = false;
     }
   });
 
@@ -1899,6 +1965,7 @@ function AgentCommandPanel({
 
       <section className="agentCommandActions">
         <button type="button" data-agent-preview>Preview action</button>
+        <button type="button" data-agent-check-evidence disabled>Check evidence</button>
         <button type="button" data-agent-save-plan disabled>Save task plan</button>
         <button type="button" data-agent-execute disabled>Run safe action</button>
         <button type="button" data-agent-request-approval disabled>Request approval</button>
@@ -1924,6 +1991,14 @@ function AgentCommandPanel({
 	          <strong>Planner</strong>
 	          <span>Preview a request to see the next safe step.</span>
 	          <em>waiting</em>
+	        </article>
+	      </section>
+
+	      <section className="agentPlanner" data-agent-planner-evidence aria-label="Agent planner evidence check">
+	        <article className="agentPlannerCard">
+	          <strong>Evidence check</strong>
+	          <span>Preview a request, then check whether local evidence appears relevant before work or action proceeds.</span>
+	          <em>not-checked</em>
 	        </article>
 	      </section>
 
