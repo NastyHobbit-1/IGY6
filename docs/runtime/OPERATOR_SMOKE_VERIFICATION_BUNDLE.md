@@ -20,6 +20,9 @@ scripts/operator-smoke-check.sh --help
 scripts/operator-smoke-check.sh --check
 scripts/operator-smoke-check.sh --run
 scripts/operator-smoke-check.sh --run --record
+scripts/operator-smoke-check.sh --list-results
+scripts/operator-smoke-check.sh --latest-result
+scripts/operator-smoke-check.sh --show-result .igy6-local/smoke-results/operator-smoke-YYYYMMDDTHHMMSSZ.json
 ```
 
 `--check` verifies prerequisites and configuration only. It checks required
@@ -64,6 +67,32 @@ Result files intentionally do not record `.env` contents, secret values, raw
 uploaded text, raw runtime/private data, `IGY6_DATA_ROOT` paths or contents,
 database rows, Docker socket credentials, auth tokens, or full logs with
 potentially sensitive output.
+
+To inspect recorded results without opening raw JSON manually:
+
+```bash
+scripts/operator-smoke-check.sh --list-results
+scripts/operator-smoke-check.sh --latest-result
+scripts/operator-smoke-check.sh --show-result .igy6-local/smoke-results/operator-smoke-YYYYMMDDTHHMMSSZ.json
+```
+
+`--list-results` prints matching result filenames from
+`.igy6-local/smoke-results/` in oldest-first order. It handles a missing or
+empty result directory with an informational message.
+
+`--latest-result` prints a safe human-readable summary of the newest result.
+`--show-result PATH` prints the same summary for a specific
+`operator-smoke-*.json` file, but only when the file is under
+`.igy6-local/smoke-results/`.
+
+The viewer uses `python3` for robust JSON parsing. It reports malformed JSON,
+missing files, missing fields, or absent result files clearly. Summary output is
+limited to safe metadata: file name, UTC timestamp, branch, HEAD, mode, overall
+status, step pass/fail counts, API/web HTTP status summaries, endpoint and
+retrieval counts, retrieval status, stack started/stopped booleans, and failure
+reason when present. It does not print raw JSON, `.env` contents, secrets, raw
+uploaded text, runtime/private data, `IGY6_DATA_ROOT` paths or contents, raw
+database rows, Docker credentials, auth tokens, or full logs.
 
 ## Docker Permission Preflight
 

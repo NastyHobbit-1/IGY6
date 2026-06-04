@@ -44,6 +44,9 @@ Usage: scripts/operator-smoke-check.sh --check
        scripts/operator-smoke-check.sh --run
        scripts/operator-smoke-check.sh --run --record
        scripts/operator-smoke-check.sh --run-record
+       scripts/operator-smoke-check.sh --list-results
+       scripts/operator-smoke-check.sh --latest-result
+       scripts/operator-smoke-check.sh --show-result PATH
        scripts/operator-smoke-check.sh --help
 
 Modes:
@@ -54,6 +57,14 @@ Modes:
            .igy6-local/smoke-results/.
   --run-record
            Equivalent to --run --record.
+  --list-results
+           List recorded smoke result files, oldest first. Does not print raw
+           JSON.
+  --latest-result
+           Print a safe summary of the newest recorded smoke result.
+  --show-result PATH
+           Print a safe summary of a specific result file under
+           .igy6-local/smoke-results/.
   --help   Show this help.
 
 Safety:
@@ -66,6 +77,7 @@ Safety:
   - Does not change Docker permissions, user groups, or system services.
   - Result recording is optional and stores only safe summaries, never .env
     values, raw uploaded text, runtime/private data, or full logs.
+  - Result viewing is read-only and prints summaries only, never raw JSON.
 EOF
 }
 
@@ -104,6 +116,154 @@ smoke_token_hash() {
   python3 - <<'PY'
 import hashlib
 print(hashlib.sha256(b"blue-raven-117").hexdigest())
+PY
+}
+
+require_python_for_viewer() {
+  if command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'FAIL python3 is required to parse smoke result JSON safely\n' >&2
+  return 1
+}
+
+list_results() {
+  cd "${REPO_ROOT}"
+  if [[ ! -d "${RESULT_DIR}" ]]; then
+    info "no smoke result directory found at .igy6-local/smoke-results"
+    return 0
+  fi
+  if ! find "${RESULT_DIR}" -maxdepth 1 -type f -name 'operator-smoke-*.json' -print -quit | grep -q .; then
+    info "no smoke result files found in .igy6-local/smoke-results"
+    return 0
+  fi
+  info "smoke result files in .igy6-local/smoke-results, oldest first:"
+  find "${RESULT_DIR}" -maxdepth 1 -type f -name 'operator-smoke-*.json' -printf '%f\n' | sort
+}
+
+latest_result_path() {
+  if [[ ! -d "${RESULT_DIR}" ]]; then
+    return 1
+  fi
+  find "${RESULT_DIR}" -maxdepth 1 -type f -name 'operator-smoke-*.json' | sort | tail -1
+}
+
+show_latest_result() {
+  local latest
+  latest="$(latest_result_path || true)"
+  if [[ -z "${latest}" ]]; then
+    info "no smoke result files found in .igy6-local/smoke-results"
+    return 0
+  fi
+  show_result "${latest}"
+}
+
+show_result() {
+  local requested_path="$1"
+  if ! require_python_for_viewer; then
+    return 1
+  fi
+  REPO_ROOT="${REPO_ROOT}" RESULT_DIR="${RESULT_DIR}" REQUESTED_RESULT_PATH="${requested_path}" python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ["REPO_ROOT"]).resolve()
+result_dir = Path(os.environ["RESULT_DIR"]).resolve()
+requested = Path(os.environ["REQUESTED_RESULT_PATH"])
+path = (repo_root / requested).resolve() if not requested.is_absolute() else requested.resolve()
+
+try:
+    path.relative_to(result_dir)
+except ValueError:
+    print("FAIL result path must be under .igy6-local/smoke-results", file=sys.stderr)
+    raise SystemExit(1)
+
+if not path.is_file():
+    print("FAIL result path is not a file", file=sys.stderr)
+    raise SystemExit(1)
+if path.suffix != ".json" or not path.name.startswith("operator-smoke-"):
+    print("FAIL result path must be an operator-smoke-*.json file", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+except json.JSONDecodeError as exc:
+    print(f"FAIL malformed smoke result JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+except OSError as exc:
+    print(f"FAIL could not read smoke result: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not isinstance(payload, dict):
+    print("FAIL smoke result JSON must be an object", file=sys.stderr)
+    raise SystemExit(1)
+
+def scalar(value):
+    if value is None or value == "":
+        return "(missing)"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, str)):
+        text = str(value).replace("\n", " ").replace("\r", " ").strip()
+        return text[:200] if text else "(missing)"
+    return "(not scalar)"
+
+def mapping(name):
+    value = payload.get(name)
+    return value if isinstance(value, dict) else {}
+
+def list_value(name):
+    value = payload.get(name)
+    return value if isinstance(value, list) else []
+
+counts = mapping("counts")
+api = mapping("api_status")
+web = mapping("web_status")
+retrieval = mapping("retrieval_summary")
+steps = [step for step in list_value("steps") if isinstance(step, dict)]
+step_total = len(steps)
+step_pass = sum(1 for step in steps if step.get("status") == "pass")
+step_fail = sum(1 for step in steps if step.get("status") == "fail")
+step_other = step_total - step_pass - step_fail
+
+print("Smoke Result Summary")
+try:
+    display_path = path.relative_to(repo_root)
+except ValueError:
+    display_path = path
+print(f"file: {display_path}")
+print(f"created_at_utc: {scalar(payload.get('created_at_utc'))}")
+print(f"repo_branch: {scalar(payload.get('repo_branch'))}")
+print(f"repo_head: {scalar(payload.get('repo_head'))}")
+print(f"mode: {scalar(payload.get('mode'))}")
+print(f"overall_status: {scalar(payload.get('overall_status'))}")
+print(f"steps: total={step_total} pass={step_pass} fail={step_fail} other={step_other}")
+print(
+    "api_status: "
+    f"live={scalar(api.get('live_http_status'))} "
+    f"ready={scalar(api.get('ready_http_status'))} "
+    f"retrieval={scalar(api.get('retrieval_preview_http_status'))}"
+)
+print(f"web_status: root={scalar(web.get('root_http_status'))}")
+print(
+    "counts: "
+    f"artifacts={scalar(counts.get('artifacts'))} "
+    f"documents={scalar(counts.get('documents'))} "
+    f"chunks={scalar(counts.get('chunks'))} "
+    f"evidence_items={scalar(counts.get('evidence_items'))} "
+    f"retrieval_items={scalar(counts.get('retrieval_items'))}"
+)
+print(f"retrieval_summary: answer_status={scalar(retrieval.get('answer_status'))}")
+print(f"stack_started_by_script: {scalar(payload.get('stack_started_by_script'))}")
+print(f"stack_stopped_by_script: {scalar(payload.get('stack_stopped_by_script'))}")
+failure_reason = payload.get("failure_reason")
+if failure_reason:
+    print(f"failure_reason: {scalar(failure_reason)}")
+else:
+    print("failure_reason: (none)")
 PY
 }
 
@@ -663,6 +823,28 @@ case "$1" in
     MODE="run"
     RECORD_RESULTS=1
     ;;
+  --list-results)
+    if [[ "$#" -ne 1 ]]; then
+      usage
+      exit 2
+    fi
+    MODE="list-results"
+    ;;
+  --latest-result)
+    if [[ "$#" -ne 1 ]]; then
+      usage
+      exit 2
+    fi
+    MODE="latest-result"
+    ;;
+  --show-result)
+    if [[ "$#" -ne 2 ]]; then
+      usage
+      exit 2
+    fi
+    MODE="show-result"
+    RESULT_FILE="$2"
+    ;;
   *)
     usage
     exit 2
@@ -677,5 +859,14 @@ case "${MODE}" in
     ;;
   run)
     run_full_mode
+    ;;
+  list-results)
+    list_results
+    ;;
+  latest-result)
+    show_latest_result
+    ;;
+  show-result)
+    show_result "${RESULT_FILE}"
     ;;
 esac
