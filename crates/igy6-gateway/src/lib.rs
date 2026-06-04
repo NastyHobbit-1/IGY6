@@ -41,6 +41,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/agent/task-plans"),
     ("GET", "/agent/task-plans/{task_plan_id}"),
     ("POST", "/agent/task-plans"),
+    ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
     ("POST", "/agent/actions/"),
     ("POST", "/agent/actions/{action_name}/execute"),
     ("GET", "/analysis/hypotheses"),
@@ -387,6 +388,12 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(review_pattern(&pattern_id, &request.body, database_url))
             } else if let Some(approval_id) = approval_decision_path(&request.path) {
                 action_route_response(decide_approval(&approval_id, &request.body, database_url))
+            } else if let Some(task_plan_id) = agent_task_plan_work_item_path(&request.path) {
+                action_route_response(create_work_item_from_agent_task_plan(
+                    &task_plan_id,
+                    &request.body,
+                    database_url,
+                ))
             } else if let Some(report_id) = report_render_path(&request.path) {
                 action_route_response(render_report(&report_id, &request.body, database_url))
             } else if let Some(report_id) = report_status_path(&request.path) {
@@ -2361,6 +2368,152 @@ fn get_agent_task_plan(
     } else {
         Ok(body)
     }
+}
+
+fn create_work_item_from_agent_task_plan(
+    task_plan_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let task_plan_id = validate_route_id(task_plan_id, "task_plan_id")?;
+    let payload = parse_agent_task_plan_work_item(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let task_plan = load_agent_task_plan_record(&mut transaction, &task_plan_id)?;
+    if matches!(
+        task_plan.status.as_str(),
+        "unsupported"
+            | "needs_clarification"
+            | "evidence_needed"
+            | "canceled"
+            | "converted_to_work"
+    ) {
+        return Err(GatewayError::Conflict(format!(
+            "Task plan status {} is not ready for work-item creation",
+            task_plan.status
+        )));
+    }
+    if task_plan.supported_state != "supported" {
+        return Err(GatewayError::Conflict(format!(
+            "Task plan supported_state {} is not eligible for work-item creation",
+            task_plan.supported_state
+        )));
+    }
+    if task_plan.approval_required {
+        let Some(approval_id) = payload.approval_id.as_deref() else {
+            return Err(GatewayError::Forbidden(
+                "Approved agent_task_plan approval is required before creating work".to_string(),
+            ));
+        };
+        validate_agent_task_plan_approval(&mut transaction, &task_plan_id, approval_id)?;
+    }
+    let Some(plan_to_work) = task_plan
+        .metadata_json
+        .get("plan_to_work")
+        .and_then(Value::as_object)
+    else {
+        return Err(GatewayError::Conflict(
+            "Task plan does not include a supported plan_to_work specification".to_string(),
+        ));
+    };
+    let work_type = plan_to_work
+        .get("work_type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !is_supported_work_item_type(&work_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported work item type: {work_type}"
+        )));
+    }
+    let payload_json = plan_to_work
+        .get("payload_json")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let expected_output = plan_to_work
+        .get("expected_output")
+        .and_then(Value::as_str)
+        .unwrap_or(task_plan.next_safe_action.as_str())
+        .trim()
+        .to_string();
+    let intent = serde_json::json!({
+        "original_request": task_plan.user_request_summary,
+        "interpretation": format!("Persisted agent task plan {} categorized as {}", task_plan.id, task_plan.intent_category),
+        "proposed_work_type": work_type,
+        "expected_output": if expected_output.is_empty() { task_plan.next_safe_action.clone() } else { expected_output },
+        "safety_requirements": [
+            "Use existing supported work item types only.",
+            "Do not execute shell commands or user-provided argv.",
+            "Keep plan-to-work creation approval-gated when required."
+        ],
+        "assumptions": ["Persisted task plan has been reviewed enough to create a work item."],
+        "missing_information": [],
+        "sources_likely_used": task_plan.required_evidence
+    });
+    let mut work_payload_json = payload_json;
+    if let Value::Object(ref mut object) = work_payload_json {
+        object.insert(
+            "agent_task_plan_id".to_string(),
+            Value::String(task_plan.id.clone()),
+        );
+        object.insert("intent_verification".to_string(), intent.clone());
+    }
+    let work_item_id = generated_record_id("work");
+    transaction
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, $2, 'pending_intent_verification', $3, $4::jsonb, NULL)",
+            &[&work_item_id, &work_type, &payload.actor_id, &work_payload_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let work_audit_details = serde_json::json!({
+        "work_type": work_type,
+        "status": "pending_intent_verification",
+        "agent_task_plan_id": task_plan.id
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'intent_verification_required', 'work_item', $2, $3, $4::jsonb)",
+            &[&payload.actor_id, &work_item_id, &task_plan_id, &work_audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let plan_audit_details = serde_json::json!({
+        "work_item_id": work_item_id,
+        "work_type": work_type,
+        "previous_status": task_plan.status
+    });
+    transaction
+        .execute(
+            "UPDATE agent_task_plans SET status = 'converted_to_work', metadata_json = metadata_json || $1::jsonb, updated_at = now() WHERE id = $2",
+            &[&serde_json::json!({"work_item_id": work_item_id}), &task_plan_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent_task_plan.work_item_created', 'converted_to_work', 'agent_task_plan', $2, $3, $4::jsonb)",
+            &[&payload.actor_id, &task_plan_id, &work_item_id, &plan_audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, work_type, status, requested_by_actor_id, payload_json, error_message, created_at, updated_at FROM work_items WHERE id = $1) t",
+            &[&work_item_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
 }
 
 fn review_pattern(
@@ -5274,6 +5427,23 @@ struct AgentTaskPlanCreatePayload {
     metadata_json: Value,
 }
 
+struct AgentTaskPlanWorkItemPayload {
+    actor_id: String,
+    approval_id: Option<String>,
+}
+
+struct AgentTaskPlanRecord {
+    id: String,
+    user_request_summary: String,
+    intent_category: String,
+    status: String,
+    required_evidence: Vec<String>,
+    approval_required: bool,
+    supported_state: String,
+    next_safe_action: String,
+    metadata_json: Value,
+}
+
 struct WorkItemStatusPayload {
     status: String,
     actor_id: String,
@@ -6080,6 +6250,16 @@ fn parse_agent_task_plan_create(body: &str) -> Result<AgentTaskPlanCreatePayload
         next_safe_action,
         requested_by_actor_id,
         metadata_json,
+    })
+}
+
+fn parse_agent_task_plan_work_item(
+    body: &str,
+) -> Result<AgentTaskPlanWorkItemPayload, GatewayError> {
+    let object = parse_json_object(body, "Agent task plan work-item request body")?;
+    Ok(AgentTaskPlanWorkItemPayload {
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        approval_id: optional_nullable_string_field_with_max(&object, "approval_id", 128)?,
     })
 }
 
@@ -7609,6 +7789,69 @@ fn agent_task_plan_response_json(
         .map_err(|error| GatewayError::Database(error.to_string()))
 }
 
+fn load_agent_task_plan_record(
+    transaction: &mut postgres::Transaction<'_>,
+    task_plan_id: &str,
+) -> Result<AgentTaskPlanRecord, GatewayError> {
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT id, user_request_summary, intent_category, status, required_evidence, approval_required, supported_state, next_safe_action, metadata_json FROM agent_task_plans WHERE id = $1",
+            &[&task_plan_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::NotFound("Agent task plan not found".to_string()));
+    };
+    Ok(AgentTaskPlanRecord {
+        id: row.get(0),
+        user_request_summary: row.get(1),
+        intent_category: row.get(2),
+        status: row.get(3),
+        required_evidence: json_value_string_array(row.get(4), "required_evidence")?,
+        approval_required: row.get(5),
+        supported_state: row.get(6),
+        next_safe_action: row.get(7),
+        metadata_json: row.get(8),
+    })
+}
+
+fn validate_agent_task_plan_approval(
+    transaction: &mut postgres::Transaction<'_>,
+    task_plan_id: &str,
+    approval_id: &str,
+) -> Result<(), GatewayError> {
+    let approval_id = validate_route_id(approval_id, "approval_id")?;
+    let Some(row) = transaction
+        .query_opt(
+            "SELECT request_type, status, request_payload_json FROM approvals WHERE id = $1",
+            &[&approval_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    else {
+        return Err(GatewayError::Forbidden(
+            "Approved agent_task_plan approval was not found".to_string(),
+        ));
+    };
+    let request_type: String = row.get(0);
+    let status: String = row.get(1);
+    let request_payload_json: Value = row.get(2);
+    if request_type != "agent_task_plan" || status != "approved" {
+        return Err(GatewayError::Forbidden(
+            "Approval must be an approved agent_task_plan request".to_string(),
+        ));
+    }
+    let approved_task_plan_id = request_payload_json
+        .get("task_plan_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if approved_task_plan_id != task_plan_id {
+        return Err(GatewayError::Forbidden(
+            "Approval does not match this task plan".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn experiment_response_json(
     transaction: &mut postgres::Transaction<'_>,
     experiment_id: &str,
@@ -8732,6 +8975,10 @@ fn agent_task_plan_detail_path(path: &str) -> Option<String> {
         return None;
     }
     Some(percent_decode_path_segment(id))
+}
+
+fn agent_task_plan_work_item_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/agent/task-plans/", "/work-item")
 }
 
 fn pattern_review_path(path: &str) -> Option<String> {
@@ -9997,7 +10244,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -11280,6 +11527,20 @@ mod tests {
         assert_eq!(parsed.status, "evidence_needed");
         assert_eq!(parsed.proposed_steps.len(), 1);
         assert_eq!(parsed.required_evidence, vec!["build logs"]);
+
+        let transition = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/task-plans/taskplan-1/work-item",
+                r#"{"actor_id":"local-owner","approval_id":null}"#,
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(transition.status_code, 503);
+        assert!(!transition.proxied_to_fallback);
+        assert!(transition.body.contains("DATABASE_URL"));
     }
 
     #[test]
@@ -11305,6 +11566,23 @@ mod tests {
             assert_eq!(response.status_code, 422, "{body}");
             assert!(!response.proxied_to_fallback, "{body}");
         }
+
+        for body in ["[]", r#"{"actor_id":""}"#, r#"{"approval_id":[]}"#] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/agent/task-plans/taskplan-1/work-item", body),
+                None,
+                NO_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+
+        assert_eq!(
+            agent_task_plan_work_item_path("/agent/task-plans/taskplan-1/work-item"),
+            Some("taskplan-1".to_string())
+        );
+        assert!(agent_task_plan_work_item_path("/agent/task-plans/x/y/work-item").is_none());
     }
 
     #[test]
@@ -12153,6 +12431,7 @@ mod tests {
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/{task_plan_id}"),
             ("POST", "/agent/task-plans"),
+            ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
             ("POST", "/approvals"),

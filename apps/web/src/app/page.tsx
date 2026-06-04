@@ -1743,6 +1743,32 @@ function AgentCommandPanel({
     }
   });
 
+  root.querySelectorAll("[data-agent-plan-create-work]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const taskPlanId = button.getAttribute("data-task-plan-id");
+      if (!taskPlanId) return;
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/agent/task-plans/" + encodeURIComponent(taskPlanId) + "/work-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actor_id: "local-owner", approval_id: null })
+        });
+        const payload = await response.json();
+        showJson(resultPanel, response.ok ? "Work item created from plan" : "Plan-to-work blocked", payload);
+        if (statusPanel) {
+          statusPanel.textContent = response.ok
+            ? "Created a work item from the persisted task plan. It still requires the normal work queue safety flow."
+            : "Plan-to-work was blocked. No action was executed.";
+        }
+      } catch (error) {
+        showJson(resultPanel, "Plan-to-work error", { detail: error instanceof Error ? error.message : "Unknown error" });
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
   executeApprovedButton?.addEventListener("click", async () => {
     try {
       if (!latestIntent?.proposed_action || !latestIntent.approval_required || !approvalInput?.value?.trim()) return;
@@ -1909,13 +1935,32 @@ function AgentCommandPanel({
 	            <span>No task plans have been saved yet. Preview a request, then save the plan metadata if it should be remembered.</span>
 	            <em>empty</em>
 	          </article>
-	        ) : recentTaskPlans.map((plan) => (
-	          <article className="agentPlannerCard" key={plan.id} data-agent-task-plan-record>
-	            <strong>{plan.user_request_summary}</strong>
-	            <span>{plan.next_safe_action}</span>
-	            <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"}</em>
-	          </article>
-	        ))}
+	        ) : recentTaskPlans.map((plan) => {
+	          const planToWork = plan.metadata_json?.plan_to_work;
+	          const hasWorkSpec = Boolean(planToWork && typeof planToWork === "object" && "work_type" in planToWork);
+	          const eligibleForWork = hasWorkSpec
+	            && plan.supported_state === "supported"
+	            && !plan.approval_required
+	            && (plan.status === "proposed" || plan.status === "ready");
+	          const guidance = plan.approval_required
+	            ? "Approval is required before this plan can create work."
+	            : plan.supported_state !== "supported"
+	              ? "This plan is not supported for work creation yet."
+	              : hasWorkSpec
+	                ? "This plan includes a supported work spec."
+	                : "This plan has no supported work-item specification yet.";
+	          return (
+	            <article className="agentPlannerCard" key={plan.id} data-agent-task-plan-record>
+	              <strong>{plan.user_request_summary}</strong>
+	              <span>{plan.next_safe_action}</span>
+	              <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"}</em>
+	              <span>{guidance}</span>
+	              {eligibleForWork ? (
+	                <button type="button" data-agent-plan-create-work data-task-plan-id={plan.id}>Create work item</button>
+	              ) : null}
+	            </article>
+	          );
+	        })}
 	      </section>
 
       <details className="advancedPanel">
@@ -1936,7 +1981,7 @@ function AgentCommandPanel({
           <pre data-agent-intent>Agent intent preview appears here.</pre>
           <pre data-agent-result>Agent action result appears here.</pre>
         </section>
-        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/actions/:action/execute, /approvals.</p>
+        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
       </details>
 	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
 	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
