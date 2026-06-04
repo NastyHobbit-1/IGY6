@@ -136,6 +136,22 @@ type WorkItemRecord = {
   updated_at?: string | null;
 };
 
+type AgentTaskPlanRecord = {
+  id: string;
+  user_request_summary: string;
+  intent_category: string;
+  status: string;
+  proposed_steps?: string[];
+  required_evidence?: string[];
+  approval_required: boolean;
+  supported_state: string;
+  next_safe_action: string;
+  requested_by_actor_id: string;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
 type ApprovalRecord = {
   id: string;
   request_type: string;
@@ -1374,12 +1390,15 @@ function ChatRetrievalPreview() {
 
 function AgentCommandPanel({
   capabilities,
-  approvals
+  approvals,
+  taskPlans
 }: {
   capabilities: ApiResult<AgentCapabilitiesResponse>;
   approvals: ApiResult<ApprovalRecord[]>;
+  taskPlans: ApiResult<AgentTaskPlanRecord[]>;
 }) {
   const data = capabilities.data;
+  const recentTaskPlans = taskPlans.data.slice(0, 5);
   const stackActions = data.actions.filter((action) => action.script_backed);
   const approvedAgentApprovals = approvals.data.filter((approval) => approval.request_type === "agent_action" && approval.status === "approved");
   const pendingAgentApprovals = approvals.data.filter((approval) => approval.request_type === "agent_action" && approval.status === "pending");
@@ -1404,6 +1423,7 @@ function AgentCommandPanel({
 	  const previewButton = root.querySelector("[data-agent-preview]");
 	  const executeButton = root.querySelector("[data-agent-execute]");
 	  const approvalButton = root.querySelector("[data-agent-request-approval]");
+	  const savePlanButton = root.querySelector("[data-agent-save-plan]");
 	  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
 	  const actionSelect = root.querySelector("[data-agent-action-select]");
 	  const approvalSelect = root.querySelector("[data-agent-approval-select]");
@@ -1519,6 +1539,50 @@ function AgentCommandPanel({
 	    };
 	  };
 
+	  const planStatusFor = (understanding, intent) => {
+	    if (understanding.unsupported_or_unsafe) return "unsupported";
+	    if (understanding.clarification_needed) return "needs_clarification";
+	    if (understanding.approval_required || intent.approval_required) return "approval_required";
+	    if (understanding.evidence_required) return "evidence_needed";
+	    return "proposed";
+	  };
+
+	  const supportedStateFor = (understanding, intent) => {
+	    if (understanding.unsupported_or_unsafe) return "unsupported";
+	    if (understanding.clarification_needed) return "clarification_needed";
+	    if (understanding.approval_required || intent.approval_required) return "approval_required";
+	    if (understanding.evidence_required) return "evidence_needed";
+	    return "supported";
+	  };
+
+	  const taskPlanPayload = (intent) => {
+	    const understanding = intent?.request_understanding || {};
+	    const capability = intent?.proposed_action ? capabilityFor(intent.proposed_action) : null;
+	    const copy = plannerCopy(understanding, intent || {}, capability);
+	    const requestSummary = understanding.wants || commandInput?.value?.trim() || "Agent task plan preview";
+	    const requiredEvidence = understanding.evidence_required
+	      ? ["Check stored local evidence before creating work or answering."]
+	      : [];
+	    return {
+	      user_request_summary: requestSummary.slice(0, 1000),
+	      intent_category: understanding.category || "unclear",
+	      status: planStatusFor(understanding, intent || {}),
+	      proposed_steps: [copy.next || understanding.next_step || "Review the safe next step."],
+	      required_evidence: requiredEvidence,
+	      approval_required: Boolean(understanding.approval_required || intent?.approval_required),
+	      supported_state: supportedStateFor(understanding, intent || {}),
+	      next_safe_action: (understanding.next_step || copy.next || "Review the safe next step.").slice(0, 1000),
+	      requested_by_actor_id: "local-owner",
+	      metadata_json: {
+	        created_from: "agent_intake_planner",
+	        proposed_action: intent?.proposed_action || null,
+	        work_item_should_be_created: Boolean(understanding.work_item_should_be_created),
+	        unsupported_or_unsafe: Boolean(understanding.unsupported_or_unsafe),
+	        saved_preview_only: true
+	      }
+	    };
+	  };
+
 	  const addPlannerRow = (parent, label, value, state) => {
 	    const item = document.createElement("article");
 	    item.className = "agentPlannerCard";
@@ -1574,6 +1638,7 @@ function AgentCommandPanel({
     if (!executeButton || !approvalButton || !executeApprovedButton) return;
     executeButton.disabled = true;
     approvalButton.disabled = true;
+    if (savePlanButton) savePlanButton.disabled = !latestIntent?.request_understanding;
     executeApprovedButton.disabled = true;
     if (!latestIntent?.proposed_action || latestIntent.missing_parameters?.length) return;
     const capability = capabilityFor(latestIntent.proposed_action);
@@ -1655,6 +1720,26 @@ function AgentCommandPanel({
 	      setButtons();
     } catch (error) {
       showJson(resultPanel, "Approval request error", { detail: error instanceof Error ? error.message : "Unknown error" });
+    }
+  });
+
+  savePlanButton?.addEventListener("click", async () => {
+    try {
+      if (!latestIntent?.request_understanding) return;
+      const response = await fetch("/api/agent/task-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(taskPlanPayload(latestIntent))
+      });
+      const payload = await response.json();
+      showJson(resultPanel, response.ok ? "Task plan saved" : "Task plan save failed", payload);
+      if (statusPanel) {
+        statusPanel.textContent = response.ok
+          ? "Saved task plan metadata. No work item was created and no action was executed."
+          : "Task plan was not saved. No work item was created and no action was executed.";
+      }
+    } catch (error) {
+      showJson(resultPanel, "Task plan save error", { detail: error instanceof Error ? error.message : "Unknown error" });
     }
   });
 
@@ -1788,6 +1873,7 @@ function AgentCommandPanel({
 
       <section className="agentCommandActions">
         <button type="button" data-agent-preview>Preview action</button>
+        <button type="button" data-agent-save-plan disabled>Save task plan</button>
         <button type="button" data-agent-execute disabled>Run safe action</button>
         <button type="button" data-agent-request-approval disabled>Request approval</button>
         <button type="button" data-agent-execute-approved disabled>Run with approval</button>
@@ -1815,6 +1901,23 @@ function AgentCommandPanel({
 	        </article>
 	      </section>
 
+	      <section className="agentPlanner" data-agent-task-plan-records aria-label="Persisted agent task plans">
+	        {taskPlans.error ? <p className="errorText">{taskPlans.error}</p> : null}
+	        {recentTaskPlans.length === 0 ? (
+	          <article className="agentPlannerCard">
+	            <strong>Persisted task plans</strong>
+	            <span>No task plans have been saved yet. Preview a request, then save the plan metadata if it should be remembered.</span>
+	            <em>empty</em>
+	          </article>
+	        ) : recentTaskPlans.map((plan) => (
+	          <article className="agentPlannerCard" key={plan.id} data-agent-task-plan-record>
+	            <strong>{plan.user_request_summary}</strong>
+	            <span>{plan.next_safe_action}</span>
+	            <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"}</em>
+	          </article>
+	        ))}
+	      </section>
+
       <details className="advancedPanel">
         <summary>Advanced: raw parameters, approval ID, response JSON, and route details</summary>
         <section className="agentCommandGrid">
@@ -1833,7 +1936,7 @@ function AgentCommandPanel({
           <pre data-agent-intent>Agent intent preview appears here.</pre>
           <pre data-agent-result>Agent action result appears here.</pre>
         </section>
-        <p className="routeHint">Routes used: /agent/intent, /agent/actions/:action/execute, /approvals.</p>
+        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/actions/:action/execute, /approvals.</p>
       </details>
 	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
 	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
@@ -3183,6 +3286,7 @@ export default async function Home() {
 	    improvements,
 	    experiments,
 	    reports,
+	    agentTaskPlans,
     auditEvents,
     envSettings,
     agentCapabilities
@@ -3208,6 +3312,7 @@ export default async function Home() {
 	    getJson<ImprovementRecord[]>("/improvements", []),
 	    getJson<ExperimentRecord[]>("/experiments", []),
 	    getJson<ReportRecord[]>("/reports", []),
+	    getJson<AgentTaskPlanRecord[]>("/agent/task-plans", []),
     getJson<AuditEventRecord[]>("/audit-events", []),
     getJson<EnvSettingsResponse>("/settings/env", {
       file_status: {
@@ -3434,7 +3539,7 @@ export default async function Home() {
 
           <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
           <ChatRetrievalPreview />
-	          <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} />
+	          <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} taskPlans={agentTaskPlans} />
         </section>
 
         <section className="panel diagnosticsPanel tabContent" id="advanced-diagnostics" data-tab-panel="advanced">

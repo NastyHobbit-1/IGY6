@@ -38,6 +38,9 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
     ("GET", "/agent/capabilities"),
+    ("GET", "/agent/task-plans"),
+    ("GET", "/agent/task-plans/{task_plan_id}"),
+    ("POST", "/agent/task-plans"),
     ("POST", "/agent/actions/"),
     ("POST", "/agent/actions/{action_name}/execute"),
     ("GET", "/analysis/hypotheses"),
@@ -304,6 +307,7 @@ pub fn handle_gateway_request_with_db(
             )
         }
         ("GET", "/agent/capabilities") => json_response(200, "OK", agent_capabilities_json(), false),
+        ("POST", "/agent/task-plans") => agent_task_plan_create_response(&request.body, database_url),
         ("POST", "/agent/actions/") => agent_action_request_response(&request.body, database_url),
         ("POST", "/agent/intent") => json_response(200, "OK", agent_intent_json(&request.body), false),
         ("POST", "/chat/retrieval-preview") => {
@@ -437,8 +441,13 @@ pub fn handle_gateway_request_with_db(
         ("GET", "/memory/graph/schema") => {
             json_response(200, "OK", graph_schema_status_json(), false)
         }
+        ("GET", "/agent/task-plans") => {
+            action_route_response(list_agent_task_plans(database_url))
+        }
         ("GET", _) => {
-            if let Some((node_label, node_id)) = graph_relationships_path(&request.path) {
+            if let Some(task_plan_id) = agent_task_plan_detail_path(&request.path) {
+                action_route_response(get_agent_task_plan(&task_plan_id, database_url))
+            } else if let Some((node_label, node_id)) = graph_relationships_path(&request.path) {
                 action_route_response(get_graph_node_relationships(&node_label, &node_id))
             } else if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
                 action_route_response(get_retrieval_chunk_trail(&chunk_id, database_url))
@@ -848,6 +857,10 @@ fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResp
 
 fn work_item_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_work_item(body, database_url))
+}
+
+fn agent_task_plan_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_agent_task_plan(body, database_url))
 }
 
 fn pattern_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -2251,6 +2264,103 @@ fn create_work_item(body: &str, database_url: Option<&str>) -> Result<String, Ga
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn create_agent_task_plan(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_agent_task_plan_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let task_plan_id = generated_record_id("taskplan");
+    let proposed_steps_json = json_string_values(&payload.proposed_steps);
+    let required_evidence_json = json_string_values(&payload.required_evidence);
+    transaction
+        .execute(
+            "INSERT INTO agent_task_plans (id, user_request_summary, intent_category, status, proposed_steps, required_evidence, approval_required, supported_state, next_safe_action, requested_by_actor_id, metadata_json) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11::jsonb)",
+            &[
+                &task_plan_id,
+                &payload.user_request_summary,
+                &payload.intent_category,
+                &payload.status,
+                &proposed_steps_json,
+                &required_evidence_json,
+                &payload.approval_required,
+                &payload.supported_state,
+                &payload.next_safe_action,
+                &payload.requested_by_actor_id,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "intent_category": payload.intent_category,
+        "status": payload.status,
+        "approval_required": payload.approval_required,
+        "supported_state": payload.supported_state
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent_task_plan.created', $2, 'agent_task_plan', $3, NULL, $4::jsonb)",
+            &[&payload.requested_by_actor_id, &payload.status, &task_plan_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = agent_task_plan_response_json(&mut transaction, &task_plan_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn list_agent_task_plans(database_url: Option<&str>) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    client
+        .query_one(
+            "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, user_request_summary, intent_category, status, proposed_steps, required_evidence, approval_required, supported_state, next_safe_action, requested_by_actor_id, metadata_json, created_at, updated_at FROM agent_task_plans ORDER BY created_at DESC) t), '[]')",
+            &[],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn get_agent_task_plan(
+    task_plan_id: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let task_plan_id = validate_route_id(task_plan_id, "task_plan_id")?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    let body = client
+        .query_one(
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, user_request_summary, intent_category, status, proposed_steps, required_evidence, approval_required, supported_state, next_safe_action, requested_by_actor_id, metadata_json, created_at, updated_at FROM agent_task_plans WHERE id = $1) t), '')",
+            &[&task_plan_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if body.is_empty() {
+        Err(GatewayError::NotFound(
+            "Agent task plan not found".to_string(),
+        ))
+    } else {
+        Ok(body)
+    }
 }
 
 fn review_pattern(
@@ -5151,6 +5261,19 @@ struct WorkItemCreatePayload {
     payload_json: Value,
 }
 
+struct AgentTaskPlanCreatePayload {
+    user_request_summary: String,
+    intent_category: String,
+    status: String,
+    proposed_steps: Vec<String>,
+    required_evidence: Vec<String>,
+    approval_required: bool,
+    supported_state: String,
+    next_safe_action: String,
+    requested_by_actor_id: String,
+    metadata_json: Value,
+}
+
 struct WorkItemStatusPayload {
     status: String,
     actor_id: String,
@@ -5913,6 +6036,50 @@ fn parse_work_item_create(body: &str) -> Result<WorkItemCreatePayload, GatewayEr
         requested_by_actor_id,
         intent,
         payload_json,
+    })
+}
+
+fn parse_agent_task_plan_create(body: &str) -> Result<AgentTaskPlanCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Agent task plan request body")?;
+    let user_request_summary = required_text_field_with_max(&object, "user_request_summary", 1000)?;
+    let intent_category = required_string_field(&object, "intent_category", 64)?;
+    let status = optional_string_field_with_max(&object, "status", "proposed", 64)?;
+    if !is_agent_task_plan_status(&status) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown agent task plan status: {status}"
+        )));
+    }
+    let approval_required = optional_bool_field(&object, "approval_required", false)?;
+    let supported_state =
+        optional_string_field_with_max(&object, "supported_state", "supported", 64)?;
+    if !is_agent_task_plan_supported_state(&supported_state) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown agent task plan supported_state: {supported_state}"
+        )));
+    }
+    let next_safe_action = required_text_field_with_max(&object, "next_safe_action", 1000)?;
+    let mut proposed_steps =
+        optional_bounded_string_array_field(&object, "proposed_steps", 12, 1000)?;
+    if proposed_steps.is_empty() {
+        proposed_steps.push(next_safe_action.clone());
+    }
+    let required_evidence =
+        optional_bounded_string_array_field(&object, "required_evidence", 12, 1000)?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let metadata_json = optional_object_field(&object, "metadata_json")?;
+
+    Ok(AgentTaskPlanCreatePayload {
+        user_request_summary,
+        intent_category,
+        status,
+        proposed_steps,
+        required_evidence,
+        approval_required,
+        supported_state,
+        next_safe_action,
+        requested_by_actor_id,
+        metadata_json,
     })
 }
 
@@ -7406,6 +7573,42 @@ fn collection_run_response_json_client(
         .map_err(|error| GatewayError::Database(error.to_string()))
 }
 
+fn ensure_agent_task_plans_table(client: &mut Client) -> Result<(), GatewayError> {
+    client
+        .batch_execute(
+            "CREATE TABLE IF NOT EXISTS agent_task_plans (
+                id text PRIMARY KEY,
+                user_request_summary text NOT NULL,
+                intent_category text NOT NULL,
+                status text NOT NULL,
+                proposed_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+                required_evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+                approval_required boolean NOT NULL DEFAULT false,
+                supported_state text NOT NULL,
+                next_safe_action text NOT NULL,
+                requested_by_actor_id text NOT NULL DEFAULT 'local-owner',
+                metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_task_plans_created_at ON agent_task_plans (created_at DESC);",
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn agent_task_plan_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    task_plan_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, user_request_summary, intent_category, status, proposed_steps, required_evidence, approval_required, supported_state, next_safe_action, requested_by_actor_id, metadata_json, created_at, updated_at FROM agent_task_plans WHERE id = $1) t",
+            &[&task_plan_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
 fn experiment_response_json(
     transaction: &mut postgres::Transaction<'_>,
     experiment_id: &str,
@@ -8523,6 +8726,14 @@ fn agent_action_execute_path(path: &str) -> Option<String> {
     Some(percent_decode_path_segment(action_name))
 }
 
+fn agent_task_plan_detail_path(path: &str) -> Option<String> {
+    let id = path.strip_prefix("/agent/task-plans/")?;
+    if id.is_empty() || id.contains('/') {
+        return None;
+    }
+    Some(percent_decode_path_segment(id))
+}
+
 fn pattern_review_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/analysis/patterns/", "/review")
 }
@@ -9203,6 +9414,20 @@ fn required_text_field(
     Ok(value)
 }
 
+fn required_text_field_with_max(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_len: usize,
+) -> Result<String, GatewayError> {
+    let value = required_text_field(object, key)?;
+    if value.len() > max_len {
+        return Err(GatewayError::Validation(format!(
+            "{key} must be {max_len} characters or fewer."
+        )));
+    }
+    Ok(value)
+}
+
 fn optional_string_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -9356,6 +9581,28 @@ fn optional_string_array_field(
     Ok(result)
 }
 
+fn optional_bounded_string_array_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_items: usize,
+    max_len: usize,
+) -> Result<Vec<String>, GatewayError> {
+    let values = optional_string_array_field(object, key)?;
+    if values.len() > max_items {
+        return Err(GatewayError::Validation(format!(
+            "{key} must contain {max_items} or fewer items."
+        )));
+    }
+    for value in &values {
+        if value.len() > max_len {
+            return Err(GatewayError::Validation(format!(
+                "{key} items must be {max_len} characters or fewer."
+            )));
+        }
+    }
+    Ok(values)
+}
+
 fn required_string_array_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -9437,6 +9684,31 @@ fn is_supported_work_item_type(value: &str) -> bool {
             | "document_chunking"
             | "chunk_vector_upsert"
             | "report_generation"
+    )
+}
+
+fn is_agent_task_plan_status(value: &str) -> bool {
+    matches!(
+        value,
+        "proposed"
+            | "needs_clarification"
+            | "approval_required"
+            | "evidence_needed"
+            | "ready"
+            | "unsupported"
+            | "converted_to_work"
+            | "canceled"
+    )
+}
+
+fn is_agent_task_plan_supported_state(value: &str) -> bool {
+    matches!(
+        value,
+        "supported"
+            | "unsupported"
+            | "clarification_needed"
+            | "approval_required"
+            | "evidence_needed"
     )
 }
 
@@ -9725,7 +9997,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -10568,6 +10840,8 @@ mod tests {
             ("GET", "/analysis/predictions/prediction-1"),
             ("GET", "/analysis/recommendations"),
             ("GET", "/analysis/recommendations/recommendation-1"),
+            ("GET", "/agent/task-plans"),
+            ("GET", "/agent/task-plans/task-plan-1"),
             ("GET", "/approvals"),
             ("GET", "/approvals/approval-1"),
             ("GET", "/artifacts"),
@@ -10979,6 +11253,51 @@ mod tests {
         ] {
             let response = handle_gateway_request_with_db(
                 &request("POST", "/work-items/", body),
+                None,
+                NO_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+    }
+
+    #[test]
+    fn agent_task_plan_routes_are_rust_native_and_require_database_url() {
+        let valid = r#"{"user_request_summary":"Review synthetic build evidence.","intent_category":"evidence_question","status":"evidence_needed","proposed_steps":["Check stored evidence before answering."],"required_evidence":["build logs"],"approval_required":false,"supported_state":"evidence_needed","next_safe_action":"Run retrieval preview before creating work.","metadata_json":{"source":"test"}}"#;
+        let create = handle_gateway_request_with_db(
+            &request("POST", "/agent/task-plans", valid),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(create.status_code, 503);
+        assert!(!create.proxied_to_fallback);
+        assert!(create.body.contains("DATABASE_URL"));
+
+        let parsed = parse_agent_task_plan_create(valid).expect("task plan");
+        assert_eq!(parsed.intent_category, "evidence_question");
+        assert_eq!(parsed.status, "evidence_needed");
+        assert_eq!(parsed.proposed_steps.len(), 1);
+        assert_eq!(parsed.required_evidence, vec!["build logs"]);
+    }
+
+    #[test]
+    fn agent_task_plan_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"user_request_summary":"","intent_category":"evidence_question","next_safe_action":"x"}"#,
+            r#"{"user_request_summary":"x","intent_category":"","next_safe_action":"x"}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","status":"running","next_safe_action":"x"}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","supported_state":"shell_ready","next_safe_action":"x"}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","next_safe_action":"","proposed_steps":[]}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","next_safe_action":"x","proposed_steps":[""]}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","next_safe_action":"x","required_evidence":[{}]}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","next_safe_action":"x","approval_required":"yes"}"#,
+            r#"{"user_request_summary":"x","intent_category":"evidence_question","next_safe_action":"x","metadata_json":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/agent/task-plans", body),
                 None,
                 NO_FALLBACK_ORIGIN,
                 None,
@@ -11831,6 +12150,9 @@ mod tests {
             ("GET", "/analysis/predictions/{prediction_id}"),
             ("GET", "/analysis/recommendations"),
             ("GET", "/analysis/recommendations/{recommendation_id}"),
+            ("GET", "/agent/task-plans"),
+            ("GET", "/agent/task-plans/{task_plan_id}"),
+            ("POST", "/agent/task-plans"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
             ("POST", "/approvals"),
