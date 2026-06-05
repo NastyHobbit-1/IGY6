@@ -119,7 +119,9 @@ Sources:
 - A source is a place or category of information IGY6 may use.
 - Source name is the human name, such as `Router Troubleshooting Notes`.
 - Source type describes the supported path. `manual_upload` is the simplest
-  current path.
+  current path, `conversation_history` is for manually pasted prior
+  conversation/history text, and `user_observation` is for owner-provided
+  observations, decisions, preferences, corrections, and notes.
 - Location is a description or path for the source.
 - Sensitivity tells IGY6 how private the data is.
 - Permissions control what IGY6 may do with the source.
@@ -158,6 +160,24 @@ Conversation History Import:
 - Browser/account/connector imports are planned future capabilities and require
   separate permission, dry-run, audit, and source-policy work.
 
+User Observation Ingestion:
+
+- Provides a normal-user form for first-party local context.
+- Lets you create a new `user_observation` source or choose an existing enabled
+  observation source without entering raw source or permission IDs.
+- Accepts manual UTF-8 text entered by the owner.
+- Supports safe labels such as observation title, observation type, observed or
+  decided time if known, confidence, tags, optional related source/evidence/task
+  IDs or labels, and a sensitivity flag.
+- Uses the existing local source, artifact, document, chunk, and evidence
+  pipeline where processing succeeds.
+- Records user-provided context only. It does not automatically verify truth or
+  turn the observation into an externally confirmed fact.
+- Does not extract hidden memory, scrape accounts, read browser data, use
+  connectors, call hosted AI, or read external services.
+- Related IDs or labels are stored as plain text in this MVP; they are not
+  validated links unless a later DIFF adds that behavior.
+
 ### Buttons And Actions
 
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
@@ -166,6 +186,8 @@ Conversation History Import:
 - `Import conversation text` sends manually pasted UTF-8 conversation/history
   text through the same local text pipeline under a `conversation_history`
   source.
+- `Record observation` sends owner-entered UTF-8 observation text through the
+  same local text pipeline under a `user_observation` source.
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
@@ -184,6 +206,8 @@ Good examples:
 - A build log snippet.
 - A project verification summary.
 - A prior support chat or project discussion copied into plain text.
+- A first-party observation, decision, preference, correction, or note you want
+  IGY6 to retain as local context.
 
 Basic flow:
 
@@ -207,6 +231,21 @@ Conversation history flow:
 5. Import the conversation text.
 6. Open Work to inspect processing status.
 7. Open Results to inspect evidence after processing.
+
+User observation flow:
+
+1. Choose an existing observation source or create a new `user_observation`
+   source.
+2. Enter an observation title, type, observed or decided time if known,
+   confidence, tags, related labels or IDs if useful, and sensitivity flag if
+   relevant.
+3. Enter the owner-provided observation, decision, preference, correction, or
+   note.
+4. Record the observation.
+5. Open Work to inspect processing status.
+6. Open Results to inspect evidence after processing.
+7. Use source and evidence review states later if the observation needs
+   correction, supersession, verification, or dispute review.
 
 ### Empty, Loading, And Error States
 

@@ -10681,7 +10681,10 @@ fn is_source_type(value: &str) -> bool {
 }
 
 fn is_manual_text_collection_source_type(value: &str) -> bool {
-    matches!(value, "manual_upload" | "conversation_history")
+    matches!(
+        value,
+        "manual_upload" | "conversation_history" | "user_observation"
+    )
 }
 
 fn is_allowed_source_operation(value: &str) -> bool {
@@ -13028,6 +13031,23 @@ mod tests {
             "conversation_history"
         ));
         assert!(is_manual_text_collection_source_type("manual_upload"));
+        let observation_source = CollectionSource {
+            id: "source-observation".to_string(),
+            name: "Observation".to_string(),
+            source_type: "user_observation".to_string(),
+            location: None,
+            sensitivity: "internal".to_string(),
+            enabled: true,
+            metadata_json: serde_json::json!({}),
+        };
+        let observation_payload = manual_upload_normalization_work_payload(
+            "collection-3",
+            &observation_source,
+            "permission-3",
+            "artifact-3",
+        );
+        assert_eq!(observation_payload["source_type"], "user_observation");
+        assert!(is_manual_text_collection_source_type("user_observation"));
         assert!(!is_manual_text_collection_source_type("local_project"));
     }
 
