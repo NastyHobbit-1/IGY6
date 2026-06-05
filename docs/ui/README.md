@@ -271,6 +271,11 @@ Evidence And Documents:
 
 - Shows collection runs, artifacts, documents, chunks, evidence items, and
   claims.
+- Evidence correction and supersession lets you mark an evidence item as
+  `needs correction`, `corrected`, `superseded`, `disputed`, or `verified`.
+- Evidence correction records review metadata and audit history only. It does
+  not delete evidence, rewrite raw artifacts, rewrite documents or chunks,
+  silently hide superseded evidence, or claim retrieval ranking changes.
 
 Search Memory And Findings:
 
@@ -285,6 +290,8 @@ Reports:
 ### Buttons And Actions
 
 - `Ask over evidence` searches local evidence for your question.
+- `Save evidence review` records correction or supersession state for an
+  existing evidence item while preserving original history.
 - `Open Results search` brings you back to the Results search area.
 - Advanced report and evidence-answer controls are available in Advanced.
 

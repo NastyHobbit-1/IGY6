@@ -86,6 +86,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/evidence/items"),
     ("GET", "/evidence/items/{evidence_item_id}"),
     ("POST", "/evidence/items"),
+    ("POST", "/evidence/items/{evidence_item_id}/review-state"),
     ("GET", "/evidence/chunks"),
     ("GET", "/evidence/chunks/{chunk_id}"),
     ("GET", "/evidence/claims"),
@@ -427,6 +428,14 @@ pub fn handle_gateway_request_with_db(
             } else if let Some(document_id) = evidence_document_chunks_path(&request.path) {
                 write_route_response(generate_document_chunks(
                     &document_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(evidence_item_id) =
+                evidence_item_review_state_path(&request.path)
+            {
+                write_route_response(update_evidence_item_review_state(
+                    &evidence_item_id,
                     &request.body,
                     database_url,
                 ))
@@ -5059,6 +5068,108 @@ fn create_evidence_item(body: &str, database_url: Option<&str>) -> Result<String
     Ok(response_body)
 }
 
+fn update_evidence_item_review_state(
+    evidence_item_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let evidence_item_id = validate_route_id(evidence_item_id, "evidence_item_id")?;
+    let payload = parse_evidence_review_state(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let previous_metadata = transaction
+        .query_opt(
+            "SELECT metadata_json FROM evidence_items WHERE id = $1",
+            &[&evidence_item_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+        .ok_or_else(|| GatewayError::NotFound("Evidence item not found".to_string()))?
+        .get::<_, Value>(0);
+
+    if let Some(superseding_id) = &payload.superseding_evidence_item_id {
+        if superseding_id == &evidence_item_id {
+            return Err(GatewayError::Validation(
+                "superseding_evidence_item_id must reference a different evidence item."
+                    .to_string(),
+            ));
+        }
+        let superseding_exists = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM evidence_items WHERE id = $1)",
+                &[superseding_id],
+            )
+            .map(|row| row.get::<_, bool>(0))
+            .map_err(|error| GatewayError::Database(error.to_string()))?;
+        if !superseding_exists {
+            return Err(GatewayError::Validation(
+                "superseding_evidence_item_id must reference an existing evidence item."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let previous_review_state = previous_metadata
+        .get("review_state")
+        .and_then(|value| value.get("state"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let review_state_json = serde_json::json!({
+        "state": payload.review_state.clone(),
+        "correction_note": payload.correction_note.clone(),
+        "superseding_evidence_item_id": payload.superseding_evidence_item_id.clone(),
+        "reviewed_by": payload.actor_id.clone(),
+        "reviewed_at": "server_time",
+        "original_evidence_preserved": true,
+        "raw_artifact_mutated": false,
+        "document_or_chunk_rewritten": false,
+        "retrieval_behavior_changed": false
+    });
+    let metadata_patch = serde_json::json!({
+        "review_state": review_state_json
+    });
+    transaction
+        .execute(
+            "UPDATE evidence_items SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2",
+            &[&metadata_patch, &evidence_item_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "previous_review_state": previous_review_state,
+        "new_review_state": payload.review_state,
+        "correction_note": payload.correction_note,
+        "superseding_evidence_item_id": payload.superseding_evidence_item_id,
+        "original_evidence_preserved": true,
+        "raw_artifact_mutated": false,
+        "document_or_chunk_rewritten": false,
+        "evidence_deleted": false,
+        "retrieval_behavior_changed": false
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'evidence_item.review_state_updated', 'recorded', 'evidence_item', $2, NULL, $3::jsonb)",
+            &[&payload.actor_id, &evidence_item_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, source_id, document_id, chunk_id, evidence_type, statement, observed_at, confidence, metadata_json, created_at, updated_at FROM evidence_items WHERE id = $1) t",
+            &[&evidence_item_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn create_experiment(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_experiment_create(body)?;
     let database_url = database_url
@@ -5614,6 +5725,13 @@ struct EvidenceItemCreatePayload {
     confidence: Option<i32>,
     metadata_json: Value,
     created_by_actor_id: String,
+}
+
+struct EvidenceReviewStatePayload {
+    review_state: String,
+    correction_note: Option<String>,
+    superseding_evidence_item_id: Option<String>,
+    actor_id: String,
 }
 
 struct ExperimentCreatePayload {
@@ -6289,6 +6407,26 @@ fn parse_evidence_item_create(body: &str) -> Result<EvidenceItemCreatePayload, G
             "local-owner",
             128,
         )?,
+    })
+}
+
+fn parse_evidence_review_state(body: &str) -> Result<EvidenceReviewStatePayload, GatewayError> {
+    let object = parse_json_object(body, "Evidence review state request body")?;
+    let review_state = required_string_field(&object, "review_state", 64)?;
+    if !is_evidence_review_state(&review_state) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported evidence review state: {review_state}"
+        )));
+    }
+    let correction_note = optional_nullable_string_field_with_max(&object, "correction_note", 800)?;
+    let superseding_evidence_item_id =
+        optional_nullable_string_field_with_max(&object, "superseding_evidence_item_id", 128)?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    Ok(EvidenceReviewStatePayload {
+        review_state,
+        correction_note,
+        superseding_evidence_item_id,
+        actor_id,
     })
 }
 
@@ -9354,6 +9492,10 @@ fn evidence_document_chunks_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/evidence/documents/", "/chunks")
 }
 
+fn evidence_item_review_state_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/evidence/items/", "/review-state")
+}
+
 fn experiment_status_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/experiments/", "/status")
 }
@@ -10326,6 +10468,13 @@ fn is_work_item_status(value: &str) -> bool {
     )
 }
 
+fn is_evidence_review_state(value: &str) -> bool {
+    matches!(
+        value,
+        "needs_correction" | "corrected" | "superseded" | "disputed" | "verified"
+    )
+}
+
 fn is_feedback_target_type(value: &str) -> bool {
     matches!(
         value,
@@ -10604,7 +10753,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /evidence/items/{evidence_item_id}/review-state bounded evidence correction/supersession review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -12760,6 +12909,11 @@ mod tests {
                 "/evidence/items",
                 r#"{"source_id":"source-1","evidence_type":"note","statement":"Recorded fact"}"#,
             ),
+            (
+                "POST",
+                "/evidence/items/evidence-1/review-state",
+                r#"{"review_state":"superseded","correction_note":"Use newer evidence.","superseding_evidence_item_id":"evidence-2"}"#,
+            ),
             ("POST", "/reports/report-1/status", r#"{"status":"ready"}"#),
             (
                 "POST",
@@ -12815,6 +12969,19 @@ mod tests {
             (
                 "/evidence/items",
                 r#"{"evidence_type":"note","statement":"x"}"#,
+            ),
+            ("/evidence/items/evidence-1/review-state", "{}"),
+            (
+                "/evidence/items/evidence-1/review-state",
+                r#"{"review_state":"maybe_correct"}"#,
+            ),
+            (
+                "/evidence/items/evidence-1/review-state",
+                r#"{"review_state":"verified","correction_note":[]}"#,
+            ),
+            (
+                "/evidence/items/evidence-1/review-state",
+                r#"{"review_state":"verified","actor_id":""}"#,
             ),
             ("/reports/report-1/status", r#"{"status":"published"}"#),
             ("/retrieval/chunks/search", r#"{"query":"","limit":5}"#),
@@ -12951,6 +13118,7 @@ mod tests {
             ("GET", "/evidence/documents/{document_id}"),
             ("GET", "/evidence/items"),
             ("GET", "/evidence/items/{evidence_item_id}"),
+            ("POST", "/evidence/items/{evidence_item_id}/review-state"),
             ("GET", "/evidence/chunks"),
             ("GET", "/evidence/chunks/{chunk_id}"),
             ("GET", "/evidence/claims"),
@@ -12972,6 +13140,7 @@ mod tests {
             ("POST", "/evidence/documents"),
             ("POST", "/evidence/documents/{document_id}/chunks"),
             ("POST", "/evidence/items"),
+            ("POST", "/evidence/items/{evidence_item_id}/review-state"),
             ("POST", "/reports/{report_id}/status"),
             ("POST", "/retrieval/chunks/search"),
             ("POST", "/sources/{source_id}/permissions"),
