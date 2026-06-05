@@ -41,6 +41,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/agent/task-plans"),
     ("GET", "/agent/task-plans/{task_plan_id}"),
     ("POST", "/agent/task-plans"),
+    ("POST", "/agent/task-plans/{task_plan_id}/evidence-summary"),
     ("POST", "/agent/task-plans/{task_plan_id}/work-spec"),
     ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
     ("POST", "/agent/actions/"),
@@ -391,6 +392,13 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(decide_approval(&approval_id, &request.body, database_url))
             } else if let Some(task_plan_id) = agent_task_plan_work_item_path(&request.path) {
                 action_route_response(create_work_item_from_agent_task_plan(
+                    &task_plan_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(task_plan_id) = agent_task_plan_evidence_summary_path(&request.path)
+            {
+                action_route_response(update_agent_task_plan_evidence_summary(
                     &task_plan_id,
                     &request.body,
                     database_url,
@@ -2618,6 +2626,67 @@ fn propose_agent_task_plan_work_spec(
         .execute(
             "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent_task_plan.work_spec_proposed', $2, 'agent_task_plan', $3, NULL, $4::jsonb)",
             &[&payload.actor_id, &next_status, &task_plan_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = agent_task_plan_response_json(&mut transaction, &task_plan_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn update_agent_task_plan_evidence_summary(
+    task_plan_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let task_plan_id = validate_route_id(task_plan_id, "task_plan_id")?;
+    let payload = parse_agent_task_plan_evidence_summary(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    load_agent_task_plan_record(&mut transaction, &task_plan_id)?;
+    let guidance = payload.missing_evidence_guidance.clone().unwrap_or_else(|| {
+        if payload.missing_evidence {
+            "No relevant local evidence was retrieved. Add/process data or narrow the request before proceeding.".to_string()
+        } else {
+            "Relevant local evidence was retrieved. Review labels before creating work or answering.".to_string()
+        }
+    });
+    let answer_status = payload.answer_status.clone();
+    let evidence_summary = serde_json::json!({
+        "evidence_checked_at": now_epoch_string(),
+        "answer_status": answer_status,
+        "retrieved_count": payload.retrieved_count,
+        "safe_labels": payload.labels,
+        "missing_evidence": payload.missing_evidence,
+        "missing_evidence_guidance": guidance
+    });
+    let metadata_patch = serde_json::json!({
+        "evidence_summary": evidence_summary
+    });
+    transaction
+        .execute(
+            "UPDATE agent_task_plans SET metadata_json = metadata_json || $1::jsonb, updated_at = now() WHERE id = $2",
+            &[&metadata_patch, &task_plan_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "answer_status": payload.answer_status,
+        "retrieved_count": payload.retrieved_count,
+        "missing_evidence": payload.missing_evidence
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent_task_plan.evidence_summary_recorded', $2, 'agent_task_plan', $3, NULL, $4::jsonb)",
+            &[&payload.actor_id, &payload.answer_status, &task_plan_id, &audit_details],
         )
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     let response_body = agent_task_plan_response_json(&mut transaction, &task_plan_id)?;
@@ -5549,6 +5618,15 @@ struct AgentTaskPlanWorkSpecPayload {
     expected_output: Option<String>,
 }
 
+struct AgentTaskPlanEvidenceSummaryPayload {
+    actor_id: String,
+    answer_status: String,
+    retrieved_count: i32,
+    labels: Vec<String>,
+    missing_evidence: bool,
+    missing_evidence_guidance: Option<String>,
+}
+
 struct AgentTaskPlanRecord {
     id: String,
     user_request_summary: String,
@@ -6394,6 +6472,25 @@ fn parse_agent_task_plan_work_spec(
         actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
         work_type,
         expected_output: optional_nullable_string_field_with_max(&object, "expected_output", 1000)?,
+    })
+}
+
+fn parse_agent_task_plan_evidence_summary(
+    body: &str,
+) -> Result<AgentTaskPlanEvidenceSummaryPayload, GatewayError> {
+    let object = parse_json_object(body, "Agent task plan evidence summary request body")?;
+    let retrieved_count = optional_i32_field(&object, "retrieved_count", 0, 1000)?.unwrap_or(0);
+    Ok(AgentTaskPlanEvidenceSummaryPayload {
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        answer_status: optional_string_field_with_max(&object, "answer_status", "unknown", 64)?,
+        retrieved_count,
+        labels: optional_bounded_string_array_field(&object, "safe_labels", 10, 256)?,
+        missing_evidence: optional_bool_field(&object, "missing_evidence", retrieved_count == 0)?,
+        missing_evidence_guidance: optional_nullable_string_field_with_max(
+            &object,
+            "missing_evidence_guidance",
+            500,
+        )?,
     })
 }
 
@@ -9115,6 +9212,10 @@ fn agent_task_plan_work_item_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/agent/task-plans/", "/work-item")
 }
 
+fn agent_task_plan_evidence_summary_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/agent/task-plans/", "/evidence-summary")
+}
+
 fn agent_task_plan_work_spec_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/agent/task-plans/", "/work-spec")
 }
@@ -10382,7 +10483,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -11693,6 +11794,20 @@ mod tests {
         assert_eq!(work_spec.status_code, 503);
         assert!(!work_spec.proxied_to_fallback);
         assert!(work_spec.body.contains("DATABASE_URL"));
+
+        let evidence_summary = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/task-plans/taskplan-1/evidence-summary",
+                r#"{"actor_id":"local-owner","answer_status":"retrieved","retrieved_count":2,"safe_labels":["evidence evidence-1","chunk chunk-1"],"missing_evidence":false}"#,
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(evidence_summary.status_code, 503);
+        assert!(!evidence_summary.proxied_to_fallback);
+        assert!(evidence_summary.body.contains("DATABASE_URL"));
     }
 
     #[test]
@@ -11748,6 +11863,30 @@ mod tests {
             assert!(!response.proxied_to_fallback, "{body}");
         }
 
+        for body in [
+            "[]",
+            r#"{"actor_id":""}"#,
+            r#"{"retrieved_count":-1}"#,
+            r#"{"retrieved_count":1001}"#,
+            r#"{"answer_status":[]}"#,
+            r#"{"safe_labels":[{}]}"#,
+            r#"{"missing_evidence":"no"}"#,
+            r#"{"missing_evidence_guidance":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request(
+                    "POST",
+                    "/agent/task-plans/taskplan-1/evidence-summary",
+                    body,
+                ),
+                None,
+                NO_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+
         let parsed = parse_agent_task_plan_work_spec(
             r#"{"actor_id":"local-owner","work_type":"report_generation","expected_output":"Create a bounded report."}"#,
         )
@@ -11757,6 +11896,12 @@ mod tests {
             parsed.expected_output.as_deref(),
             Some("Create a bounded report.")
         );
+        let evidence = parse_agent_task_plan_evidence_summary(
+            r#"{"answer_status":"retrieved","retrieved_count":2,"safe_labels":["evidence evidence-1"],"missing_evidence":false}"#,
+        )
+        .expect("evidence summary");
+        assert_eq!(evidence.retrieved_count, 2);
+        assert_eq!(evidence.labels, vec!["evidence evidence-1"]);
 
         assert_eq!(
             agent_task_plan_work_item_path("/agent/task-plans/taskplan-1/work-item"),
@@ -11768,6 +11913,14 @@ mod tests {
             Some("taskplan-1".to_string())
         );
         assert!(agent_task_plan_work_spec_path("/agent/task-plans/x/y/work-spec").is_none());
+        assert_eq!(
+            agent_task_plan_evidence_summary_path("/agent/task-plans/taskplan-1/evidence-summary"),
+            Some("taskplan-1".to_string())
+        );
+        assert!(
+            agent_task_plan_evidence_summary_path("/agent/task-plans/x/y/evidence-summary")
+                .is_none()
+        );
     }
 
     #[test]
@@ -12616,6 +12769,7 @@ mod tests {
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/{task_plan_id}"),
             ("POST", "/agent/task-plans"),
+            ("POST", "/agent/task-plans/{task_plan_id}/evidence-summary"),
             ("POST", "/agent/task-plans/{task_plan_id}/work-spec"),
             ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
             ("GET", "/approvals"),

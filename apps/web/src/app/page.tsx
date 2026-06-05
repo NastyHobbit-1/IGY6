@@ -1425,6 +1425,7 @@ function AgentCommandPanel({
 	  const approvalButton = root.querySelector("[data-agent-request-approval]");
 	  const savePlanButton = root.querySelector("[data-agent-save-plan]");
 	  const evidenceButton = root.querySelector("[data-agent-check-evidence]");
+	  const planEvidenceButtons = root.querySelectorAll("[data-agent-plan-check-evidence]");
 	  const proposeWorkSpecButtons = root.querySelectorAll("[data-agent-plan-propose-work-spec]");
 	  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
 	  const actionSelect = root.querySelector("[data-agent-action-select]");
@@ -1442,6 +1443,7 @@ function AgentCommandPanel({
 	  const capabilitiesPayload = JSON.parse(root.querySelector("[data-agent-capabilities-json]")?.textContent || "{}");
 	  const approvalPayload = JSON.parse(root.querySelector("[data-agent-approvals-json]")?.textContent || "[]");
 	  let latestIntent = null;
+	  let latestTaskPlanId = null;
 
   const showJson = (node, label, payload) => {
     if (!node) return;
@@ -1642,6 +1644,30 @@ function AgentCommandPanel({
 	    return summary;
 	  };
 
+	  const evidenceSummaryPayload = (summary) => ({
+	    actor_id: "local-owner",
+	    answer_status: summary.answer_status || "unknown",
+	    retrieved_count: Number(summary.retrieved_count || 0),
+	    safe_labels: Array.isArray(summary.labels) ? summary.labels.slice(0, 5) : [],
+	    missing_evidence: Boolean(summary.missing_evidence),
+	    missing_evidence_guidance: summary.missing_evidence
+	      ? "No relevant local evidence was retrieved. Add/process data or narrow the request before proceeding."
+	      : "Relevant local evidence was retrieved. Review safe labels before creating work or answering."
+	  });
+
+	  const persistEvidenceSummary = async (taskPlanId, summary) => {
+	    const response = await fetch("/api/agent/task-plans/" + encodeURIComponent(taskPlanId) + "/evidence-summary", {
+	      method: "POST",
+	      headers: { "Content-Type": "application/json" },
+	      body: JSON.stringify(evidenceSummaryPayload(summary))
+	    });
+	    const payload = await response.json();
+	    if (!response.ok) {
+	      throw new Error(payload?.detail || response.statusText || "Evidence summary persistence failed");
+	    }
+	    return payload;
+	  };
+
 	  const addPlannerRow = (parent, label, value, state) => {
 	    const item = document.createElement("article");
 	    item.className = "agentPlannerCard";
@@ -1792,6 +1818,7 @@ function AgentCommandPanel({
         body: JSON.stringify(taskPlanPayload(latestIntent))
       });
       const payload = await response.json();
+      if (response.ok && payload?.id) latestTaskPlanId = payload.id;
       showJson(resultPanel, response.ok ? "Task plan saved" : "Task plan save failed", payload);
       if (statusPanel) {
         statusPanel.textContent = response.ok
@@ -1823,7 +1850,20 @@ function AgentCommandPanel({
         return;
       }
       const summary = renderEvidenceSummary(payload);
-      showJson(resultPanel, "Evidence check summary", summary);
+      if (latestTaskPlanId) {
+        try {
+          await persistEvidenceSummary(latestTaskPlanId, summary);
+          showJson(resultPanel, "Evidence check summary saved to task plan", summary);
+          if (statusPanel) statusPanel.textContent = "Saved safe evidence summary on the latest task plan. Reload to review persisted evidence readiness.";
+        } catch (persistError) {
+          showJson(resultPanel, "Evidence check summary persistence failed", {
+            summary,
+            detail: persistError instanceof Error ? persistError.message : "Unknown persistence error"
+          });
+        }
+      } else {
+        showJson(resultPanel, "Evidence check summary", summary);
+      }
     } catch (error) {
       showJson(resultPanel, "Evidence check error", { detail: error instanceof Error ? error.message : "Unknown error" });
       if (evidencePanel) evidencePanel.textContent = "Evidence check failed. No plan action was taken.";
@@ -1880,6 +1920,37 @@ function AgentCommandPanel({
 	  approvalSelect?.addEventListener("change", () => {
 	    if (approvalInput) approvalInput.value = approvalSelect.value || "";
 	    setButtons();
+	  });
+
+	  planEvidenceButtons.forEach((button) => {
+	    button.addEventListener("click", async () => {
+	      const taskPlanId = button.getAttribute("data-task-plan-id");
+	      const query = button.getAttribute("data-task-plan-summary") || "";
+	      if (!taskPlanId || !query.trim()) return;
+	      button.disabled = true;
+	      try {
+	        const response = await fetch("/api/chat/retrieval-preview", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({ message: query, limit: 5 })
+	        });
+	        const payload = await response.json();
+	        if (!response.ok) {
+	          showJson(resultPanel, "Task plan evidence check failed", { detail: payload?.detail || response.statusText });
+	          return;
+	        }
+	        const summary = renderEvidenceSummary(payload);
+	        await persistEvidenceSummary(taskPlanId, summary);
+	        showJson(resultPanel, "Task plan evidence summary saved", summary);
+	        if (statusPanel) {
+	          statusPanel.textContent = "Saved safe evidence summary on task plan " + taskPlanId + ". Reload to review it in task history.";
+	        }
+	      } catch (error) {
+	        showJson(resultPanel, "Task plan evidence summary error", { detail: error instanceof Error ? error.message : "Unknown error" });
+	      } finally {
+	        button.disabled = false;
+	      }
+	    });
 	  });
 
 	  proposeWorkSpecButtons.forEach((button) => {
@@ -2065,6 +2136,13 @@ function AgentCommandPanel({
 	          </article>
 	        ) : recentTaskPlans.map((plan) => {
 	          const planToWork = plan.metadata_json?.plan_to_work;
+	          const evidenceSummary = plan.metadata_json?.evidence_summary;
+	          const evidenceSummaryObject = evidenceSummary && typeof evidenceSummary === "object" ? evidenceSummary as Record<string, unknown> : null;
+	          const evidenceCount = typeof evidenceSummaryObject?.retrieved_count === "number" ? evidenceSummaryObject.retrieved_count : null;
+	          const evidenceStatus = typeof evidenceSummaryObject?.answer_status === "string" ? evidenceSummaryObject.answer_status : null;
+	          const evidenceLabels = Array.isArray(evidenceSummaryObject?.safe_labels)
+	            ? evidenceSummaryObject.safe_labels.filter((label): label is string => typeof label === "string").slice(0, 3)
+	            : [];
 	          const hasWorkSpec = Boolean(planToWork && typeof planToWork === "object" && "work_type" in planToWork);
 	          const workType = hasWorkSpec && planToWork && typeof planToWork === "object" && "work_type" in planToWork
 	            ? String((planToWork as { work_type?: unknown }).work_type ?? "unknown")
@@ -2091,7 +2169,10 @@ function AgentCommandPanel({
 	              <span>{plan.next_safe_action}</span>
 	              <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"} · {hasWorkSpec ? "eligible spec" : "preview only"}</em>
 	              <span>{guidance}</span>
+	              <span>Evidence readiness: {evidenceStatus ? `${evidenceStatus} · ${evidenceCount ?? 0} hit(s)` : "not checked"}</span>
+	              {evidenceLabels.length > 0 ? <span>Evidence labels: {evidenceLabels.join(" | ")}</span> : null}
 	              {workType ? <span>Supported work type: {workType}</span> : null}
+	              <button type="button" data-agent-plan-check-evidence data-task-plan-id={plan.id} data-task-plan-summary={plan.user_request_summary}>Check and save evidence</button>
 	              {canProposeReportWorkSpec ? (
 	                <button type="button" data-agent-plan-propose-work-spec data-task-plan-id={plan.id}>Propose report work spec</button>
 	              ) : null}
@@ -2121,7 +2202,7 @@ function AgentCommandPanel({
           <pre data-agent-intent>Agent intent preview appears here.</pre>
           <pre data-agent-result>Agent action result appears here.</pre>
         </section>
-        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/work-spec, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
+        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/evidence-summary, /agent/task-plans/:id/work-spec, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
       </details>
 	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
 	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
@@ -2977,6 +3058,10 @@ function AgentTaskHistoryReview({
     item.metadata_json?.agent_task_plan_id === planId
     || (workItemId ? item.metadata_json?.work_item_id === workItemId : false)
   )) ?? null;
+  const evidenceSummaryFor = (plan: AgentTaskPlanRecord): Record<string, unknown> | null => {
+    const summary = plan.metadata_json?.evidence_summary;
+    return summary && typeof summary === "object" ? summary as Record<string, unknown> : null;
+  };
 
   return (
     <section className="panel workflowSection" data-agent-task-history-review>
@@ -3002,6 +3087,9 @@ function AgentTaskHistoryReview({
           const outcome = linkedOutcome(workItemId);
           const feedbackRecord = linkedFeedback(workItemId);
           const improvement = linkedImprovement(plan.id, workItemId);
+          const evidenceSummary = evidenceSummaryFor(plan);
+          const evidenceStatus = typeof evidenceSummary?.answer_status === "string" ? evidenceSummary.answer_status : null;
+          const evidenceCount = typeof evidenceSummary?.retrieved_count === "number" ? evidenceSummary.retrieved_count : null;
           const safeNextAction = plan.status === "converted_to_work"
             ? "Review the linked work item status before dispatch or outcome review."
             : plan.approval_required && approval?.status !== "approved"
@@ -3019,6 +3107,7 @@ function AgentTaskHistoryReview({
                 <dt>feedback</dt><dd>{feedbackRecord ? `${feedbackRecord.id} · ${feedbackRecord.label}` : "not linked"}</dd>
                 <dt>outcome</dt><dd>{outcome ? `${outcome.id} · ${outcome.outcome_status}` : "not linked"}</dd>
                 <dt>improvement</dt><dd>{improvement ? `${improvement.id} · ${improvement.status}` : "not linked"}</dd>
+                <dt>evidence</dt><dd>{evidenceStatus ? `${evidenceStatus} · ${evidenceCount ?? 0} hit(s)` : "not checked"}</dd>
               </dl>
             </article>
           );
