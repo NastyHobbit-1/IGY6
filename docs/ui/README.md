@@ -141,11 +141,31 @@ Guided Upload:
   request and shows a pending state instead of uploading before approval.
 - Shows recent collection runs after upload or dry-run records exist.
 
+Conversation History Import:
+
+- Provides a normal-user import form for prior conversation/history text.
+- Lets you create a new `conversation_history` source or choose an existing
+  enabled conversation source without entering raw source or permission IDs.
+- Accepts manual pasted UTF-8 text only.
+- Stores safe labels such as conversation title, date/time range, participants
+  or roles, context note, and whether the import contains corrections,
+  decisions, or instructions/preferences.
+- Uses the existing local source, artifact, document, chunk, and evidence
+  pipeline where processing succeeds.
+- Does not scrape browsers, accounts, chat services, Gmail, Discord, ChatGPT,
+  or any external service.
+- Does not parse binary PDF, image, audio, video, screenshot, or OCR input.
+- Browser/account/connector imports are planned future capabilities and require
+  separate permission, dry-run, audit, and source-policy work.
+
 ### Buttons And Actions
 
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
   upload collection path when the source permission allows immediate
   collection.
+- `Import conversation text` sends manually pasted UTF-8 conversation/history
+  text through the same local text pipeline under a `conversation_history`
+  source.
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
@@ -163,6 +183,7 @@ Good examples:
 - A router troubleshooting note.
 - A build log snippet.
 - A project verification summary.
+- A prior support chat or project discussion copied into plain text.
 
 Basic flow:
 
@@ -173,6 +194,19 @@ Basic flow:
 5. Open Work to inspect processing status.
 6. Open Results to inspect collection runs, artifacts, documents, chunks, and
    evidence after processing.
+
+Conversation history flow:
+
+1. Choose an existing conversation source or create a new
+   `conversation_history` source.
+2. Enter a conversation title, date/time range if known, participants or roles,
+   and purpose/context note when useful.
+3. Mark whether the conversation contains corrections, decisions, or
+   instructions/preferences.
+4. Paste authorized UTF-8 conversation/history text.
+5. Import the conversation text.
+6. Open Work to inspect processing status.
+7. Open Results to inspect evidence after processing.
 
 ### Empty, Loading, And Error States
 

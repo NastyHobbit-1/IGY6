@@ -1413,9 +1413,9 @@ fn create_manual_upload_collection(
     if !source.enabled {
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
-    if source.source_type != "manual_upload" {
+    if !is_manual_text_collection_source_type(&source.source_type) {
         return Err(GatewayError::Conflict(
-            "Source is not a manual_upload source".to_string(),
+            "Source is not a manual text collection source".to_string(),
         ));
     }
     let permission =
@@ -1448,6 +1448,7 @@ fn create_manual_upload_collection(
     let work_item_id = generated_record_id("work");
     let summary_json = serde_json::json!({
         "mode": "manual_upload_collection",
+        "source_type": source.source_type,
         "source_permission_id": permission.id,
         "filename": payload.filename,
         "content_hash": stored.content_hash,
@@ -1595,9 +1596,9 @@ fn ingest_manual_upload_collection(
     if !source.enabled {
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
-    if source.source_type != "manual_upload" {
+    if !is_manual_text_collection_source_type(&source.source_type) {
         return Err(GatewayError::Conflict(
-            "Source is not a manual_upload source".to_string(),
+            "Source is not a manual text collection source".to_string(),
         ));
     }
     let permission =
@@ -1628,6 +1629,7 @@ fn ingest_manual_upload_collection(
     let collection_run_id = generated_record_id("collection");
     let mut summary_json = serde_json::json!({
         "mode": "manual_upload_ingest",
+        "source_type": source.source_type,
         "source_permission_id": permission.id,
         "filename": upload.filename,
         "content_hash": stored.content_hash,
@@ -9647,6 +9649,7 @@ fn manual_upload_normalization_work_payload(
     serde_json::json!({
         "collection_run_id": collection_run_id,
         "source_id": source.id,
+        "source_type": source.source_type,
         "source_permission_id": permission_id,
         "raw_artifact_ids": [raw_artifact_id],
         "artifact_count": 1,
@@ -10675,6 +10678,10 @@ fn is_source_type(value: &str) -> bool {
             | "user_observation"
             | "conversation_history"
     )
+}
+
+fn is_manual_text_collection_source_type(value: &str) -> bool {
+    matches!(value, "manual_upload" | "conversation_history")
 }
 
 fn is_allowed_source_operation(value: &str) -> bool {
@@ -13000,6 +13007,28 @@ mod tests {
         assert_eq!(metadata["source_permission_id"], "permission-1");
         assert_eq!(metadata["approval_id"], "approval-1");
         assert_eq!(metadata["operator_note"], "ok");
+
+        let conversation_source = CollectionSource {
+            id: "source-conversation".to_string(),
+            name: "Conversation".to_string(),
+            source_type: "conversation_history".to_string(),
+            location: None,
+            sensitivity: "internal".to_string(),
+            enabled: true,
+            metadata_json: serde_json::json!({}),
+        };
+        let conversation_payload = manual_upload_normalization_work_payload(
+            "collection-2",
+            &conversation_source,
+            "permission-2",
+            "artifact-2",
+        );
+        assert_eq!(conversation_payload["source_type"], "conversation_history");
+        assert!(is_manual_text_collection_source_type(
+            "conversation_history"
+        ));
+        assert!(is_manual_text_collection_source_type("manual_upload"));
+        assert!(!is_manual_text_collection_source_type("local_project"));
     }
 
     #[test]
