@@ -73,6 +73,29 @@ type EvidenceItemRecord = {
   created_at: string;
 };
 
+type EvidenceAnswerRecord = {
+  id: string;
+  user_question: string;
+  answer_status: string;
+  answer_text: string | null;
+  facts?: string[];
+  assumptions?: string[];
+  inferences?: string[];
+  uncertainty?: string[];
+  missing_information?: string[];
+  evidence_item_ids?: string[];
+  document_ids?: string[];
+  chunk_ids?: string[];
+  source_ids?: string[];
+  safe_labels?: string[];
+  retrieval_mode: string;
+  retrieval_count: number;
+  local_model_status?: string | null;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
 type ClaimRecord = {
   id: string;
   claim_text: string;
@@ -1221,7 +1244,11 @@ function ChatRetrievalPreview() {
   const limit = document.querySelector("[data-chat-preview-limit]");
   const status = document.querySelector("[data-chat-preview-status]");
   const results = document.querySelector("[data-chat-preview-results]");
+  const saveButton = document.querySelector("[data-chat-save-answer]");
+  const saveStatus = document.querySelector("[data-chat-save-answer-status]");
   const apiBaseUrl = form?.getAttribute("data-api-base-url");
+  let lastPayload = null;
+  let lastQuestion = "";
 
   if (!form || !message || !limit || !status || !results || !apiBaseUrl) {
     return;
@@ -1254,6 +1281,70 @@ function ChatRetrievalPreview() {
     const meta = document.createElement("span");
     meta.textContent = label + ": " + value;
     parent.appendChild(meta);
+  };
+
+  const uniqueStrings = (values, maxItems) => {
+    const seen = new Set();
+    const result = [];
+    for (const value of values) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      result.push(trimmed);
+      if (result.length >= maxItems) break;
+    }
+    return result;
+  };
+
+  const answerStatusFor = (payload, hits) => {
+    const status = typeof payload.answer_status === "string" ? payload.answer_status : "";
+    if (status) return status;
+    return hits.length > 0 ? "retrieved" : "insufficient_evidence";
+  };
+
+  const buildAnswerRecordPayload = () => {
+    const payload = lastPayload || {};
+    const hits = Array.isArray(payload.retrieval_context?.hits) ? payload.retrieval_context.hits : [];
+    const evidenceItemIds = uniqueStrings(hits.flatMap((hit) => Array.isArray(hit.evidence_items) ? hit.evidence_items.map((item) => item.id) : []), 50);
+    const documentIds = uniqueStrings(hits.map((hit) => hit.document?.id || hit.qdrant_payload?.document_id), 50);
+    const chunkIds = uniqueStrings(hits.map((hit) => hit.chunk?.id || hit.qdrant_payload?.chunk_id), 50);
+    const sourceIds = uniqueStrings(hits.map((hit) => hit.source?.id), 50);
+    const safeLabels = uniqueStrings([
+      ...evidenceItemIds.slice(0, 10).map((id) => "evidence " + shortId(id)),
+      ...documentIds.slice(0, 5).map((id) => "document " + shortId(id)),
+      ...chunkIds.slice(0, 5).map((id) => "chunk " + shortId(id)),
+      ...sourceIds.slice(0, 5).map((id) => "source " + shortId(id))
+    ], 30);
+    const hitCount = hits.length;
+    return {
+      user_question: lastQuestion,
+      answer_status: answerStatusFor(payload, hits),
+      answer_text: hitCount > 0
+        ? "Saved retrieval-preview answer record with " + hitCount + " local evidence hit(s). Review cited evidence IDs and source trail labels before relying on it."
+        : "Saved retrieval-preview answer record with insufficient local evidence.",
+      facts: [],
+      assumptions: ["Saved from local retrieval-preview metadata.", "Original evidence, documents, chunks, sources, and raw artifacts are preserved."],
+      inferences: hitCount > 0 ? ["The saved answer record is limited to the retrieved local evidence identifiers."] : [],
+      uncertainty: ["Retrieval scores and saved answer records are review aids, not proof of correctness."],
+      missing_information: hitCount > 0
+        ? ["Relevant sources not yet ingested, chunked, and embedded are absent from this saved answer record."]
+        : ["No matching local chunks or evidence items were retrieved for the saved question."],
+      evidence_item_ids: evidenceItemIds,
+      document_ids: documentIds,
+      chunk_ids: chunkIds,
+      source_ids: sourceIds,
+      safe_labels: safeLabels,
+      retrieval_mode: "retrieval_preview",
+      retrieval_count: hitCount,
+      local_model_status: "not_used_retrieval_preview",
+      metadata_json: {
+        created_from: "results_ask_over_evidence",
+        raw_evidence_text_stored: false,
+        full_chat_memory: false,
+        hosted_ai_called: false
+      }
+    };
   };
 
   const renderReviewSummary = (payload, hits) => {
@@ -1320,6 +1411,9 @@ function ChatRetrievalPreview() {
     results.replaceChildren();
     results.removeAttribute("data-answer-status");
     results.removeAttribute("data-hit-count");
+    lastPayload = null;
+    lastQuestion = message.value.trim();
+    if (saveStatus) saveStatus.textContent = "Run retrieval before saving an answer record.";
 
     try {
       const response = await fetch(apiBaseUrl + "/chat/retrieval-preview", {
@@ -1348,6 +1442,7 @@ function ChatRetrievalPreview() {
       }
 
       const payload = await response.json();
+      lastPayload = payload;
       const hits = payload.retrieval_context?.hits ?? [];
       const answerStatus = payload.answer_status || "unknown";
       status.textContent = "answer_status: " + answerStatus + " | hits: " + hits.length;
@@ -1371,6 +1466,28 @@ function ChatRetrievalPreview() {
       body.append(title, detail);
       item.appendChild(body);
       results.appendChild(item);
+    }
+  });
+
+  saveButton?.addEventListener("click", async () => {
+    if (!lastPayload || !lastQuestion) {
+      if (saveStatus) saveStatus.textContent = "Ask over evidence before saving an answer record.";
+      return;
+    }
+    if (saveStatus) saveStatus.textContent = "Saving answer record";
+    try {
+      const response = await fetch(apiBaseUrl + "/evidence-answers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildAnswerRecordPayload())
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+      }
+      if (saveStatus) saveStatus.textContent = "Saved answer record " + (payload.id || "recorded") + ". Refresh Results to see it in history.";
+    } catch (error) {
+      if (saveStatus) saveStatus.textContent = "Answer record save failed: " + (error instanceof Error ? error.message : "Unknown error");
     }
   });
 })();
@@ -1398,8 +1515,12 @@ function ChatRetrievalPreview() {
         </label>
         <button type="submit">Ask over evidence</button>
       </form>
+      <div className="guidedManualActions">
+        <button type="button" data-chat-save-answer>Save answer record</button>
+        <span data-chat-save-answer-status>Run retrieval before saving. Saved records preserve history and do not change evidence.</span>
+      </div>
       <div className="previewNote">
-        Retrieval context only. <TermHelp term="noExternalModel" label="No external model" /> answer, hidden reasoning, external model call, persistence, or action execution.
+        Retrieval context only until saved. <TermHelp term="noExternalModel" label="No external model" /> answer, hidden reasoning, external model call, full chat memory, or action execution.
         <span data-retrieval-review-guidance> Evidence-backed only when hits are present; empty results mean insufficient evidence, not proof the information does not exist.</span>
       </div>
       <div className="stack previewResults" data-chat-preview-results />
@@ -3020,6 +3141,7 @@ function BasicReportWorkflow({
 
 function EvidenceFeedbackWorkflow({
   evidenceItems,
+  evidenceAnswers,
   reports,
   workItems,
   feedback,
@@ -3027,6 +3149,7 @@ function EvidenceFeedbackWorkflow({
   improvements
 }: {
   evidenceItems: ApiResult<EvidenceItemRecord[]>;
+  evidenceAnswers: ApiResult<EvidenceAnswerRecord[]>;
   reports: ApiResult<ReportRecord[]>;
   workItems: ApiResult<WorkItemRecord[]>;
   feedback: ApiResult<FeedbackRecord[]>;
@@ -3039,6 +3162,11 @@ function EvidenceFeedbackWorkflow({
       type: "evidence_item",
       id: item.id,
       label: `Evidence item ${item.id}`
+    })),
+    ...evidenceAnswers.data.slice(0, 4).map((answer) => ({
+      type: "evidence_answer",
+      id: answer.id,
+      label: `Answer record ${answer.id}`
     })),
     ...reports.data.slice(0, 3).map((report) => ({
       type: "report",
@@ -3259,7 +3387,7 @@ function EvidenceFeedbackWorkflow({
       <div className="guidedManualNotice">
         <strong>Review outcome capture</strong>
         <span>
-          Record feedback on retrieved evidence or a supported report/work item outcome. Feedback and outcomes are persisted by existing local API routes.
+          Record feedback on retrieved evidence, saved answer records, or a supported report/work item outcome. Outcomes for answer records are not supported by the current outcome API.
         </span>
       </div>
       <form className="guidedManualForm" data-feedback-form>
@@ -3287,7 +3415,7 @@ function EvidenceFeedbackWorkflow({
         </label>
         <div className="guidedManualActions">
           <button type="submit" disabled={feedbackTargets.length === 0}>Record feedback</button>
-          <span>{feedbackTargets.length > 0 ? "Targets come from current evidence, reports, and work items." : "No supported feedback target is available yet."}</span>
+          <span>{feedbackTargets.length > 0 ? "Targets come from current evidence, saved answer records, reports, and work items." : "No supported feedback target is available yet."}</span>
         </div>
       </form>
       <form className="guidedManualForm" data-outcome-form>
@@ -3391,6 +3519,54 @@ function EvidenceFeedbackWorkflow({
 	      </section>
 	      <script dangerouslySetInnerHTML={{ __html: script }} />
 	    </section>
+  );
+}
+
+function EvidenceAnswerHistory({
+  evidenceAnswers,
+  feedback
+}: {
+  evidenceAnswers: ApiResult<EvidenceAnswerRecord[]>;
+  feedback: ApiResult<FeedbackRecord[]>;
+}) {
+  const recentAnswers = evidenceAnswers.data.slice(0, 8);
+  const feedbackForAnswer = (answerId: string) => feedback.data.filter((event) => event.target_type === "evidence_answer" && event.target_id === answerId);
+
+  return (
+    <section className="guidedManualText" data-evidence-answer-history>
+      <div className="guidedManualNotice">
+        <strong>Saved evidence answer records</strong>
+        <span>Saved answer records preserve the original retrieval review and evidence identifiers. They do not rewrite evidence, hide superseded evidence, or create full chat memory.</span>
+      </div>
+      {evidenceAnswers.error ? <p className="errorText">Saved answer records could not be loaded: {evidenceAnswers.error}</p> : null}
+      <div className="stack">
+        {recentAnswers.map((answer) => {
+          const evidenceIds = answer.evidence_item_ids ?? [];
+          const labels = answer.safe_labels ?? [];
+          const linkedFeedback = feedbackForAnswer(answer.id);
+          return (
+            <article className="item evidenceItem" key={answer.id}>
+              <div>
+                <strong>{answer.user_question}</strong>
+                <span>{answer.answer_text ?? "Saved answer record without answer text."}</span>
+                <span className="messageMeta">Evidence IDs: {evidenceIds.length > 0 ? evidenceIds.slice(0, 5).join(", ") : "none recorded"}</span>
+                <span className="messageMeta">Trail: {labels.length > 0 ? labels.slice(0, 6).join(" · ") : "no safe trail labels recorded"}</span>
+                <span className="messageMeta">Original evidence, documents, chunks, sources, and raw artifacts remain preserved.</span>
+              </div>
+              <div>
+                <StatusPill state={answer.answer_status} />
+                <span>{answer.retrieval_mode} · {answer.retrieval_count} hit(s)</span>
+                <span>{answer.local_model_status ?? "local model status not recorded"}</span>
+                <span>{formatDate(answer.created_at)}</span>
+                <span>{linkedFeedback.length > 0 ? `${linkedFeedback.length} feedback record(s)` : "Feedback can target this answer record."}</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {recentAnswers.length === 0 ? <EmptyState label="No saved answer records yet. Ask over evidence, then save the answer record." /> : null}
+      <p className="messageMeta">Outcomes are not offered for answer records yet because the outcome API only validates reports, work items, predictions, recommendations, hypotheses, and patterns.</p>
+    </section>
   );
 }
 
@@ -4009,6 +4185,7 @@ export default async function Home() {
     documents,
     chunks,
     evidenceItems,
+    evidenceAnswers,
     claims,
     vectorCollection,
     graphSchema,
@@ -4035,6 +4212,7 @@ export default async function Home() {
     getJson<NormalizedDocumentRecord[]>("/evidence/documents", []),
     getJson<ChunkRecord[]>("/evidence/chunks", []),
     getJson<EvidenceItemRecord[]>("/evidence/items", []),
+    getJson<EvidenceAnswerRecord[]>("/evidence-answers", []),
     getJson<ClaimRecord[]>("/evidence/claims", []),
     getJson<VectorCollectionStatus>("/memory/vector/chunks", { collection_name: "unknown", exists: false }),
     getJson<GraphSchemaStatus>("/memory/graph/schema", { constraints: [] }),
@@ -4276,6 +4454,7 @@ export default async function Home() {
 
           <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
           <ChatRetrievalPreview />
+          <EvidenceAnswerHistory evidenceAnswers={evidenceAnswers} feedback={feedback} />
 	          <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} taskPlans={agentTaskPlans} />
 	          <AgentTaskHistoryReview
 	            taskPlans={agentTaskPlans}
@@ -4831,7 +5010,7 @@ export default async function Home() {
             <div className="fieldGuide">
               <article><strong>Report reason</strong><span>Everyday: "Create a summary of this uploaded bill." · Project: "Summarize the latest verification notes."</span></article>
             </div>
-            <EvidenceFeedbackWorkflow evidenceItems={evidenceItems} reports={reports} workItems={workItems} feedback={feedback} outcomes={outcomes} improvements={improvements} />
+            <EvidenceFeedbackWorkflow evidenceItems={evidenceItems} evidenceAnswers={evidenceAnswers} reports={reports} workItems={workItems} feedback={feedback} outcomes={outcomes} improvements={improvements} />
             <BasicReportWorkflow reports={reports} evidenceCount={evidenceItems.data.length} documentCount={documents.data.length} chunkCount={chunks.data.length} />
             <section className="quad analysisGrid">
               <div>

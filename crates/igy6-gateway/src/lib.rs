@@ -63,6 +63,9 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/agent/intent"),
     ("POST", "/chat/retrieval-preview"),
     ("POST", "/chat/evidence-answer"),
+    ("GET", "/evidence-answers"),
+    ("GET", "/evidence-answers/{answer_id}"),
+    ("POST", "/evidence-answers"),
     ("GET", "/approvals"),
     ("GET", "/approvals/{approval_id}"),
     ("POST", "/approvals"),
@@ -321,6 +324,9 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/chat/evidence-answer") => {
             json_response(200, "OK", evidence_answer_json(&request.body), false)
         }
+        ("POST", "/evidence-answers") => {
+            evidence_answer_record_create_response(&request.body, database_url)
+        }
         ("POST", "/approvals") => approval_create_response(&request.body, database_url),
         ("POST", "/artifacts") => raw_artifact_create_response(&request.body, database_url),
         ("POST", "/analysis/hypotheses") => {
@@ -479,12 +485,17 @@ pub fn handle_gateway_request_with_db(
         ("GET", "/memory/graph/schema") => {
             json_response(200, "OK", graph_schema_status_json(), false)
         }
+        ("GET", "/evidence-answers") => {
+            action_route_response(list_evidence_answer_records(database_url))
+        }
         ("GET", "/agent/task-plans") => {
             action_route_response(list_agent_task_plans(database_url))
         }
         ("GET", _) => {
             if let Some(task_plan_id) = agent_task_plan_detail_path(&request.path) {
                 action_route_response(get_agent_task_plan(&task_plan_id, database_url))
+            } else if let Some(answer_id) = evidence_answer_record_detail_path(&request.path) {
+                action_route_response(get_evidence_answer_record(&answer_id, database_url))
             } else if let Some((node_label, node_id)) = graph_relationships_path(&request.path) {
                 action_route_response(get_graph_node_relationships(&node_label, &node_id))
             } else if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
@@ -835,6 +846,13 @@ fn write_route_response(result: Result<String, GatewayError>) -> GatewayResponse
 
 fn feedback_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_feedback(body, database_url))
+}
+
+fn evidence_answer_record_create_response(
+    body: &str,
+    database_url: Option<&str>,
+) -> GatewayResponse {
+    write_route_response(create_evidence_answer_record(body, database_url))
 }
 
 fn outcome_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -5332,6 +5350,140 @@ fn create_improvement(body: &str, database_url: Option<&str>) -> Result<String, 
     Ok(response_body)
 }
 
+fn create_evidence_answer_record(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_evidence_answer_record_create(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_evidence_answer_records_table(&mut client)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let answer_id = generated_record_id("answer");
+    let facts_json = serde_json::json!(payload.facts);
+    let assumptions_json = serde_json::json!(payload.assumptions);
+    let inferences_json = serde_json::json!(payload.inferences);
+    let uncertainty_json = serde_json::json!(payload.uncertainty);
+    let missing_information_json = serde_json::json!(payload.missing_information);
+    let evidence_item_ids_json = serde_json::json!(payload.evidence_item_ids);
+    let document_ids_json = serde_json::json!(payload.document_ids);
+    let chunk_ids_json = serde_json::json!(payload.chunk_ids);
+    let source_ids_json = serde_json::json!(payload.source_ids);
+    let safe_labels_json = serde_json::json!(payload.safe_labels);
+
+    transaction
+        .execute(
+            "INSERT INTO evidence_answer_records (
+                id,
+                user_question,
+                answer_status,
+                answer_text,
+                facts,
+                assumptions,
+                inferences,
+                uncertainty,
+                missing_information,
+                evidence_item_ids,
+                document_ids,
+                chunk_ids,
+                source_ids,
+                safe_labels,
+                retrieval_mode,
+                retrieval_count,
+                local_model_status,
+                metadata_json
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15, $16, $17, $18::jsonb)",
+            &[
+                &answer_id,
+                &payload.user_question,
+                &payload.answer_status,
+                &payload.answer_text,
+                &facts_json,
+                &assumptions_json,
+                &inferences_json,
+                &uncertainty_json,
+                &missing_information_json,
+                &evidence_item_ids_json,
+                &document_ids_json,
+                &chunk_ids_json,
+                &source_ids_json,
+                &safe_labels_json,
+                &payload.retrieval_mode,
+                &payload.retrieval_count,
+                &payload.local_model_status,
+                &payload.metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "answer_id": &answer_id,
+        "answer_status": &payload.answer_status,
+        "evidence_item_count": payload.evidence_item_ids.len(),
+        "retrieval_count": payload.retrieval_count
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ('local-owner', 'evidence_answer.created', 'recorded', 'evidence_answer', $1, NULL, $2::jsonb)",
+            &[&answer_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = evidence_answer_record_response_json(&mut transaction, &answer_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn list_evidence_answer_records(database_url: Option<&str>) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_evidence_answer_records_table(&mut client)?;
+    client
+        .query_one(
+            "SELECT COALESCE((SELECT json_agg(row_to_json(t))::text FROM (SELECT id, user_question, answer_status, answer_text, facts, assumptions, inferences, uncertainty, missing_information, evidence_item_ids, document_ids, chunk_ids, source_ids, safe_labels, retrieval_mode, retrieval_count, local_model_status, metadata_json, created_at, updated_at FROM evidence_answer_records ORDER BY created_at DESC LIMIT 50) t), '[]')",
+            &[],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn get_evidence_answer_record(
+    answer_id: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_evidence_answer_records_table(&mut client)?;
+    let body = client
+        .query_one(
+            "SELECT COALESCE((SELECT row_to_json(t)::text FROM (SELECT id, user_question, answer_status, answer_text, facts, assumptions, inferences, uncertainty, missing_information, evidence_item_ids, document_ids, chunk_ids, source_ids, safe_labels, retrieval_mode, retrieval_count, local_model_status, metadata_json, created_at, updated_at FROM evidence_answer_records WHERE id = $1) t), '')",
+            &[&answer_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if body.is_empty() {
+        Err(GatewayError::NotFound(
+            "Evidence answer record not found".to_string(),
+        ))
+    } else {
+        Ok(body)
+    }
+}
+
 fn create_feedback(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_feedback_create(body)?;
     let database_url = database_url
@@ -5609,6 +5761,26 @@ struct FeedbackCreatePayload {
     label: String,
     actor_id: String,
     note: Option<String>,
+    metadata_json: Value,
+}
+
+struct EvidenceAnswerRecordCreatePayload {
+    user_question: String,
+    answer_status: String,
+    answer_text: Option<String>,
+    facts: Vec<String>,
+    assumptions: Vec<String>,
+    inferences: Vec<String>,
+    uncertainty: Vec<String>,
+    missing_information: Vec<String>,
+    evidence_item_ids: Vec<String>,
+    document_ids: Vec<String>,
+    chunk_ids: Vec<String>,
+    source_ids: Vec<String>,
+    safe_labels: Vec<String>,
+    retrieval_mode: String,
+    retrieval_count: i32,
+    local_model_status: Option<String>,
     metadata_json: Value,
 }
 
@@ -6138,6 +6310,59 @@ fn parse_feedback_create(body: &str) -> Result<FeedbackCreatePayload, GatewayErr
         label,
         actor_id,
         note,
+        metadata_json,
+    })
+}
+
+fn parse_evidence_answer_record_create(
+    body: &str,
+) -> Result<EvidenceAnswerRecordCreatePayload, GatewayError> {
+    let object = parse_json_object(body, "Evidence answer record request body")?;
+    let user_question = required_text_field_with_max(&object, "user_question", 1000)?;
+    let answer_status =
+        optional_string_field_with_max(&object, "answer_status", "not_generated", 64)?;
+    if !is_evidence_answer_status(&answer_status) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported evidence answer status: {answer_status}"
+        )));
+    }
+    let answer_text = optional_nullable_string_field_with_max(&object, "answer_text", 8000)?;
+    let facts = optional_bounded_string_array_field(&object, "facts", 20, 1000)?;
+    let assumptions = optional_bounded_string_array_field(&object, "assumptions", 20, 1000)?;
+    let inferences = optional_bounded_string_array_field(&object, "inferences", 20, 1000)?;
+    let uncertainty = optional_bounded_string_array_field(&object, "uncertainty", 20, 1000)?;
+    let missing_information =
+        optional_bounded_string_array_field(&object, "missing_information", 20, 1000)?;
+    let evidence_item_ids =
+        optional_bounded_string_array_field(&object, "evidence_item_ids", 50, 128)?;
+    let document_ids = optional_bounded_string_array_field(&object, "document_ids", 50, 128)?;
+    let chunk_ids = optional_bounded_string_array_field(&object, "chunk_ids", 50, 128)?;
+    let source_ids = optional_bounded_string_array_field(&object, "source_ids", 50, 128)?;
+    let safe_labels = optional_bounded_string_array_field(&object, "safe_labels", 30, 180)?;
+    let retrieval_mode =
+        optional_string_field_with_max(&object, "retrieval_mode", "not_recorded", 64)?;
+    let retrieval_count = optional_i32_field_with_default(&object, "retrieval_count", 0, 0, 1000)?;
+    let local_model_status =
+        optional_nullable_string_field_with_max(&object, "local_model_status", 128)?;
+    let metadata_json =
+        safe_evidence_answer_metadata_json(optional_object_field(&object, "metadata_json")?)?;
+    Ok(EvidenceAnswerRecordCreatePayload {
+        user_question,
+        answer_status,
+        answer_text,
+        facts,
+        assumptions,
+        inferences,
+        uncertainty,
+        missing_information,
+        evidence_item_ids,
+        document_ids,
+        chunk_ids,
+        source_ids,
+        safe_labels,
+        retrieval_mode,
+        retrieval_count,
+        local_model_status,
         metadata_json,
     })
 }
@@ -8255,6 +8480,49 @@ fn ensure_agent_task_plans_table(client: &mut Client) -> Result<(), GatewayError
         .map_err(|error| GatewayError::Database(error.to_string()))
 }
 
+fn ensure_evidence_answer_records_table(client: &mut Client) -> Result<(), GatewayError> {
+    client
+        .batch_execute(
+            "CREATE TABLE IF NOT EXISTS evidence_answer_records (
+                id text PRIMARY KEY,
+                user_question text NOT NULL,
+                answer_status text NOT NULL,
+                answer_text text,
+                facts jsonb NOT NULL DEFAULT '[]'::jsonb,
+                assumptions jsonb NOT NULL DEFAULT '[]'::jsonb,
+                inferences jsonb NOT NULL DEFAULT '[]'::jsonb,
+                uncertainty jsonb NOT NULL DEFAULT '[]'::jsonb,
+                missing_information jsonb NOT NULL DEFAULT '[]'::jsonb,
+                evidence_item_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+                document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+                chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+                source_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+                safe_labels jsonb NOT NULL DEFAULT '[]'::jsonb,
+                retrieval_mode text NOT NULL DEFAULT 'not_recorded',
+                retrieval_count integer NOT NULL DEFAULT 0,
+                local_model_status text,
+                metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS idx_evidence_answer_records_created_at ON evidence_answer_records (created_at DESC);",
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn evidence_answer_record_response_json(
+    transaction: &mut postgres::Transaction<'_>,
+    answer_id: &str,
+) -> Result<String, GatewayError> {
+    transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, user_question, answer_status, answer_text, facts, assumptions, inferences, uncertainty, missing_information, evidence_item_ids, document_ids, chunk_ids, source_ids, safe_labels, retrieval_mode, retrieval_count, local_model_status, metadata_json, created_at, updated_at FROM evidence_answer_records WHERE id = $1) t",
+            &[&answer_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
 fn agent_task_plan_response_json(
     transaction: &mut postgres::Transaction<'_>,
     task_plan_id: &str,
@@ -9456,6 +9724,14 @@ fn agent_task_plan_detail_path(path: &str) -> Option<String> {
     Some(percent_decode_path_segment(id))
 }
 
+fn evidence_answer_record_detail_path(path: &str) -> Option<String> {
+    let id = path.strip_prefix("/evidence-answers/")?;
+    if id.is_empty() || id.contains('/') {
+        return None;
+    }
+    Some(percent_decode_path_segment(id))
+}
+
 fn agent_task_plan_work_item_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/agent/task-plans/", "/work-item")
 }
@@ -10345,6 +10621,35 @@ fn optional_bounded_string_array_field(
     Ok(values)
 }
 
+fn safe_evidence_answer_metadata_json(value: Value) -> Result<Value, GatewayError> {
+    let Some(object) = value.as_object() else {
+        return Err(GatewayError::Validation(
+            "metadata_json must be a JSON object.".to_string(),
+        ));
+    };
+    for (key, item) in object {
+        if !matches!(
+            key.as_str(),
+            "created_from"
+                | "raw_evidence_text_stored"
+                | "full_chat_memory"
+                | "hosted_ai_called"
+                | "answer_packet_available"
+                | "retrieval_context_available"
+        ) {
+            return Err(GatewayError::Validation(format!(
+                "metadata_json contains unsupported evidence answer metadata key: {key}"
+            )));
+        }
+        if !(item.is_string() || item.is_boolean() || item.is_number() || item.is_null()) {
+            return Err(GatewayError::Validation(format!(
+                "metadata_json.{key} must be a scalar value."
+            )));
+        }
+    }
+    Ok(value)
+}
+
 fn required_string_array_field(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -10475,12 +10780,28 @@ fn is_evidence_review_state(value: &str) -> bool {
     )
 }
 
+fn is_evidence_answer_status(value: &str) -> bool {
+    matches!(
+        value,
+        "retrieved"
+            | "evidence_summary"
+            | "evidence_grounded_llm"
+            | "insufficient_evidence"
+            | "not_generated"
+            | "fallback"
+            | "error"
+            | "unavailable"
+            | "partial"
+    )
+}
+
 fn is_feedback_target_type(value: &str) -> bool {
     matches!(
         value,
         "source"
             | "document"
             | "evidence_item"
+            | "evidence_answer"
             | "claim"
             | "pattern"
             | "hypothesis"
@@ -10753,7 +11074,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /evidence/items/{evidence_item_id}/review-state bounded evidence correction/supersession review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET/POST /evidence-answers and answer detail reads\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /evidence/items/{evidence_item_id}/review-state bounded evidence correction/supersession review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -11598,6 +11919,8 @@ mod tests {
             ("GET", "/analysis/recommendations/recommendation-1"),
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/task-plan-1"),
+            ("GET", "/evidence-answers"),
+            ("GET", "/evidence-answers/answer-1"),
             ("GET", "/approvals"),
             ("GET", "/approvals/approval-1"),
             ("GET", "/artifacts"),
@@ -11939,6 +12262,41 @@ mod tests {
             assert!(!response.proxied_to_fallback, "{path}");
             assert!(response.body.contains("DATABASE_URL"), "{path}");
         }
+    }
+
+    #[test]
+    fn evidence_answer_records_are_rust_native_and_require_database_url_after_validation() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/evidence-answers",
+                r#"{"user_question":"What did I upload?","answer_status":"retrieved","answer_text":"Retrieved 2 local evidence records.","evidence_item_ids":["evidence-1"],"document_ids":["document-1"],"chunk_ids":["chunk-1"],"source_ids":["source-1"],"safe_labels":["evidence evidence-1"],"retrieval_mode":"retrieval_preview","retrieval_count":2,"local_model_status":"not_used_retrieval_preview","metadata_json":{"created_from":"test"}}"#,
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 503);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("DATABASE_URL"));
+
+        let list = handle_gateway_request_with_db(
+            &request("GET", "/evidence-answers", ""),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(list.status_code, 503);
+        assert!(!list.proxied_to_fallback);
+
+        let detail = handle_gateway_request_with_db(
+            &request("GET", "/evidence-answers/answer-1", ""),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(detail.status_code, 503);
+        assert!(!detail.proxied_to_fallback);
     }
 
     #[test]
@@ -12856,6 +13214,33 @@ mod tests {
             assert_eq!(response.status_code, 422, "{body}");
             assert!(!response.proxied_to_fallback, "{body}");
         }
+
+        let answer_feedback = parse_feedback_create(
+            r#"{"target_type":"evidence_answer","target_id":"answer-1","label":"useful"}"#,
+        )
+        .expect("evidence answer feedback target");
+        assert_eq!(answer_feedback.target_type, "evidence_answer");
+    }
+
+    #[test]
+    fn evidence_answer_record_validation_rejects_invalid_requests_without_fallback() {
+        for body in [
+            "{}",
+            r#"{"user_question":"What?","answer_status":"made_up"}"#,
+            r#"{"user_question":"What?","retrieval_count":-1}"#,
+            r#"{"user_question":"What?","evidence_item_ids":[""]}"#,
+            r#"{"user_question":"What?","metadata_json":[]}"#,
+            r#"{"user_question":"What?","metadata_json":{"api_token":"secret"}}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/evidence-answers", body),
+                None,
+                NO_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
     }
 
     #[test]
@@ -13079,6 +13464,9 @@ mod tests {
             ("POST", "/agent/task-plans/{task_plan_id}/evidence-summary"),
             ("POST", "/agent/task-plans/{task_plan_id}/work-spec"),
             ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
+            ("GET", "/evidence-answers"),
+            ("GET", "/evidence-answers/{answer_id}"),
+            ("POST", "/evidence-answers"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
             ("POST", "/approvals"),

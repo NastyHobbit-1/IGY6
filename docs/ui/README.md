@@ -523,14 +523,25 @@ What happens next:
 1. Open Results.
 2. Review evidence and document counts.
 3. Ask a question in Ask Over Evidence.
-4. If reports exist, review them in Reports.
-5. If no results exist, return to Add Data or Work.
+4. Save an answer record when you want the retrieval review to persist after
+   reload.
+5. Review saved evidence answer records to see the question, answer status,
+   deterministic summary, evidence IDs, source/chunk/document trail labels, and
+   feedback state.
+6. If reports exist, review them in Reports.
+7. If no results exist, return to Add Data or Work.
 
 Example questions:
 
 - `What did I upload today?`
 - `What does this note say I need to do next?`
 - `What failed in this log? Cite the evidence.`
+
+Saved answer records are additive review records. They do not delete evidence,
+rewrite documents or chunks, hide superseded evidence, change retrieval ranking,
+or create full chat memory. Feedback can target a saved answer record. Outcomes
+for answer records are not offered because the current outcome API supports only
+reports, work items, predictions, recommendations, hypotheses, and patterns.
 
 ### Workflow E: Use Advanced Only When Needed
 
