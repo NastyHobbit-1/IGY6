@@ -127,6 +127,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/sources/{source_id}/permissions"),
     ("POST", "/sources"),
     ("POST", "/sources/{source_id}/permissions"),
+    ("POST", "/sources/{source_id}/review-state"),
     ("GET", "/work-items"),
     ("GET", "/work-items/{work_item_id}"),
     ("POST", "/work-items"),
@@ -437,6 +438,12 @@ pub fn handle_gateway_request_with_db(
                 ))
             } else if let Some(source_id) = source_permission_create_path(&request.path) {
                 write_route_response(create_source_permission(
+                    &source_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(source_id) = source_review_state_path(&request.path) {
+                write_route_response(update_source_review_state(
                     &source_id,
                     &request.body,
                     database_url,
@@ -4561,6 +4568,75 @@ fn create_source_permission(
     Ok(response_body)
 }
 
+fn update_source_review_state(
+    source_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let source_id = validate_route_id(source_id, "source_id")?;
+    let payload = parse_source_review_state(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let row = transaction
+        .query_opt(
+            "SELECT trust_level, sensitivity, enabled FROM sources WHERE id = $1",
+            &[&source_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+        .ok_or_else(|| GatewayError::NotFound("Source not found".to_string()))?;
+    let previous_trust_level = row.get::<_, String>(0);
+    let previous_sensitivity = row.get::<_, String>(1);
+    let previous_enabled = row.get::<_, bool>(2);
+
+    transaction
+        .execute(
+            "UPDATE sources SET trust_level = $1, sensitivity = $2, enabled = $3, updated_at = NOW() WHERE id = $4",
+            &[
+                &payload.trust_level,
+                &payload.sensitivity,
+                &payload.enabled,
+                &source_id,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details = serde_json::json!({
+        "previous_trust_level": previous_trust_level,
+        "new_trust_level": payload.trust_level,
+        "previous_sensitivity": previous_sensitivity,
+        "new_sensitivity": payload.sensitivity,
+        "previous_enabled": previous_enabled,
+        "new_enabled": payload.enabled,
+        "review_note": payload.review_note,
+        "policy_enforcement_changed": false,
+        "evidence_hidden": false,
+        "source_deleted": false
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'source.review_state_updated', 'recorded', 'source', $2, NULL, $3::jsonb)",
+            &[&payload.actor_id, &source_id, &details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = transaction
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT s.id, s.name, s.source_type, s.location, s.owner_actor_id, s.sensitivity, s.trust_level, s.enabled, s.metadata_json, s.created_at, s.updated_at, COALESCE((SELECT json_agg(row_to_json(p)) FROM (SELECT id, source_id, scope_json, allowed_operations, external_model_policy, approval_required, created_by_actor_id, created_at, updated_at FROM source_permissions WHERE source_id = s.id ORDER BY created_at ASC) p), '[]'::json) AS permissions FROM sources s WHERE s.id = $1) t",
+            &[&source_id],
+        )
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn create_hypothesis(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     let payload = parse_hypothesis_create(body)?;
     let database_url = database_url
@@ -5447,6 +5523,14 @@ struct SourceCreatePayload {
     permission: Option<SourcePermissionCreatePayload>,
 }
 
+struct SourceReviewStatePayload {
+    trust_level: String,
+    sensitivity: String,
+    enabled: bool,
+    review_note: Option<String>,
+    actor_id: String,
+}
+
 struct SourcePermissionCreatePayload {
     scope_json: Value,
     allowed_operations: Vec<String>,
@@ -6007,6 +6091,32 @@ fn parse_source_create(body: &str) -> Result<SourceCreatePayload, GatewayError> 
         enabled,
         metadata_json,
         permission,
+    })
+}
+
+fn parse_source_review_state(body: &str) -> Result<SourceReviewStatePayload, GatewayError> {
+    let object = parse_json_object(body, "Source review state request body")?;
+    let trust_level = required_string_field(&object, "trust_level", 64)?;
+    if !is_source_review_trust_level(&trust_level) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported source trust level: {trust_level}"
+        )));
+    }
+    let sensitivity = required_string_field(&object, "sensitivity", 64)?;
+    if !is_sensitivity_label(&sensitivity) {
+        return Err(GatewayError::Validation(format!(
+            "Unknown sensitivity label: {sensitivity}"
+        )));
+    }
+    let enabled = optional_bool_field(&object, "enabled", true)?;
+    let review_note = optional_nullable_string_field_with_max(&object, "review_note", 500)?;
+    let actor_id = optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?;
+    Ok(SourceReviewStatePayload {
+        trust_level,
+        sensitivity,
+        enabled,
+        review_note,
+        actor_id,
     })
 }
 
@@ -9252,6 +9362,10 @@ fn source_permission_create_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/sources/", "/permissions")
 }
 
+fn source_review_state_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/sources/", "/review-state")
+}
+
 fn work_item_dispatch_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/work-items/", "/dispatch")
 }
@@ -10127,6 +10241,13 @@ fn is_sensitivity_label(value: &str) -> bool {
     matches!(value, "public" | "internal" | "sensitive" | "secret")
 }
 
+fn is_source_review_trust_level(value: &str) -> bool {
+    matches!(
+        value,
+        "trusted" | "noisy" | "sensitive" | "disabled" | "review_needed"
+    )
+}
+
 fn is_external_model_policy(value: &str) -> bool {
     matches!(value, "blocked" | "metadata_only" | "allowed_with_approval")
 }
@@ -10483,7 +10604,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -12652,6 +12773,11 @@ mod tests {
             ),
             (
                 "POST",
+                "/sources/source-1/review-state",
+                r#"{"trust_level":"trusted","sensitivity":"internal","enabled":true}"#,
+            ),
+            (
+                "POST",
                 "/work-items/work-1/status",
                 r#"{"status":"running"}"#,
             ),
@@ -12696,6 +12822,19 @@ mod tests {
             (
                 "/sources/source-1/permissions",
                 r#"{"allowed_operations":["write"]}"#,
+            ),
+            ("/sources/source-1/review-state", "{}"),
+            (
+                "/sources/source-1/review-state",
+                r#"{"trust_level":"unreviewed","sensitivity":"internal","enabled":true}"#,
+            ),
+            (
+                "/sources/source-1/review-state",
+                r#"{"trust_level":"trusted","sensitivity":"classified","enabled":true}"#,
+            ),
+            (
+                "/sources/source-1/review-state",
+                r#"{"trust_level":"trusted","sensitivity":"internal","enabled":"yes"}"#,
             ),
             ("/work-items/work-1/status", r#"{"status":"bogus"}"#),
         ] {
@@ -12756,6 +12895,7 @@ mod tests {
             ("GET", "/sources/{source_id}"),
             ("GET", "/sources/{source_id}/permissions"),
             ("POST", "/sources"),
+            ("POST", "/sources/{source_id}/review-state"),
             ("GET", "/analysis/patterns"),
             ("GET", "/analysis/patterns/{pattern_id}"),
             ("POST", "/analysis/patterns"),

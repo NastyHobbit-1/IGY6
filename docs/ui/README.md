@@ -123,6 +123,12 @@ Sources:
 - Location is a description or path for the source.
 - Sensitivity tells IGY6 how private the data is.
 - Permissions control what IGY6 may do with the source.
+- Source trust and sensitivity review lets you mark a source as `trusted`,
+  `noisy`, `sensitive`, `disabled`, or `review-needed` from the normal Add Data
+  workflow.
+- Source review updates the source record and audit trail. It does not delete
+  sources, rewrite historical evidence, silently hide evidence in Results, or
+  claim new retrieval ranking or policy enforcement behavior.
 
 Guided Upload:
 
@@ -140,6 +146,8 @@ Guided Upload:
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
   upload collection path when the source permission allows immediate
   collection.
+- `Save source review` records a trust/sensitivity review update for an
+  existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
   review approvals before collection continues.
 - Advanced keeps the raw source, permission, approval, and upload controls for
