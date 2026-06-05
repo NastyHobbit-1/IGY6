@@ -1425,6 +1425,7 @@ function AgentCommandPanel({
 	  const approvalButton = root.querySelector("[data-agent-request-approval]");
 	  const savePlanButton = root.querySelector("[data-agent-save-plan]");
 	  const evidenceButton = root.querySelector("[data-agent-check-evidence]");
+	  const proposeWorkSpecButtons = root.querySelectorAll("[data-agent-plan-propose-work-spec]");
 	  const executeApprovedButton = root.querySelector("[data-agent-execute-approved]");
 	  const actionSelect = root.querySelector("[data-agent-action-select]");
 	  const approvalSelect = root.querySelector("[data-agent-approval-select]");
@@ -1557,10 +1558,31 @@ function AgentCommandPanel({
 	    return "supported";
 	  };
 
+	  const boundedWorkSpecFor = (understanding, copy) => {
+	    if (understanding?.category !== "create_report" || understanding.unsupported_or_unsafe) return null;
+	    const summary = understanding.wants || commandInput?.value?.trim() || "Agent task plan report request";
+	    return {
+	      work_type: "report_generation",
+	      expected_output: (copy.next || "Create a bounded report from this task plan.").slice(0, 1000),
+	      payload_json: {
+	        report_type: "agent_task_plan",
+	        requested_summary: summary.slice(0, 1000),
+	        intent_category: "create_report"
+	      },
+	      proposal_source: "agent_intake_planner",
+	      safety_constraints: [
+	        "Supported report_generation work item type only.",
+	        "No shell command or user-provided argv.",
+	        "Work creation remains approval-gated when approval is required."
+	      ]
+	    };
+	  };
+
 	  const taskPlanPayload = (intent) => {
 	    const understanding = intent?.request_understanding || {};
 	    const capability = intent?.proposed_action ? capabilityFor(intent.proposed_action) : null;
 	    const copy = plannerCopy(understanding, intent || {}, capability);
+	    const workSpec = boundedWorkSpecFor(understanding, copy);
 	    const requestSummary = understanding.wants || commandInput?.value?.trim() || "Agent task plan preview";
 	    const requiredEvidence = understanding.evidence_required
 	      ? ["Check stored local evidence before creating work or answering."]
@@ -1568,11 +1590,11 @@ function AgentCommandPanel({
 	    return {
 	      user_request_summary: requestSummary.slice(0, 1000),
 	      intent_category: understanding.category || "unclear",
-	      status: planStatusFor(understanding, intent || {}),
+	      status: workSpec ? (understanding.approval_required || intent?.approval_required ? "approval_required" : "ready") : planStatusFor(understanding, intent || {}),
 	      proposed_steps: [copy.next || understanding.next_step || "Review the safe next step."],
 	      required_evidence: requiredEvidence,
 	      approval_required: Boolean(understanding.approval_required || intent?.approval_required),
-	      supported_state: supportedStateFor(understanding, intent || {}),
+	      supported_state: workSpec ? "supported" : supportedStateFor(understanding, intent || {}),
 	      next_safe_action: (understanding.next_step || copy.next || "Review the safe next step.").slice(0, 1000),
 	      requested_by_actor_id: "local-owner",
 	      metadata_json: {
@@ -1580,7 +1602,8 @@ function AgentCommandPanel({
 	        proposed_action: intent?.proposed_action || null,
 	        work_item_should_be_created: Boolean(understanding.work_item_should_be_created),
 	        unsupported_or_unsafe: Boolean(understanding.unsupported_or_unsafe),
-	        saved_preview_only: true
+	        saved_preview_only: !workSpec,
+	        ...(workSpec ? { plan_to_work: workSpec } : {})
 	      }
 	    };
 	  };
@@ -1809,7 +1832,7 @@ function AgentCommandPanel({
     }
   });
 
-  root.querySelectorAll("[data-agent-plan-create-work]").forEach((button) => {
+	  root.querySelectorAll("[data-agent-plan-create-work]").forEach((button) => {
     button.addEventListener("click", async () => {
       const taskPlanId = button.getAttribute("data-task-plan-id");
       if (!taskPlanId) return;
@@ -1857,6 +1880,36 @@ function AgentCommandPanel({
 	  approvalSelect?.addEventListener("change", () => {
 	    if (approvalInput) approvalInput.value = approvalSelect.value || "";
 	    setButtons();
+	  });
+
+	  proposeWorkSpecButtons.forEach((button) => {
+	    button.addEventListener("click", async () => {
+	      const taskPlanId = button.getAttribute("data-task-plan-id");
+	      if (!taskPlanId) return;
+	      button.disabled = true;
+	      try {
+	        const response = await fetch("/api/agent/task-plans/" + encodeURIComponent(taskPlanId) + "/work-spec", {
+	          method: "POST",
+	          headers: { "Content-Type": "application/json" },
+	          body: JSON.stringify({
+	            actor_id: "local-owner",
+	            work_type: "report_generation",
+	            expected_output: "Create a bounded report from this reviewed task plan."
+	          })
+	        });
+	        const payload = await response.json();
+	        showJson(resultPanel, response.ok ? "Work spec proposed" : "Work spec proposal blocked", payload);
+	        if (statusPanel) {
+	          statusPanel.textContent = response.ok
+	            ? "Added a bounded report_generation work spec. Reload to show work-item eligibility; no work was created."
+	            : "Work spec proposal was blocked. No work item was created and no action was executed.";
+	        }
+	      } catch (error) {
+	        showJson(resultPanel, "Work spec proposal error", { detail: error instanceof Error ? error.message : "Unknown error" });
+	      } finally {
+	        button.disabled = false;
+	      }
+	    });
 	  });
 	  actionSelect?.addEventListener("change", () => {
 	    const selected = actionSelect.selectedOptions?.[0];
@@ -2013,23 +2066,35 @@ function AgentCommandPanel({
 	        ) : recentTaskPlans.map((plan) => {
 	          const planToWork = plan.metadata_json?.plan_to_work;
 	          const hasWorkSpec = Boolean(planToWork && typeof planToWork === "object" && "work_type" in planToWork);
+	          const workType = hasWorkSpec && planToWork && typeof planToWork === "object" && "work_type" in planToWork
+	            ? String((planToWork as { work_type?: unknown }).work_type ?? "unknown")
+	            : null;
 	          const eligibleForWork = hasWorkSpec
 	            && plan.supported_state === "supported"
 	            && !plan.approval_required
 	            && (plan.status === "proposed" || plan.status === "ready");
+	          const canProposeReportWorkSpec = !hasWorkSpec
+	            && plan.intent_category === "create_report"
+	            && plan.supported_state !== "unsupported"
+	            && plan.status !== "converted_to_work"
+	            && plan.status !== "canceled";
 	          const guidance = plan.approval_required
 	            ? "Approval is required before this plan can create work."
 	            : plan.supported_state !== "supported"
 	              ? "This plan is not supported for work creation yet."
 	              : hasWorkSpec
-	                ? "This plan includes a supported work spec."
+	                ? "This plan includes a supported " + workType + " work spec."
 	                : "This plan has no supported work-item specification yet.";
 	          return (
 	            <article className="agentPlannerCard" key={plan.id} data-agent-task-plan-record>
 	              <strong>{plan.user_request_summary}</strong>
 	              <span>{plan.next_safe_action}</span>
-	              <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"}</em>
+	              <em>{plan.status} · {plan.intent_category} · {plan.approval_required ? "approval required" : "no approval required"} · {hasWorkSpec ? "eligible spec" : "preview only"}</em>
 	              <span>{guidance}</span>
+	              {workType ? <span>Supported work type: {workType}</span> : null}
+	              {canProposeReportWorkSpec ? (
+	                <button type="button" data-agent-plan-propose-work-spec data-task-plan-id={plan.id}>Propose report work spec</button>
+	              ) : null}
 	              {eligibleForWork ? (
 	                <button type="button" data-agent-plan-create-work data-task-plan-id={plan.id}>Create work item</button>
 	              ) : null}
@@ -2056,7 +2121,7 @@ function AgentCommandPanel({
           <pre data-agent-intent>Agent intent preview appears here.</pre>
           <pre data-agent-result>Agent action result appears here.</pre>
         </section>
-        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
+        <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/work-spec, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
       </details>
 	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
 	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />

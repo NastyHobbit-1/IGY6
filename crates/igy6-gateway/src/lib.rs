@@ -41,6 +41,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/agent/task-plans"),
     ("GET", "/agent/task-plans/{task_plan_id}"),
     ("POST", "/agent/task-plans"),
+    ("POST", "/agent/task-plans/{task_plan_id}/work-spec"),
     ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
     ("POST", "/agent/actions/"),
     ("POST", "/agent/actions/{action_name}/execute"),
@@ -390,6 +391,12 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(decide_approval(&approval_id, &request.body, database_url))
             } else if let Some(task_plan_id) = agent_task_plan_work_item_path(&request.path) {
                 action_route_response(create_work_item_from_agent_task_plan(
+                    &task_plan_id,
+                    &request.body,
+                    database_url,
+                ))
+            } else if let Some(task_plan_id) = agent_task_plan_work_spec_path(&request.path) {
+                action_route_response(propose_agent_task_plan_work_spec(
                     &task_plan_id,
                     &request.body,
                     database_url,
@@ -2510,6 +2517,110 @@ fn create_work_item_from_agent_task_plan(
         )
         .map(|row| row.get::<_, String>(0))
         .map_err(|error| GatewayError::Database(error.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
+fn propose_agent_task_plan_work_spec(
+    task_plan_id: &str,
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let task_plan_id = validate_route_id(task_plan_id, "task_plan_id")?;
+    let payload = parse_agent_task_plan_work_spec(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    ensure_agent_task_plans_table(&mut client)?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let task_plan = load_agent_task_plan_record(&mut transaction, &task_plan_id)?;
+    if matches!(
+        task_plan.status.as_str(),
+        "unsupported" | "canceled" | "converted_to_work"
+    ) {
+        return Err(GatewayError::Conflict(format!(
+            "Task plan status {} is not eligible for work spec proposal",
+            task_plan.status
+        )));
+    }
+    if task_plan.supported_state == "unsupported" {
+        return Err(GatewayError::Conflict(format!(
+            "Task plan supported_state {} is not eligible for work spec proposal",
+            task_plan.supported_state
+        )));
+    }
+    if task_plan
+        .metadata_json
+        .get("plan_to_work")
+        .and_then(Value::as_object)
+        .is_some()
+    {
+        return Err(GatewayError::Conflict(
+            "Task plan already has a plan_to_work specification".to_string(),
+        ));
+    }
+    if payload.work_type != "report_generation" || task_plan.intent_category != "create_report" {
+        return Err(GatewayError::Validation(
+            "Only create_report task plans can propose report_generation work specs in this DIFF"
+                .to_string(),
+        ));
+    }
+    let expected_output = payload
+        .expected_output
+        .clone()
+        .unwrap_or_else(|| task_plan.next_safe_action.clone());
+    let plan_to_work = serde_json::json!({
+        "work_type": payload.work_type,
+        "expected_output": expected_output,
+        "payload_json": {
+            "report_type": "agent_task_plan",
+            "task_plan_id": task_plan.id,
+            "requested_summary": task_plan.user_request_summary,
+            "intent_category": task_plan.intent_category
+        },
+        "proposal_source": "bounded_task_plan_work_spec",
+        "safety_constraints": [
+            "Supported work item type only.",
+            "No shell command or user-provided argv.",
+            "Creates work only through the approval-gated plan-to-work route."
+        ]
+    });
+    let next_status = if task_plan.approval_required {
+        "approval_required"
+    } else {
+        "ready"
+    };
+    let metadata_patch = serde_json::json!({
+        "plan_to_work": plan_to_work,
+        "saved_preview_only": false,
+        "work_spec_proposed_by_actor_id": payload.actor_id
+    });
+    transaction
+        .execute(
+            "UPDATE agent_task_plans SET status = $1, metadata_json = metadata_json || $2::jsonb, updated_at = now() WHERE id = $3",
+            &[&next_status, &metadata_patch, &task_plan_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let audit_details = serde_json::json!({
+        "work_type": "report_generation",
+        "previous_status": task_plan.status,
+        "next_status": next_status,
+        "approval_required": task_plan.approval_required
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'agent_task_plan.work_spec_proposed', $2, 'agent_task_plan', $3, NULL, $4::jsonb)",
+            &[&payload.actor_id, &next_status, &task_plan_id, &audit_details],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = agent_task_plan_response_json(&mut transaction, &task_plan_id)?;
     transaction
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
@@ -5432,6 +5543,12 @@ struct AgentTaskPlanWorkItemPayload {
     approval_id: Option<String>,
 }
 
+struct AgentTaskPlanWorkSpecPayload {
+    actor_id: String,
+    work_type: String,
+    expected_output: Option<String>,
+}
+
 struct AgentTaskPlanRecord {
     id: String,
     user_request_summary: String,
@@ -6260,6 +6377,23 @@ fn parse_agent_task_plan_work_item(
     Ok(AgentTaskPlanWorkItemPayload {
         actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
         approval_id: optional_nullable_string_field_with_max(&object, "approval_id", 128)?,
+    })
+}
+
+fn parse_agent_task_plan_work_spec(
+    body: &str,
+) -> Result<AgentTaskPlanWorkSpecPayload, GatewayError> {
+    let object = parse_json_object(body, "Agent task plan work-spec request body")?;
+    let work_type = required_string_field(&object, "work_type", 64)?;
+    if !is_supported_work_item_type(&work_type) {
+        return Err(GatewayError::Validation(format!(
+            "Unsupported work item type: {work_type}"
+        )));
+    }
+    Ok(AgentTaskPlanWorkSpecPayload {
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+        work_type,
+        expected_output: optional_nullable_string_field_with_max(&object, "expected_output", 1000)?,
     })
 }
 
@@ -8981,6 +9115,10 @@ fn agent_task_plan_work_item_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/agent/task-plans/", "/work-item")
 }
 
+fn agent_task_plan_work_spec_path(path: &str) -> Option<String> {
+    dynamic_post_id_path(path, "/agent/task-plans/", "/work-spec")
+}
+
 fn pattern_review_path(path: &str) -> Option<String> {
     dynamic_post_id_path(path, "/analysis/patterns/", "/review")
 }
@@ -10244,7 +10382,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -11541,6 +11679,20 @@ mod tests {
         assert_eq!(transition.status_code, 503);
         assert!(!transition.proxied_to_fallback);
         assert!(transition.body.contains("DATABASE_URL"));
+
+        let work_spec = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/agent/task-plans/taskplan-1/work-spec",
+                r#"{"actor_id":"local-owner","work_type":"report_generation","expected_output":"Create a bounded report from this task plan."}"#,
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(work_spec.status_code, 503);
+        assert!(!work_spec.proxied_to_fallback);
+        assert!(work_spec.body.contains("DATABASE_URL"));
     }
 
     #[test]
@@ -11578,11 +11730,44 @@ mod tests {
             assert!(!response.proxied_to_fallback, "{body}");
         }
 
+        for body in [
+            "[]",
+            "{}",
+            r#"{"actor_id":"","work_type":"report_generation"}"#,
+            r#"{"work_type":""}"#,
+            r#"{"work_type":"shell_command"}"#,
+            r#"{"work_type":"report_generation","expected_output":[]}"#,
+        ] {
+            let response = handle_gateway_request_with_db(
+                &request("POST", "/agent/task-plans/taskplan-1/work-spec", body),
+                None,
+                NO_FALLBACK_ORIGIN,
+                None,
+            );
+            assert_eq!(response.status_code, 422, "{body}");
+            assert!(!response.proxied_to_fallback, "{body}");
+        }
+
+        let parsed = parse_agent_task_plan_work_spec(
+            r#"{"actor_id":"local-owner","work_type":"report_generation","expected_output":"Create a bounded report."}"#,
+        )
+        .expect("work spec");
+        assert_eq!(parsed.work_type, "report_generation");
+        assert_eq!(
+            parsed.expected_output.as_deref(),
+            Some("Create a bounded report.")
+        );
+
         assert_eq!(
             agent_task_plan_work_item_path("/agent/task-plans/taskplan-1/work-item"),
             Some("taskplan-1".to_string())
         );
         assert!(agent_task_plan_work_item_path("/agent/task-plans/x/y/work-item").is_none());
+        assert_eq!(
+            agent_task_plan_work_spec_path("/agent/task-plans/taskplan-1/work-spec"),
+            Some("taskplan-1".to_string())
+        );
+        assert!(agent_task_plan_work_spec_path("/agent/task-plans/x/y/work-spec").is_none());
     }
 
     #[test]
@@ -12431,6 +12616,7 @@ mod tests {
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/{task_plan_id}"),
             ("POST", "/agent/task-plans"),
+            ("POST", "/agent/task-plans/{task_plan_id}/work-spec"),
             ("POST", "/agent/task-plans/{task_plan_id}/work-item"),
             ("GET", "/approvals"),
             ("GET", "/approvals/{approval_id}"),
