@@ -354,6 +354,19 @@ Ask Over Evidence:
 - Saving an answer record stores the packet fields and citation identifiers for
   later feedback/review without mutating evidence.
 
+Missing Evidence Prompts:
+
+- Shows whether the current local evidence state is insufficient, weak, or
+  available based on processed evidence/chunks, recent saved answer records, and
+  task evidence summaries.
+- Lists missing-information notes where available.
+- Suggests safe next source types: manual text upload, conversation_history,
+  user_observation, and local_project only when an enabled scoped local_project
+  source already exists.
+- Opens the user back to Add Data for supported local ingestion paths.
+- Does not automatically collect data, scrape browsers or accounts, call
+  connectors, or claim that missing local evidence proves real-world absence.
+
 Local LLM Status:
 
 - Shows whether local model generation is disabled, configured, or waiting for
