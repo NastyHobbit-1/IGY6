@@ -433,6 +433,14 @@ Evidence And Documents:
   correction/supersession review state where linked evidence has it.
 - The lineage panel does not claim full graph reasoning, correlation discovery,
   secret inspection, or raw runtime path export.
+- Entity, Claim, and Event Review shows conservative review candidates from
+  loaded local evidence text and existing claim records. Entity candidates are
+  capitalization hints only, claim candidates are unclaimed evidence statements,
+  and event candidates require owner review of dates/timing.
+- Entity, Claim, and Event Review preserves visible provenance back to source,
+  document, chunk, and evidence where loaded. It does not mutate original
+  evidence, resolve identities, call hosted AI, create entity/event records, or
+  claim full NLP extraction or full graph reasoning.
 - Evidence correction and supersession lets you mark an evidence item as
   `needs correction`, `corrected`, `superseded`, `disputed`, or `verified`.
 - Evidence correction records review metadata and audit history only. It does
