@@ -131,6 +131,12 @@ Sources:
 - Source review updates the source record and audit trail. It does not delete
   sources, rewrite historical evidence, silently hide evidence in Results, or
   claim new retrieval ranking or policy enforcement behavior.
+- Source detail lets you inspect one source's label, type, trust state,
+  sensitivity, permissions, collection runs, artifact metadata, documents,
+  chunks, evidence previews, direct feedback/outcome links, and correction
+  indicators.
+- Source detail shows metadata and bounded previews only. It does not dump raw
+  artifact contents, expose secrets, or claim complete policy enforcement.
 
 Guided Upload:
 
