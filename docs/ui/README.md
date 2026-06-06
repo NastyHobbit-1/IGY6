@@ -349,7 +349,15 @@ Local LLM Status:
 
 - Shows whether local model generation is disabled, configured, or waiting for
   a model.
+- Shows the configured provider, configured model, routing state, fallback
+  state, and evidence-required mode.
 - Deterministic evidence answers remain available without an online model.
+- Settings does not contact Ollama, install models, call hosted AI, or transfer
+  source data. Local model availability is verified only when an evidence-answer
+  request runs.
+- If the local model is unavailable or not configured, use deterministic
+  evidence answers and check Settings/Ollama locally before expecting
+  model-drafted wording.
 
 Evidence And Documents:
 

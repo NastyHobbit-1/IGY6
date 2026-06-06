@@ -1134,9 +1134,15 @@ type LlmDisplay = {
   model: string;
   timeout: string;
   evidenceRequired: string;
+  enabledState: string;
   answerMode: string;
+  routingState: string;
+  fallbackState: string;
+  externalUse: string;
   healthStatus: string;
   healthDetail: string;
+  guidance: string;
+  limitations: string[];
   rawDiagnostics: Record<string, string>;
 };
 
@@ -1158,12 +1164,26 @@ function LocalLlmStatusPanel({
         <StatusPill state={llm.healthStatus} />
       </div>
       <div className="metrics compact">
+        <article><span>Enabled</span><strong>{llm.enabledState}</strong></article>
         <article><span>Provider</span><strong>{llm.provider}</strong></article>
+        <article><span>Model</span><strong>{llm.model}</strong></article>
         <article><span>Health status</span><strong>{llm.healthStatus}</strong></article>
         <article><span>Answer mode</span><strong>{llm.answerMode}</strong></article>
+        <article><span>Routing</span><strong>{llm.routingState}</strong></article>
+        <article><span>Fallback</span><strong>{llm.fallbackState}</strong></article>
         <article><span>Evidence required</span><strong>{llm.evidenceRequired}</strong></article>
+        <article><span>Hosted/external AI</span><strong>{llm.externalUse}</strong></article>
       </div>
       <p className="agentRuntimeReason">{llm.healthDetail}</p>
+      <div className="guidedManualNotice">
+        <strong>{llm.guidance}</strong>
+        <span>No hosted AI call is made by default. No hidden data transfer is performed by this status panel, and Settings does not contact Ollama.</span>
+      </div>
+      <ul className="workflowSteps">
+        {llm.limitations.map((item) => (
+          <li key={item}><strong>{item.split(":")[0]}</strong><span>{item.includes(":") ? item.slice(item.indexOf(":") + 1).trim() : item}</span></li>
+        ))}
+      </ul>
       <div className="exampleGrid">
         <article>
           <span>Normal user example</span>
@@ -1190,33 +1210,66 @@ function buildLlmDisplay(data: EnvSettingsResponse): LlmDisplay {
   const evidenceRequired = settingValue(data, "LLM_EVIDENCE_REQUIRED", "true") || "true";
   const enabled = provider === "ollama";
   const configured = enabled && model !== "not selected";
+  const evidenceOnlyMode = evidenceRequired.toLowerCase() !== "false";
   const healthStatus = !enabled ? "disabled" : configured ? "configured-local" : "needs-model";
+  const enabledState = enabled ? "enabled in settings" : "disabled";
   const answerMode = !enabled
     ? "deterministic evidence"
     : configured
       ? "local LLM evidence-grounded with deterministic backup"
       : "unavailable until model is selected";
+  const routingState = !enabled
+    ? "provider none; no model route"
+    : configured
+      ? "ollama route configured; runtime health checked only during evidence-answer generation"
+      : "ollama selected but no model configured";
+  const fallbackState = evidenceOnlyMode
+    ? "deterministic evidence fallback active"
+    : "deterministic fallback still available; evidence requirement setting is false";
+  const externalUse = "not used by default";
   const healthDetail = !enabled
     ? "No model calls are made while LLM_PROVIDER is none. Assistant uses deterministic evidence answers and insufficient-evidence responses."
     : configured
       ? "Settings does not contact Ollama. Evidence answers perform a timeout-bound local call only when retrieved evidence exists, then use a deterministic backup answer if unavailable."
       : "Select a local Ollama model before enabling evidence-grounded local generation. No token or cloud endpoint is required.";
+  const guidance = !enabled
+    ? "Local model generation is disabled; use deterministic evidence answers."
+    : configured
+      ? "Local Ollama routing is configured, but availability is verified only when an evidence-answer request runs."
+      : "Set a local Ollama model and verify locally before expecting model-drafted answers.";
+  const limitations = [
+    "Evidence boundary: local generation is evidence-grounded and should not be treated as hidden memory or unsupported reasoning.",
+    "Fallback behavior: deterministic evidence answers remain available when the provider is disabled, unavailable, or missing evidence.",
+    "No installation: this UI does not install models, pull model files, or edit .env without the Settings dry-run/save flow.",
+    "No hosted calls: IGY6 does not call hosted AI by default and this panel does not transfer source data."
+  ];
   return {
     provider,
     baseUrl,
     model,
     timeout,
     evidenceRequired,
+    enabledState,
     answerMode,
+    routingState,
+    fallbackState,
+    externalUse,
     healthStatus,
     healthDetail,
+    guidance,
+    limitations,
     rawDiagnostics: {
       provider,
       ollama_base_url: baseUrl,
       model,
       timeout_seconds: timeout,
       evidence_required: evidenceRequired,
+      enabled_state: enabledState,
+      routing_state: routingState,
+      fallback_state: fallbackState,
+      answer_mode: answerMode,
       external_model_default: "blocked",
+      hosted_ai_default: "not_used",
       secrets_required: "false"
     }
   };
