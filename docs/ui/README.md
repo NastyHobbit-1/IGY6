@@ -425,6 +425,14 @@ Evidence And Documents:
 
 - Shows collection runs, artifacts, documents, chunks, evidence items, and
   claims.
+- Graph/Lineage explanation shows why records are connected from source to
+  artifact, document, chunk, evidence, answer, report, and task plan.
+- If Neo4j schema status is visible, the panel shows that graph foundation
+  state. If not, it uses relational lineage fallback from loaded records.
+- Lineage explanation includes source trust/sensitivity state and
+  correction/supersession review state where linked evidence has it.
+- The lineage panel does not claim full graph reasoning, correlation discovery,
+  secret inspection, or raw runtime path export.
 - Evidence correction and supersession lets you mark an evidence item as
   `needs correction`, `corrected`, `superseded`, `disputed`, or `verified`.
 - Evidence correction records review metadata and audit history only. It does
