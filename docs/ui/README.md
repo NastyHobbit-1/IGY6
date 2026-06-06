@@ -367,6 +367,21 @@ Missing Evidence Prompts:
 - Does not automatically collect data, scrape browsers or accounts, call
   connectors, or claim that missing local evidence proves real-world absence.
 
+Outcome Learning Summary:
+
+- Groups recent feedback and outcomes into negative/unresolved signals and
+  positive/successful signals.
+- Shows repeated failed labels or targets when they are detectable from existing
+  records.
+- Shows repeated successful labels or targets when they are detectable from
+  existing records.
+- Links signals to answer, report, task, or work records where current metadata
+  allows.
+- Prompts the user to use the existing Improvement review form when a weak
+  feedback or unresolved outcome pattern is visible.
+- Does not change future reasoning behavior automatically, promote methods, run
+  experiments, or claim autonomous self-improvement.
+
 Local LLM Status:
 
 - Shows whether local model generation is disabled, configured, or waiting for
