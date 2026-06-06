@@ -141,6 +141,9 @@ Guided Upload:
   PDF, image, audio, video, screenshot, web page, or OCR input.
 - If the selected source permission requires approval, creates an approval
   request and shows a pending state instead of uploading before approval.
+- If a matching approval is already approved, the guided path uses it
+  automatically; normal users do not need to paste raw approval IDs into
+  Advanced for supported manual text collection.
 - Shows recent collection runs after upload or dry-run records exist.
 
 Conversation History Import:
@@ -191,7 +194,9 @@ User Observation Ingestion:
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
-  review approvals before collection continues.
+  review approvals before collection continues. After approval, return to the
+  same guided Add Data workflow and submit again; IGY6 matches the approved
+  approval record automatically.
 - Advanced keeps the raw source, permission, approval, and upload controls for
   low-level troubleshooting.
 
@@ -407,6 +412,11 @@ Safety, Approvals, And Policy:
 Approvals:
 
 - Lists recent approval requests and decisions.
+- Source collection approvals for manual uploads, conversation history imports,
+  and user observations can be approved or denied from Settings without copying
+  raw IDs into Advanced.
+- Approving a collection request does not upload data by itself. Return to Add
+  Data and submit the same guided workflow so the approved record can be used.
 
 Feedback and Outcomes:
 

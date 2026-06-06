@@ -2352,7 +2352,7 @@ function AgentCommandPanel({
   );
 }
 
-function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]> }) {
+function GuidedManualTextUpload({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const manualSources = sources.data
     .filter((source) => source.enabled && source.source_type === "manual_upload")
@@ -2364,12 +2364,14 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
       permissions: source.permissions ?? [],
     }));
   const manualSourcesJson = JSON.stringify(manualSources).replace(/</g, "\\u003c");
+  const approvalsJson = JSON.stringify(approvals.data).replace(/</g, "\\u003c");
   const script = `
 (() => {
   const root = document.querySelector("[data-guided-manual-upload]");
   if (!root) return;
   const apiBaseUrl = root.getAttribute("data-api-base-url");
   const sourceData = JSON.parse(root.querySelector("[data-guided-manual-sources-json]")?.textContent || "[]");
+  const approvalData = JSON.parse(root.querySelector("[data-guided-manual-approvals-json]")?.textContent || "[]");
   const result = root.querySelector("[data-guided-manual-result]");
   const debug = root.querySelector("[data-guided-manual-debug]");
   const submit = root.querySelector("[data-guided-manual-submit]");
@@ -2442,6 +2444,16 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
     const operations = permission.allowed_operations || [];
     return operations.includes("collect") || operations.includes("read");
   });
+  const approvalMatches = (approval, source, permission) => {
+    const payload = approval?.request_payload_json || {};
+    const payloadSourceType = payload.source_type || source?.source_type;
+    return approval?.request_type === "manual_upload_collection"
+      && payload.source_id === source?.id
+      && payload.source_permission_id === permission?.id
+      && payload.operation === "manual_upload_collection"
+      && payloadSourceType === source?.source_type;
+  };
+  const matchingApproval = (status, source, permission) => approvalData.find((approval) => approval?.status === status && approvalMatches(approval, source, permission)) || null;
   const selectedSource = () => {
     if (sourceSelect?.value === "new") return null;
     const index = Number(sourceSelect?.value || -1);
@@ -2505,28 +2517,57 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
         throw new Error("No source permission was available for guided manual text collection.");
       }
       const filename = safeFilename(value("guided_text_title") || sourceName || "manual-note.txt");
+      let approvedApproval = null;
       if (permission.approval_required) {
-        const approval = await postJson("/approvals", {
+        approvedApproval = matchingApproval("approved", source, permission);
+        const pendingApproval = matchingApproval("pending", source, permission);
+        if (!approvedApproval && pendingApproval) {
+          writeResult(
+            "Approval pending",
+            "A matching manual text collection approval is already pending. The text was not uploaded before approval.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
+        if (!approvedApproval) {
+          const approval = await postJson("/approvals", {
           request_type: "manual_upload_collection",
           request_payload_json: {
             source_id: source.id,
             source_permission_id: permission.id,
             operation: "manual_upload_collection",
+            source_type: source.source_type,
             filename
           }
-        });
-        writeResult(
-          "Approval pending",
-          "IGY6 created the manual text source context and requested collection approval. The text was not uploaded because this permission requires an approved approval record.",
-          ["Open Settings to review pending approvals.", "After approval, use the Advanced route console with the approved approval record for this low-level collection path.", "Processing status appears in Work after collection, and evidence appears in Results."],
-          { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval }
-        );
-        return;
+          });
+          writeResult(
+            "Approval pending",
+            "IGY6 created the manual text source context and requested collection approval. The text was not uploaded because this permission requires an approved approval record.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
       }
       const upload = await postJson("/collection-runs/manual-upload", {
         source_id: source.id,
         source_permission_id: permission.id,
-        approval_id: null,
+        approval_id: approvedApproval?.id || null,
         filename,
         mime_type: "text/plain",
         content_base64: textToBase64(text),
@@ -2545,6 +2586,8 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
         { source: { name: source.name, type: source.source_type, id: source.id }, upload },
         [
           { label: "source", value: source.id },
+          { label: "permission", value: permission.approval_required ? "approved collection permission" : "immediate collection permission" },
+          { label: "approval", value: approvedApproval ? "approved and matched automatically" : "not required" },
           { label: "collection run", value: upload?.id || "not returned" },
           { label: "work item", value: workItemId },
           { label: "work type", value: "collection_normalization" },
@@ -2628,12 +2671,13 @@ function GuidedManualTextUpload({ sources }: { sources: ApiResult<SourceRecord[]
         <pre data-guided-manual-debug />
       </details>
       <script type="application/json" data-guided-manual-sources-json dangerouslySetInnerHTML={{ __html: manualSourcesJson }} />
+      <script type="application/json" data-guided-manual-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
 }
 
-function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecord[]> }) {
+function ConversationHistoryImport({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const conversationSources = sources.data
     .filter((source) => source.enabled && source.source_type === "conversation_history")
@@ -2645,12 +2689,14 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
       permissions: source.permissions ?? [],
     }));
   const conversationSourcesJson = JSON.stringify(conversationSources).replace(/</g, "\\u003c");
+  const approvalsJson = JSON.stringify(approvals.data).replace(/</g, "\\u003c");
   const script = `
 (() => {
   const root = document.querySelector("[data-conversation-history-import]");
   if (!root) return;
   const apiBaseUrl = root.getAttribute("data-api-base-url");
   const sourceData = JSON.parse(root.querySelector("[data-conversation-history-sources-json]")?.textContent || "[]");
+  const approvalData = JSON.parse(root.querySelector("[data-conversation-history-approvals-json]")?.textContent || "[]");
   const result = root.querySelector("[data-conversation-history-result]");
   const debug = root.querySelector("[data-conversation-history-debug]");
   const submit = root.querySelector("[data-conversation-history-submit]");
@@ -2723,6 +2769,16 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
     const operations = permission.allowed_operations || [];
     return operations.includes("collect") || operations.includes("read");
   });
+  const approvalMatches = (approval, source, permission) => {
+    const payload = approval?.request_payload_json || {};
+    const payloadSourceType = payload.source_type || source?.source_type;
+    return approval?.request_type === "manual_upload_collection"
+      && payload.source_id === source?.id
+      && payload.source_permission_id === permission?.id
+      && payload.operation === "manual_upload_collection"
+      && payloadSourceType === source?.source_type;
+  };
+  const matchingApproval = (status, source, permission) => approvalData.find((approval) => approval?.status === status && approvalMatches(approval, source, permission)) || null;
   const selectedSource = () => {
     if (sourceSelect?.value === "new") return null;
     const index = Number(sourceSelect?.value || -1);
@@ -2805,8 +2861,28 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
         browser_account_connector_import: false,
         binary_media_import: false
       };
+      let approvedApproval = null;
       if (permission.approval_required) {
-        const approval = await postJson("/approvals", {
+        approvedApproval = matchingApproval("approved", source, permission);
+        const pendingApproval = matchingApproval("pending", source, permission);
+        if (!approvedApproval && pendingApproval) {
+          writeResult(
+            "Approval pending",
+            "A matching conversation history collection approval is already pending. The pasted text was not uploaded before approval.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
+        if (!approvedApproval) {
+          const approval = await postJson("/approvals", {
           request_type: "manual_upload_collection",
           request_payload_json: {
             source_id: source.id,
@@ -2816,19 +2892,27 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
             filename,
             metadata_json: metadata
           }
-        });
-        writeResult(
-          "Approval pending",
-          "IGY6 created the conversation history source context and requested collection approval. The pasted text was not uploaded because this permission requires an approved approval record.",
-          ["Open Settings to review pending approvals.", "After approval, use the Advanced route console with the approved approval record for this low-level collection path.", "Processing status appears in Work after collection, and evidence appears in Results."],
-          { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval }
-        );
-        return;
+          });
+          writeResult(
+            "Approval pending",
+            "IGY6 created the conversation history source context and requested collection approval. The pasted text was not uploaded because this permission requires an approved approval record.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
       }
       const upload = await postJson("/collection-runs/manual-upload", {
         source_id: source.id,
         source_permission_id: permission.id,
-        approval_id: null,
+        approval_id: approvedApproval?.id || null,
         filename,
         mime_type: "text/plain",
         content_base64: textToBase64(text),
@@ -2845,6 +2929,8 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
         [
           { label: "source", value: source.id },
           { label: "source type", value: source.source_type },
+          { label: "permission", value: permission.approval_required ? "approved collection permission" : "immediate collection permission" },
+          { label: "approval", value: approvedApproval ? "approved and matched automatically" : "not required" },
           { label: "collection run", value: upload?.id || "not returned" },
           { label: "work item", value: workItemId },
           { label: "work type", value: "collection_normalization" },
@@ -2950,12 +3036,13 @@ function ConversationHistoryImport({ sources }: { sources: ApiResult<SourceRecor
         <pre data-conversation-history-debug />
       </details>
       <script type="application/json" data-conversation-history-sources-json dangerouslySetInnerHTML={{ __html: conversationSourcesJson }} />
+      <script type="application/json" data-conversation-history-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
 }
 
-function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord[]> }) {
+function UserObservationIngestion({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const observationSources = sources.data
     .filter((source) => source.enabled && source.source_type === "user_observation")
@@ -2967,12 +3054,14 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
       permissions: source.permissions ?? [],
     }));
   const observationSourcesJson = JSON.stringify(observationSources).replace(/</g, "\\u003c");
+  const approvalsJson = JSON.stringify(approvals.data).replace(/</g, "\\u003c");
   const script = `
 (() => {
   const root = document.querySelector("[data-user-observation-ingestion]");
   if (!root) return;
   const apiBaseUrl = root.getAttribute("data-api-base-url");
   const sourceData = JSON.parse(root.querySelector("[data-user-observation-sources-json]")?.textContent || "[]");
+  const approvalData = JSON.parse(root.querySelector("[data-user-observation-approvals-json]")?.textContent || "[]");
   const result = root.querySelector("[data-user-observation-result]");
   const debug = root.querySelector("[data-user-observation-debug]");
   const submit = root.querySelector("[data-user-observation-submit]");
@@ -3045,6 +3134,16 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
     const operations = permission.allowed_operations || [];
     return operations.includes("collect") || operations.includes("read");
   });
+  const approvalMatches = (approval, source, permission) => {
+    const payload = approval?.request_payload_json || {};
+    const payloadSourceType = payload.source_type || source?.source_type;
+    return approval?.request_type === "manual_upload_collection"
+      && payload.source_id === source?.id
+      && payload.source_permission_id === permission?.id
+      && payload.operation === "manual_upload_collection"
+      && payloadSourceType === source?.source_type;
+  };
+  const matchingApproval = (status, source, permission) => approvalData.find((approval) => approval?.status === status && approvalMatches(approval, source, permission)) || null;
   const selectedSource = () => {
     if (sourceSelect?.value === "new") return null;
     const index = Number(sourceSelect?.value || -1);
@@ -3135,8 +3234,28 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
         hosted_ai_processing: false,
         external_service_collection: false
       };
+      let approvedApproval = null;
       if (permission.approval_required) {
-        const approval = await postJson("/approvals", {
+        approvedApproval = matchingApproval("approved", source, permission);
+        const pendingApproval = matchingApproval("pending", source, permission);
+        if (!approvedApproval && pendingApproval) {
+          writeResult(
+            "Approval pending",
+            "A matching user observation collection approval is already pending. The observation text was not uploaded before approval.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
+        if (!approvedApproval) {
+          const approval = await postJson("/approvals", {
           request_type: "manual_upload_collection",
           request_payload_json: {
             source_id: source.id,
@@ -3146,19 +3265,27 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
             filename,
             metadata_json: metadata
           }
-        });
-        writeResult(
-          "Approval pending",
-          "IGY6 created the user observation source context and requested collection approval. The observation text was not uploaded because this permission requires an approved approval record.",
-          ["Open Settings to review pending approvals.", "After approval, use the Advanced route console with the approved approval record for this low-level collection path.", "Processing status appears in Work after collection, and evidence appears in Results."],
-          { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval }
-        );
-        return;
+          });
+          writeResult(
+            "Approval pending",
+            "IGY6 created the user observation source context and requested collection approval. The observation text was not uploaded because this permission requires an approved approval record.",
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
+            [
+              { label: "source", value: source.name + " (" + source.source_type + ")" },
+              { label: "permission", value: "approval required" },
+              { label: "approval", value: "pending" },
+              { label: "upload", value: "not started" },
+              { label: "next safe action", value: "review pending approval in Settings" }
+            ]
+          );
+          return;
+        }
       }
       const upload = await postJson("/collection-runs/manual-upload", {
         source_id: source.id,
         source_permission_id: permission.id,
-        approval_id: null,
+        approval_id: approvedApproval?.id || null,
         filename,
         mime_type: "text/plain",
         content_base64: textToBase64(text),
@@ -3175,6 +3302,8 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
         [
           { label: "source", value: source.id },
           { label: "source type", value: source.source_type },
+          { label: "permission", value: permission.approval_required ? "approved collection permission" : "immediate collection permission" },
+          { label: "approval", value: approvedApproval ? "approved and matched automatically" : "not required" },
           { label: "collection run", value: upload?.id || "not returned" },
           { label: "work item", value: workItemId },
           { label: "work type", value: "collection_normalization" },
@@ -3288,6 +3417,104 @@ function UserObservationIngestion({ sources }: { sources: ApiResult<SourceRecord
         <pre data-user-observation-debug />
       </details>
       <script type="application/json" data-user-observation-sources-json dangerouslySetInnerHTML={{ __html: observationSourcesJson }} />
+      <script type="application/json" data-user-observation-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
+function SourceCollectionApprovalReview({ approvals }: { approvals: ApiResult<ApprovalRecord[]> }) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const collectionApprovals = approvals.data
+    .filter((approval) => approval.request_type === "manual_upload_collection")
+    .slice(0, 8);
+  const pendingCollectionApprovals = collectionApprovals.filter((approval) => approval.status === "pending");
+  const approvalsJson = JSON.stringify(collectionApprovals).replace(/</g, "\\u003c");
+  const script = `
+(() => {
+  const root = document.querySelector("[data-source-collection-approval-review]");
+  if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const result = root.querySelector("[data-source-collection-approval-result]");
+  const buttons = root.querySelectorAll("[data-approval-decision-button]");
+  const show = (title, payload) => {
+    if (!result) return;
+    result.textContent = title + "\\n" + JSON.stringify(payload, null, 2);
+  };
+  buttons.forEach((button) => {
+    button.addEventListener("click", async () => {
+      const approvalId = button.getAttribute("data-approval-id");
+      const status = button.getAttribute("data-decision-status");
+      if (!approvalId || !status) return;
+      show("Saving approval decision", { approval_status: status });
+      try {
+        const response = await fetch(apiBaseUrl + "/approvals/" + encodeURIComponent(approvalId) + "/decision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status,
+            decision_reason: status === "approved"
+              ? "Approved from normal Settings source onboarding review"
+              : "Denied from normal Settings source onboarding review"
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        show(response.ok ? "Approval decision saved" : "Approval decision failed", payload);
+        if (response.ok) {
+          button.closest("[data-collection-approval-item]")?.setAttribute("data-state", status);
+          buttons.forEach((candidate) => {
+            if (candidate.getAttribute("data-approval-id") === approvalId) candidate.disabled = true;
+          });
+          window.setTimeout(() => window.location.reload(), 900);
+        }
+      } catch (error) {
+        show("Approval decision error", { detail: error instanceof Error ? error.message : "Unknown error" });
+      }
+    });
+  });
+})();
+`;
+
+  return (
+    <section className="guidedManualText sourceCollectionApprovals" data-source-collection-approval-review data-api-base-url={browserApiBaseUrl}>
+      <div className="guidedManualNotice">
+        <strong>Source collection approvals.</strong>
+        <span>Review pending manual, conversation, and observation collection requests without copying raw IDs into Advanced. Approval does not upload by itself; return to Add Data and submit the same guided workflow after approval.</span>
+      </div>
+      {approvals.error ? <p className="errorText">Approval list could not be loaded: {approvals.error}</p> : null}
+      <div className="stack">
+        {collectionApprovals.map((approval) => {
+          const payload = approval.request_payload_json ?? {};
+          const sourceType = typeof payload.source_type === "string" ? payload.source_type : "manual_upload";
+          const filename = typeof payload.filename === "string" ? payload.filename : "no filename recorded";
+          return (
+            <article className="item evidenceItem" key={approval.id} data-collection-approval-item data-state={approval.status}>
+              <div>
+                <strong>{sourceType.replaceAll("_", " ")} collection</strong>
+                <span>{filename} · requested by {approval.requested_by_actor_id}</span>
+              </div>
+              <div>
+                <StatusPill state={approval.status} />
+                <span>{approval.status === "pending" ? "decision needed" : approval.decision_reason ?? "decided"}</span>
+              </div>
+              {approval.status === "pending" ? (
+                <div className="guidedManualActions">
+                  <button type="button" data-approval-decision-button data-approval-id={approval.id} data-decision-status="approved">Approve collection</button>
+                  <button type="button" data-approval-decision-button data-approval-id={approval.id} data-decision-status="denied">Deny</button>
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+      {collectionApprovals.length === 0 ? <EmptyState label="No source collection approvals recorded yet." /> : null}
+      {pendingCollectionApprovals.length === 0 && collectionApprovals.length > 0 ? <p className="actionHint">No source collection approval is waiting for a decision.</p> : null}
+      <details className="advancedPanel">
+        <summary>Details: collection approval records for audit</summary>
+        <pre>{JSON.stringify(collectionApprovals, null, 2)}</pre>
+        <pre data-source-collection-approval-result>Decision results appear here.</pre>
+      </details>
+      <script type="application/json" data-source-collection-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
@@ -5262,7 +5489,7 @@ export default async function Home() {
               </div>
               <StatusPill state="approval-aware" />
             </div>
-            <GuidedManualTextUpload sources={sources} />
+            <GuidedManualTextUpload sources={sources} approvals={approvals} />
             <ol className="workflowSteps">
               <li><strong>Step 1: Select or create source.</strong><span>Use a manual_upload source for notes/logs, a conversation_history source for prior chat/history text, or a user_observation source for owner-provided context.</span></li>
               <li><strong>Step 2: Check approval status.</strong><span>Source permissions show whether approval is required before collection.</span></li>
@@ -5271,8 +5498,8 @@ export default async function Home() {
               <li><strong>Step 5: Review created records.</strong><span>Check collection run, raw artifact, and work item status.</span></li>
               <li><strong>Step 6: Next action.</strong><span>Check processing, view evidence, or ask Assistant a question.</span></li>
             </ol>
-            <ConversationHistoryImport sources={sources} />
-            <UserObservationIngestion sources={sources} />
+            <ConversationHistoryImport sources={sources} approvals={approvals} />
+            <UserObservationIngestion sources={sources} approvals={approvals} />
             <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
             <div className="stack">
               {recentRuns.map((run) => (
@@ -5601,6 +5828,7 @@ export default async function Home() {
                   ))}
                 </div>
                 {recentApprovals.length === 0 ? <EmptyState label="No approvals recorded yet." /> : null}
+                <SourceCollectionApprovalReview approvals={approvals} />
               </div>
 
               <div>
