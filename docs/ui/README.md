@@ -360,6 +360,12 @@ Evidence And Documents:
 - Evidence correction records review metadata and audit history only. It does
   not delete evidence, rewrite raw artifacts, rewrite documents or chunks,
   silently hide superseded evidence, or claim retrieval ranking changes.
+- Evidence detail lets you inspect a bounded evidence preview, source trail,
+  document/chunk lineage, source trust and sensitivity context, correction or
+  supersession state, feedback, outcome links where present, related saved
+  answer records, and task plan/report metadata links where present.
+- Evidence detail is read-only. It does not delete, mutate, hide, or dump
+  excessive raw text.
 
 Search Memory And Findings:
 
