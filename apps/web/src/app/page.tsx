@@ -1353,49 +1353,99 @@ function ChatRetrievalPreview() {
   const answerStatusFor = (payload, hits) => {
     const status = typeof payload.answer_status === "string" ? payload.answer_status : "";
     if (status) return status;
-    return hits.length > 0 ? "retrieved" : "insufficient_evidence";
+    return hits.length > 0 ? "evidence_summary" : "insufficient_evidence";
+  };
+
+  const statementFromHit = (hit) => {
+    const evidenceStatement = Array.isArray(hit.evidence_items)
+      ? hit.evidence_items.map((item) => item.statement).find((value) => typeof value === "string" && value.trim())
+      : "";
+    return textPreview(evidenceStatement || hit.chunk?.text_content, "Retrieved hit has no text preview.");
+  };
+
+  const sourceTrailFromHit = (hit) => {
+    const sourceLabel = hit.source?.name || shortId(hit.source?.id);
+    const documentLabel = hit.document?.title || shortId(hit.document?.id || hit.qdrant_payload?.document_id);
+    const chunkLabel = shortId(hit.chunk?.id || hit.qdrant_payload?.chunk_id);
+    return "source " + sourceLabel + " > document " + documentLabel + " > chunk " + chunkLabel + " (score " + formatScore(hit.score) + ")";
+  };
+
+  const buildGroundedAnswerPacket = (payload, hits) => {
+    const evidenceItemIds = uniqueStrings(hits.flatMap((hit) => Array.isArray(hit.evidence_items) ? hit.evidence_items.map((item) => item.id) : []), 50);
+    const documentIds = uniqueStrings(hits.map((hit) => hit.document?.id || hit.qdrant_payload?.document_id), 50);
+    const chunkIds = uniqueStrings(hits.map((hit) => hit.chunk?.id || hit.qdrant_payload?.chunk_id), 50);
+    const sourceIds = uniqueStrings(hits.map((hit) => hit.source?.id), 50);
+    const sourceTrails = uniqueStrings(hits.map(sourceTrailFromHit), 20);
+    const facts = uniqueStrings(hits.map(statementFromHit), 10);
+    const citationLabels = uniqueStrings([
+      ...evidenceItemIds.map((id) => "evidence " + shortId(id)),
+      ...documentIds.map((id) => "document " + shortId(id)),
+      ...chunkIds.map((id) => "chunk " + shortId(id)),
+      ...sourceIds.map((id) => "source " + shortId(id))
+    ], 30);
+    const hitCount = hits.length;
+    return {
+      answer_status: answerStatusFor(payload, hits),
+      answer_text: hitCount > 0
+        ? "Deterministic evidence-grounded answer packet from " + hitCount + " retrieved local evidence hit(s). Treat it as a cited review aid, not verified truth."
+        : "Insufficient evidence: no matching local chunks or evidence items were retrieved for this question.",
+      facts,
+      assumptions: [
+        "Stored source metadata and evidence records are treated as local records of what was collected.",
+        "Retrieval scores are similarity signals, not proof of correctness."
+      ],
+      inferences: hitCount > 0
+        ? ["The available answer is limited to the retrieved local evidence and citation labels shown here."]
+        : [],
+      uncertainty: [
+        "This packet uses deterministic local retrieval context only.",
+        "No hosted AI, hidden reasoning, browser scraping, account scraping, or full chat memory was used.",
+        "Relevant sources not yet ingested, chunked, or embedded are absent from this packet."
+      ],
+      missing_information: hitCount > 0
+        ? ["Any relevant local source not yet ingested, chunked, and embedded is missing from this answer."]
+        : ["No matching local chunks or evidence items were retrieved. Add or process relevant local evidence before drawing a conclusion."],
+      evidence_item_ids: evidenceItemIds,
+      document_ids: documentIds,
+      chunk_ids: chunkIds,
+      source_ids: sourceIds,
+      safe_labels: citationLabels,
+      source_trails: sourceTrails,
+      retrieval_count: hitCount,
+      retrieval_mode: "retrieval_preview",
+      local_model_status: "not_called_retrieval_preview_deterministic",
+      local_model_detail: "Local model/provider contribution was not requested by this retrieval-preview path; deterministic fallback is shown."
+    };
   };
 
   const buildAnswerRecordPayload = () => {
     const payload = lastPayload || {};
     const hits = Array.isArray(payload.retrieval_context?.hits) ? payload.retrieval_context.hits : [];
-    const evidenceItemIds = uniqueStrings(hits.flatMap((hit) => Array.isArray(hit.evidence_items) ? hit.evidence_items.map((item) => item.id) : []), 50);
-    const documentIds = uniqueStrings(hits.map((hit) => hit.document?.id || hit.qdrant_payload?.document_id), 50);
-    const chunkIds = uniqueStrings(hits.map((hit) => hit.chunk?.id || hit.qdrant_payload?.chunk_id), 50);
-    const sourceIds = uniqueStrings(hits.map((hit) => hit.source?.id), 50);
-    const safeLabels = uniqueStrings([
-      ...evidenceItemIds.slice(0, 10).map((id) => "evidence " + shortId(id)),
-      ...documentIds.slice(0, 5).map((id) => "document " + shortId(id)),
-      ...chunkIds.slice(0, 5).map((id) => "chunk " + shortId(id)),
-      ...sourceIds.slice(0, 5).map((id) => "source " + shortId(id))
-    ], 30);
-    const hitCount = hits.length;
+    const packet = buildGroundedAnswerPacket(payload, hits);
     return {
       user_question: lastQuestion,
-      answer_status: answerStatusFor(payload, hits),
-      answer_text: hitCount > 0
-        ? "Saved retrieval-preview answer record with " + hitCount + " local evidence hit(s). Review cited evidence IDs and source trail labels before relying on it."
-        : "Saved retrieval-preview answer record with insufficient local evidence.",
-      facts: [],
-      assumptions: ["Saved from local retrieval-preview metadata.", "Original evidence, documents, chunks, sources, and raw artifacts are preserved."],
-      inferences: hitCount > 0 ? ["The saved answer record is limited to the retrieved local evidence identifiers."] : [],
-      uncertainty: ["Retrieval scores and saved answer records are review aids, not proof of correctness."],
-      missing_information: hitCount > 0
-        ? ["Relevant sources not yet ingested, chunked, and embedded are absent from this saved answer record."]
-        : ["No matching local chunks or evidence items were retrieved for the saved question."],
-      evidence_item_ids: evidenceItemIds,
-      document_ids: documentIds,
-      chunk_ids: chunkIds,
-      source_ids: sourceIds,
-      safe_labels: safeLabels,
-      retrieval_mode: "retrieval_preview",
-      retrieval_count: hitCount,
-      local_model_status: "not_used_retrieval_preview",
+      answer_status: packet.answer_status,
+      answer_text: packet.answer_text,
+      facts: packet.facts,
+      assumptions: packet.assumptions,
+      inferences: packet.inferences,
+      uncertainty: packet.uncertainty,
+      missing_information: packet.missing_information,
+      evidence_item_ids: packet.evidence_item_ids,
+      document_ids: packet.document_ids,
+      chunk_ids: packet.chunk_ids,
+      source_ids: packet.source_ids,
+      safe_labels: packet.safe_labels,
+      retrieval_mode: packet.retrieval_mode,
+      retrieval_count: packet.retrieval_count,
+      local_model_status: packet.local_model_status,
       metadata_json: {
-        created_from: "results_ask_over_evidence",
+        created_from: "results_evidence_grounded_answer_packet",
         raw_evidence_text_stored: false,
         full_chat_memory: false,
-        hosted_ai_called: false
+        hosted_ai_called: false,
+        answer_packet_available: true,
+        retrieval_context_available: true
       }
     };
   };
@@ -1420,6 +1470,55 @@ function ChatRetrievalPreview() {
     addMeta(right, "collection", payload.retrieval_context?.collection_exists === false ? "missing" : "available");
     summary.append(left, right);
     return summary;
+  };
+
+  const renderPacketList = (parent, label, values, emptyText) => {
+    const section = document.createElement("p");
+    section.className = "messageMeta";
+    const title = document.createElement("strong");
+    title.textContent = label + ": ";
+    section.appendChild(title);
+    const items = Array.isArray(values) ? values.filter((value) => typeof value === "string" && value.trim()) : [];
+    section.append(items.length > 0 ? items.join(" | ") : emptyText);
+    parent.appendChild(section);
+  };
+
+  const renderAnswerPacket = (payload, hits) => {
+    const packet = buildGroundedAnswerPacket(payload, hits);
+    const item = document.createElement("article");
+    item.className = "item evidenceItem";
+    item.setAttribute("data-evidence-grounded-answer-packet", "");
+
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = "Evidence-grounded answer packet";
+    const detail = document.createElement("span");
+    detail.textContent = packet.answer_text;
+    body.append(title, detail);
+
+    renderPacketList(body, "Facts", packet.facts, "No facts extracted from retrieved evidence.");
+    renderPacketList(body, "Assumptions", packet.assumptions, "No assumptions recorded.");
+    renderPacketList(body, "Inferences", packet.inferences, "No inference made without evidence.");
+    renderPacketList(body, "Uncertainty", packet.uncertainty, "No uncertainty recorded.");
+    renderPacketList(body, "Missing information", packet.missing_information, "No missing information recorded.");
+    renderPacketList(body, "Citations", packet.safe_labels, "No citation labels available.");
+    renderPacketList(body, "Source trail", packet.source_trails, "No source/document/chunk trail available.");
+
+    const right = document.createElement("div");
+    addMeta(right, "answer_status", packet.answer_status);
+    addMeta(right, "retrieval_hits", String(packet.retrieval_count));
+    addMeta(right, "retrieved evidence", hits.length > 0 ? "shown below" : "none");
+    addMeta(right, "packet", "deterministic");
+    addMeta(right, "local model", packet.local_model_status);
+    addMeta(right, "provider", "not used by retrieval preview");
+    addMeta(right, "fallback", "deterministic evidence-only");
+    item.append(body, right);
+
+    const llmLine = document.createElement("p");
+    llmLine.className = "messageMeta";
+    llmLine.textContent = packet.local_model_detail;
+    item.appendChild(llmLine);
+    return item;
   };
 
   const renderHit = (hit, index) => {
@@ -1497,11 +1596,12 @@ function ChatRetrievalPreview() {
       const payload = await response.json();
       lastPayload = payload;
       const hits = payload.retrieval_context?.hits ?? [];
-      const answerStatus = payload.answer_status || "unknown";
+      const answerStatus = answerStatusFor(payload, hits);
       status.textContent = "answer_status: " + answerStatus + " | hits: " + hits.length;
       results.setAttribute("data-answer-status", answerStatus);
       results.setAttribute("data-hit-count", String(hits.length));
       results.appendChild(renderReviewSummary(payload, hits));
+      results.appendChild(renderAnswerPacket(payload, hits));
 
       if (hits.length > 0) {
         hits.forEach((hit, index) => results.appendChild(renderHit(hit, index)));

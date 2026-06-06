@@ -343,7 +343,16 @@ Ask Over Evidence:
 
 - Question or request is where you type a plain-language question.
 - Evidence limit controls how many matching chunks to show.
-- `Ask over evidence` searches local evidence and returns context.
+- `Ask over evidence` searches local evidence and returns context plus a
+  deterministic evidence-grounded answer packet.
+- The packet separates facts, assumptions, inferences, uncertainty, missing
+  information, citations, and source/document/chunk trails where available.
+- Retrieved evidence remains visible below the packet. The packet is a local
+  cited review aid, not automatic truth verification.
+- If no hits are found, the packet shows insufficient evidence. This does not
+  mean the real-world information does not exist.
+- Saving an answer record stores the packet fields and citation identifiers for
+  later feedback/review without mutating evidence.
 
 Local LLM Status:
 
