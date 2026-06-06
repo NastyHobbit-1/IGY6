@@ -382,6 +382,19 @@ Outcome Learning Summary:
 - Does not change future reasoning behavior automatically, promote methods, run
   experiments, or claim autonomous self-improvement.
 
+Prediction / Recommendation Creation:
+
+- Creates reviewable prediction or recommendation records through the existing
+  analysis routes.
+- Requires at least one existing evidence ID.
+- Can link record metadata to a saved answer, report, or task context when
+  available.
+- Stores confidence, uncertainty, expected result, disproof criteria, review
+  status, and timeframe where supported by current fields or metadata.
+- Recommendations can be marked approval-required for later review.
+- Does not automatically execute recommendations, call a forecasting engine, or
+  present the record as guaranteed truth.
+
 Local LLM Status:
 
 - Shows whether local model generation is disabled, configured, or waiting for
