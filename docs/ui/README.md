@@ -525,6 +525,14 @@ Safety, Approvals, And Policy:
 - Blocked actions show actions that cannot currently run.
 - Approval-required actions show workflows that need explicit approval.
 - External model policy shows the local-first default.
+- Backup, Restore, Export, and Delete Audit maps current data classes,
+  configured lifecycle paths, vector/graph store visibility, exclusions, and
+  dangerous future work. It is non-destructive and does not create backup
+  archives, delete data, restore data, print secrets, dump runtime/private data,
+  or edit `.env`.
+- Lifecycle audit treats secrets and `.env` as excluded from product exports.
+  Raw artifacts are sensitive and should only be included by future
+  owner-selected backup/export flows with explicit warnings.
 
 Approvals:
 

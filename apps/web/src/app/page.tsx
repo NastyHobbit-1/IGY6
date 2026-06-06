@@ -5037,6 +5037,146 @@ function BasicReportWorkflow({
   );
 }
 
+function LifecycleAuditStatusPanel({
+  sources,
+  approvals,
+  artifacts,
+  documents,
+  chunks,
+  evidenceItems,
+  evidenceAnswers,
+  claims,
+  feedback,
+  outcomes,
+  workItems,
+  taskPlans,
+  reports,
+  patterns,
+  hypotheses,
+  predictions,
+  recommendations,
+  improvements,
+  experiments,
+  envSettings,
+  vectorCollection,
+  graphSchema
+}: {
+  sources: ApiResult<SourceRecord[]>;
+  approvals: ApiResult<ApprovalRecord[]>;
+  artifacts: ApiResult<RawArtifactRecord[]>;
+  documents: ApiResult<NormalizedDocumentRecord[]>;
+  chunks: ApiResult<ChunkRecord[]>;
+  evidenceItems: ApiResult<EvidenceItemRecord[]>;
+  evidenceAnswers: ApiResult<EvidenceAnswerRecord[]>;
+  claims: ApiResult<ClaimRecord[]>;
+  feedback: ApiResult<FeedbackRecord[]>;
+  outcomes: ApiResult<OutcomeRecord[]>;
+  workItems: ApiResult<WorkItemRecord[]>;
+  taskPlans: ApiResult<AgentTaskPlanRecord[]>;
+  reports: ApiResult<ReportRecord[]>;
+  patterns: ApiResult<PatternRecord[]>;
+  hypotheses: ApiResult<HypothesisRecord[]>;
+  predictions: ApiResult<PredictionRecord[]>;
+  recommendations: ApiResult<RecommendationRecord[]>;
+  improvements: ApiResult<ImprovementRecord[]>;
+  experiments: ApiResult<ExperimentRecord[]>;
+  envSettings: ApiResult<EnvSettingsResponse>;
+  vectorCollection: ApiResult<VectorCollectionStatus>;
+  graphSchema: ApiResult<GraphSchemaStatus>;
+}) {
+  const envHas = (key: string) => envSettings.data.settings.find((setting) => setting.key === key)?.has_value ?? false;
+  const dataClasses = [
+    { label: "sources", count: sources.data.length, backup: "yes", export: "metadata", restore: "future", deletion: "future explicit DIFF" },
+    { label: "permissions/approvals", count: approvals.data.length, backup: "yes", export: "audit metadata", restore: "future", deletion: "restricted" },
+    { label: "raw artifacts", count: artifacts.data.length, backup: "optional sensitive", export: "owner-selected only", restore: "future", deletion: "dangerous" },
+    { label: "documents/chunks", count: documents.data.length + chunks.data.length, backup: "yes", export: "metadata/previews", restore: "future rebuild", deletion: "dangerous" },
+    { label: "evidence/claims/answers", count: evidenceItems.data.length + claims.data.length + evidenceAnswers.data.length, backup: "yes", export: "citation metadata", restore: "future", deletion: "dangerous" },
+    { label: "feedback/outcomes", count: feedback.data.length + outcomes.data.length, backup: "yes", export: "review metadata", restore: "future", deletion: "restricted" },
+    { label: "work/task records", count: workItems.data.length + taskPlans.data.length, backup: "yes", export: "metadata", restore: "future", deletion: "restricted" },
+    { label: "reports", count: reports.data.length, backup: "yes", export: "markdown if rendered", restore: "future", deletion: "future explicit DIFF" },
+    { label: "patterns/predictions/recommendations", count: patterns.data.length + hypotheses.data.length + predictions.data.length + recommendations.data.length, backup: "yes", export: "analysis metadata", restore: "future", deletion: "restricted" },
+    { label: "improvements/experiments", count: improvements.data.length + experiments.data.length, backup: "metadata plus artifacts", export: "metadata", restore: "future", deletion: "restricted" }
+  ];
+  const lifecycleReadiness = [
+    { label: "IGY6_DATA_ROOT", state: envHas("IGY6_DATA_ROOT") ? "configured" : "not reported", detail: "Root for runtime data. Values are not printed here." },
+    { label: "ARTIFACT_STORE_PATH", state: envHas("ARTIFACT_STORE_PATH") ? "configured" : "not reported", detail: "Raw/generated artifact storage; raw inclusion needs owner selection." },
+    { label: "EXPORT_STORE_PATH", state: envHas("EXPORT_STORE_PATH") ? "configured" : "not reported", detail: "Reserved local export path; current report export uses markdown artifacts." },
+    { label: "ENV_BACKUP_DIR", state: envHas("ENV_BACKUP_DIR") ? "configured" : "not reported", detail: ".env backup location for settings writes; .env is excluded from product exports." },
+    { label: "Qdrant", state: vectorCollection.data.exists ? "collection-visible" : "not visible", detail: "Vector store needs its own future backup/restore plan." },
+    { label: "Neo4j", state: graphSchema.data.constraints.length > 0 ? "schema-visible" : "schema-not-visible", detail: "Graph store needs its own future backup/restore plan." }
+  ];
+
+  return (
+    <section className="panel lifecycleAudit" data-lifecycle-audit-status>
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Data lifecycle</p>
+          <h2>Backup, Restore, Export, And Delete Audit</h2>
+        </div>
+        <StatusPill state="non-destructive-audit" />
+      </div>
+      <div className="guidedManualNotice">
+        <strong>Audit only.</strong>
+        <span>This panel maps data classes and lifecycle boundaries. It does not delete, restore, create backup archives, dump runtime data, print secrets, or modify `.env`.</span>
+      </div>
+      {[sources.error, artifacts.error, documents.error, chunks.error, evidenceItems.error, evidenceAnswers.error, reports.error, envSettings.error, vectorCollection.error, graphSchema.error].filter(Boolean).length > 0 ? (
+        <p className="errorText">Some lifecycle inputs could not be loaded; audit counts may be incomplete.</p>
+      ) : null}
+      <section className="metrics compact" aria-label="Lifecycle store status">
+        <article><span>Data root</span><strong>{envHas("IGY6_DATA_ROOT") ? "Set" : "Unknown"}</strong></article>
+        <article><span>Artifacts</span><strong>{artifacts.data.length}</strong></article>
+        <article><span>Reports</span><strong>{reports.data.filter((report) => report.artifact_path).length}</strong></article>
+        <article><span>Vector store</span><strong>{vectorCollection.data.exists ? "Visible" : "Unknown"}</strong></article>
+        <article><span>Graph schema</span><strong>{graphSchema.data.constraints.length}</strong></article>
+      </section>
+      <section className="quad">
+        <div>
+          <div className="subHeader"><h3>Data Classes</h3></div>
+          <div className="stack">
+            {dataClasses.map((item) => (
+              <article className="item evidenceItem" key={item.label}>
+                <div>
+                  <strong>{item.label}</strong>
+                  <span>Backup: {item.backup} · Export: {item.export}</span>
+                  <span>Restore: {item.restore} · Delete: {item.deletion}</span>
+                </div>
+                <div><StatusPill state={`${item.count}-records`} /></div>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="subHeader"><h3>Store Readiness</h3></div>
+          <div className="stack">
+            {lifecycleReadiness.map((item) => (
+              <article className="item evidenceItem" key={item.label}>
+                <div><strong>{item.label}</strong><span>{item.detail}</span></div>
+                <div><StatusPill state={item.state} /></div>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="subHeader"><h3>Exclusions</h3></div>
+          <div className="stack">
+            <article className="item evidenceItem"><div><strong>Secrets and `.env`</strong><span>Excluded from product exports; settings backups are separate and controlled.</span></div><StatusPill state="excluded" /></article>
+            <article className="item evidenceItem"><div><strong>Raw private artifacts</strong><span>Include only in future owner-selected backup/export flows with explicit warnings.</span></div><StatusPill state="sensitive" /></article>
+            <article className="item evidenceItem"><div><strong>Runtime databases</strong><span>PostgreSQL, Qdrant, Neo4j, MLflow, Phoenix, and Redis need service-specific future procedures.</span></div><StatusPill state="future-diff" /></article>
+          </div>
+        </div>
+        <div>
+          <div className="subHeader"><h3>Dangerous Future Work</h3></div>
+          <div className="stack">
+            <article className="item evidenceItem"><div><strong>Destructive delete</strong><span>Requires explicit future DIFF, confirmation, audit event, and dependency review.</span></div><StatusPill state="not-implemented" /></article>
+            <article className="item evidenceItem"><div><strong>Restore</strong><span>Requires compatibility checks, conflict handling, and rollback plan before implementation.</span></div><StatusPill state="not-implemented" /></article>
+            <article className="item evidenceItem"><div><strong>Backup archive</strong><span>No archive is created in this DIFF; future backups need secret exclusion and raw-artifact policy.</span></div><StatusPill state="not-created" /></article>
+          </div>
+        </div>
+      </section>
+    </section>
+  );
+}
+
 function EvidenceFeedbackWorkflow({
   evidenceItems,
   evidenceAnswers,
@@ -7914,6 +8054,30 @@ export default async function Home() {
               <article><span>Approval-required actions</span><strong>{approvalRequiredActions.length}</strong></article>
               <article><span>External model policy</span><strong>blocked</strong></article>
             </section>
+            <LifecycleAuditStatusPanel
+              sources={sources}
+              approvals={approvals}
+              artifacts={artifacts}
+              documents={documents}
+              chunks={chunks}
+              evidenceItems={evidenceItems}
+              evidenceAnswers={evidenceAnswers}
+              claims={claims}
+              feedback={feedback}
+              outcomes={outcomes}
+              workItems={workItems}
+              taskPlans={agentTaskPlans}
+              reports={reports}
+              patterns={patterns}
+              hypotheses={hypotheses}
+              predictions={predictions}
+              recommendations={recommendations}
+              improvements={improvements}
+              experiments={experiments}
+              envSettings={envSettings}
+              vectorCollection={vectorCollection}
+              graphSchema={graphSchema}
+            />
             <section className="quad analysisGrid">
               <div id="approvals">
                 <div className="subHeader"><h3><HelpHeading term="approval">Approvals</HelpHeading></h3>{approvals.error ? <span className="errorText">{approvals.error}</span> : null}</div>
