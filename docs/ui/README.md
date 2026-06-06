@@ -395,6 +395,18 @@ Prediction / Recommendation Creation:
 - Does not automatically execute recommendations, call a forecasting engine, or
   present the record as guaranteed truth.
 
+Prediction / Recommendation Outcome Review:
+
+- Shows prediction/recommendation details, linked evidence IDs, stored
+  answer/report/task context metadata, existing feedback counts, existing
+  outcome counts, and linked improvement-candidate counts where available.
+- Lets the user record outcomes as correct, wrong, partial, useful, not useful,
+  or inconclusive with optional evidence IDs and a summary note.
+- Can propose an improvement candidate when a wrong, partial, not useful, or
+  inconclusive outcome is recorded.
+- Does not auto-execute recommendations, auto-change future recommendations,
+  recalibrate a forecasting engine, or claim complete calibration.
+
 Local LLM Status:
 
 - Shows whether local model generation is disabled, configured, or waiting for
