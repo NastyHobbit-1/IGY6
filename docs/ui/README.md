@@ -471,7 +471,16 @@ Search Memory And Findings:
 Reports:
 
 - Lists report records if any exist.
-- Report create/render controls currently live in Advanced.
+- Basic report workflow can create and optionally render local markdown report
+  artifacts through the existing `/reports` and `/reports/:id/render` routes.
+- Report templates include Evidence brief, Decision note, Handoff, and
+  Inventory summary. Templates add section guidance for summary/context,
+  evidence-backed sections, uncertainty or missing information, safe next
+  actions where relevant, and a citation/evidence appendix.
+- Markdown export stores a local content-addressed report artifact when render
+  succeeds. PDF export and a full report authoring suite are not claimed.
+- Report rendering does not read raw artifact contents, expose secrets, call
+  hosted AI, or create external exports.
 
 ### Buttons And Actions
 
