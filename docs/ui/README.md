@@ -460,12 +460,15 @@ Prediction / Recommendation Outcome Review:
 - Shows prediction/recommendation details, linked evidence IDs, stored
   answer/report/task context metadata, existing feedback counts, existing
   outcome counts, and linked improvement-candidate counts where available.
+- Reads the Rust `GET /analysis/calibration/summary` endpoint for descriptive
+  prediction/recommendation counts, outcome counts, confidence bands, and
+  evidence-linked totals.
 - Lets the user record outcomes as correct, wrong, partial, useful, not useful,
   or inconclusive with optional evidence IDs and a summary note.
 - Can propose an improvement candidate when a wrong, partial, not useful, or
   inconclusive outcome is recorded.
 - Does not auto-execute recommendations, auto-change future recommendations,
-  recalibrate a forecasting engine, or claim complete calibration.
+  run a forecasting engine, or claim advanced/complete calibration.
 
 Local LLM Status:
 

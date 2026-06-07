@@ -60,6 +60,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/analysis/recommendations"),
     ("GET", "/analysis/recommendations/{recommendation_id}"),
     ("POST", "/analysis/recommendations"),
+    ("GET", "/analysis/calibration/summary"),
     ("POST", "/agent/intent"),
     ("POST", "/chat/retrieval-preview"),
     ("POST", "/chat/evidence-answer"),
@@ -487,6 +488,9 @@ pub fn handle_gateway_request_with_db(
         }
         ("GET", "/evidence-answers") => {
             action_route_response(list_evidence_answer_records(database_url))
+        }
+        ("GET", "/analysis/calibration/summary") => {
+            action_route_response(prediction_recommendation_calibration_summary(database_url))
         }
         ("GET", "/agent/task-plans") => {
             action_route_response(list_agent_task_plans(database_url))
@@ -5756,6 +5760,172 @@ fn get_evidence_answer_record(
     } else {
         Ok(body)
     }
+}
+
+#[derive(Debug, Clone)]
+struct CalibrationRecord {
+    kind: String,
+    id: String,
+    confidence: Option<i32>,
+    evidence_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CalibrationOutcome {
+    target_type: String,
+    target_id: String,
+    outcome_status: String,
+}
+
+fn prediction_recommendation_calibration_summary(
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut records = Vec::new();
+    for row in client
+        .query(
+            "SELECT 'prediction' AS kind, id, confidence, evidence_ids FROM predictions UNION ALL SELECT 'recommendation' AS kind, id, confidence, evidence_ids FROM recommendations",
+            &[],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+    {
+        let evidence_ids = row.get::<_, Value>(3);
+        records.push(CalibrationRecord {
+            kind: row.get::<_, String>(0),
+            id: row.get::<_, String>(1),
+            confidence: row.get::<_, Option<i32>>(2),
+            evidence_count: string_values_from_json_array(&evidence_ids).len(),
+        });
+    }
+    let outcomes = client
+        .query(
+            "SELECT target_type, target_id, outcome_status FROM outcomes WHERE target_type IN ('prediction', 'recommendation')",
+            &[],
+        )
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| CalibrationOutcome {
+                    target_type: row.get::<_, String>(0),
+                    target_id: row.get::<_, String>(1),
+                    outcome_status: row.get::<_, String>(2),
+                })
+                .collect::<Vec<_>>()
+        })
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(calibration_summary_json(&records, &outcomes).to_string())
+}
+
+fn calibration_summary_json(
+    records: &[CalibrationRecord],
+    outcomes: &[CalibrationOutcome],
+) -> Value {
+    let mut record_keys = HashSet::new();
+    let mut by_kind: HashMap<&str, (usize, usize)> = HashMap::new();
+    let mut confidence_bands: HashMap<&str, (usize, usize)> = HashMap::new();
+    let mut evidence_linked = 0usize;
+    for record in records {
+        record_keys.insert(format!("{}:{}", record.kind, record.id));
+        if record.evidence_count > 0 {
+            evidence_linked += 1;
+        }
+        let kind_entry = by_kind.entry(record.kind.as_str()).or_insert((0, 0));
+        kind_entry.0 += 1;
+        let band_entry = confidence_bands
+            .entry(confidence_band(record.confidence))
+            .or_insert((0, 0));
+        band_entry.0 += 1;
+    }
+
+    let mut outcome_counts: HashMap<&str, usize> = HashMap::new();
+    let mut outcome_keys = HashSet::new();
+    for outcome in outcomes {
+        let key = format!("{}:{}", outcome.target_type, outcome.target_id);
+        if !record_keys.contains(&key) {
+            continue;
+        }
+        *outcome_counts
+            .entry(outcome.outcome_status.as_str())
+            .or_insert(0) += 1;
+        outcome_keys.insert(key);
+        if let Some(kind_entry) = by_kind.get_mut(outcome.target_type.as_str()) {
+            kind_entry.1 += 1;
+        }
+        if let Some(record) = records
+            .iter()
+            .find(|record| record.kind == outcome.target_type && record.id == outcome.target_id)
+        {
+            if let Some(band_entry) = confidence_bands.get_mut(confidence_band(record.confidence)) {
+                band_entry.1 += 1;
+            }
+        }
+    }
+
+    serde_json::json!({
+        "schema_version": "prediction_recommendation_calibration_summary.v1",
+        "record_counts": {
+            "predictions": records.iter().filter(|record| record.kind == "prediction").count(),
+            "recommendations": records.iter().filter(|record| record.kind == "recommendation").count(),
+            "total": records.len(),
+            "evidence_linked": evidence_linked,
+            "with_outcome": outcome_keys.len()
+        },
+        "outcome_counts": {
+            "correct": outcome_counts.get("correct").copied().unwrap_or(0),
+            "wrong": outcome_counts.get("wrong").copied().unwrap_or(0),
+            "partial": outcome_counts.get("partial").copied().unwrap_or(0),
+            "useful": outcome_counts.get("useful").copied().unwrap_or(0),
+            "not_useful": outcome_counts.get("not_useful").copied().unwrap_or(0),
+            "inconclusive": outcome_counts.get("inconclusive").copied().unwrap_or(0),
+            "total": outcome_counts.values().sum::<usize>()
+        },
+        "by_kind": {
+            "prediction": {
+                "records": by_kind.get("prediction").map(|entry| entry.0).unwrap_or(0),
+                "outcomes": by_kind.get("prediction").map(|entry| entry.1).unwrap_or(0)
+            },
+            "recommendation": {
+                "records": by_kind.get("recommendation").map(|entry| entry.0).unwrap_or(0),
+                "outcomes": by_kind.get("recommendation").map(|entry| entry.1).unwrap_or(0)
+            }
+        },
+        "confidence_bands": {
+            "unknown": confidence_band_json(&confidence_bands, "unknown"),
+            "low": confidence_band_json(&confidence_bands, "low"),
+            "medium": confidence_band_json(&confidence_bands, "medium"),
+            "high": confidence_band_json(&confidence_bands, "high")
+        },
+        "calibration_status": if outcome_keys.is_empty() { "needs_outcomes" } else { "review_ready" },
+        "limitations": [
+            "Outcome counts are explicit owner review records, not automatic scoring.",
+            "Confidence bands are descriptive only and are not advanced calibration statistics.",
+            "Recommendations are not executed automatically."
+        ],
+        "forecasting_engine": false,
+        "auto_execute_recommendations": false,
+        "advanced_calibration": false
+    })
+}
+
+fn confidence_band(confidence: Option<i32>) -> &'static str {
+    match confidence {
+        Some(value) if value < 40 => "low",
+        Some(value) if value < 70 => "medium",
+        Some(_) => "high",
+        None => "unknown",
+    }
+}
+
+fn confidence_band_json(confidence_bands: &HashMap<&str, (usize, usize)>, band: &str) -> Value {
+    let (records, outcomes) = confidence_bands.get(band).copied().unwrap_or((0, 0));
+    serde_json::json!({
+        "records": records,
+        "outcomes": outcomes
+    })
 }
 
 fn create_feedback(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -12199,6 +12369,7 @@ mod tests {
             ("GET", "/analysis/predictions/prediction-1"),
             ("GET", "/analysis/recommendations"),
             ("GET", "/analysis/recommendations/recommendation-1"),
+            ("GET", "/analysis/calibration/summary"),
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/task-plan-1"),
             ("GET", "/evidence-answers"),
@@ -13567,6 +13738,61 @@ mod tests {
     }
 
     #[test]
+    fn calibration_summary_counts_records_outcomes_and_confidence_bands() {
+        let records = vec![
+            CalibrationRecord {
+                kind: "prediction".to_string(),
+                id: "prediction-1".to_string(),
+                confidence: Some(80),
+                evidence_count: 2,
+            },
+            CalibrationRecord {
+                kind: "recommendation".to_string(),
+                id: "recommendation-1".to_string(),
+                confidence: Some(35),
+                evidence_count: 1,
+            },
+            CalibrationRecord {
+                kind: "recommendation".to_string(),
+                id: "recommendation-2".to_string(),
+                confidence: None,
+                evidence_count: 0,
+            },
+        ];
+        let outcomes = vec![
+            CalibrationOutcome {
+                target_type: "prediction".to_string(),
+                target_id: "prediction-1".to_string(),
+                outcome_status: "correct".to_string(),
+            },
+            CalibrationOutcome {
+                target_type: "recommendation".to_string(),
+                target_id: "recommendation-1".to_string(),
+                outcome_status: "not_useful".to_string(),
+            },
+            CalibrationOutcome {
+                target_type: "recommendation".to_string(),
+                target_id: "missing".to_string(),
+                outcome_status: "wrong".to_string(),
+            },
+        ];
+        let summary = calibration_summary_json(&records, &outcomes);
+        assert_eq!(summary["record_counts"]["predictions"], 1);
+        assert_eq!(summary["record_counts"]["recommendations"], 2);
+        assert_eq!(summary["record_counts"]["evidence_linked"], 2);
+        assert_eq!(summary["record_counts"]["with_outcome"], 2);
+        assert_eq!(summary["outcome_counts"]["correct"], 1);
+        assert_eq!(summary["outcome_counts"]["not_useful"], 1);
+        assert_eq!(summary["outcome_counts"]["wrong"], 0);
+        assert_eq!(summary["confidence_bands"]["high"]["outcomes"], 1);
+        assert_eq!(summary["confidence_bands"]["low"]["outcomes"], 1);
+        assert_eq!(summary["confidence_bands"]["unknown"]["records"], 1);
+        assert_eq!(summary["forecasting_engine"], false);
+        assert_eq!(summary["auto_execute_recommendations"], false);
+        assert_eq!(summary["advanced_calibration"], false);
+    }
+
+    #[test]
     fn source_create_validation_rejects_invalid_requests_without_fallback() {
         for body in [
             "{}",
@@ -13855,6 +14081,7 @@ mod tests {
             ("GET", "/analysis/predictions/{prediction_id}"),
             ("GET", "/analysis/recommendations"),
             ("GET", "/analysis/recommendations/{recommendation_id}"),
+            ("GET", "/analysis/calibration/summary"),
             ("GET", "/agent/task-plans"),
             ("GET", "/agent/task-plans/{task_plan_id}"),
             ("POST", "/agent/task-plans"),

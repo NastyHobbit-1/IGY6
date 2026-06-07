@@ -162,6 +162,36 @@ type RecommendationRecord = {
   created_at: string;
 };
 
+type CalibrationSummary = {
+  schema_version: string;
+  record_counts: {
+    predictions: number;
+    recommendations: number;
+    total: number;
+    evidence_linked: number;
+    with_outcome: number;
+  };
+  outcome_counts: {
+    correct: number;
+    wrong: number;
+    partial: number;
+    useful: number;
+    not_useful: number;
+    inconclusive: number;
+    total: number;
+  };
+  by_kind: {
+    prediction: { records: number; outcomes: number };
+    recommendation: { records: number; outcomes: number };
+  };
+  confidence_bands: Record<string, { records: number; outcomes: number }>;
+  calibration_status: string;
+  limitations?: string[];
+  forecasting_engine: boolean;
+  auto_execute_recommendations: boolean;
+  advanced_calibration: boolean;
+};
+
 type WorkItemRecord = {
   id: string;
   work_type: string;
@@ -6781,7 +6811,8 @@ function PredictionRecommendationOutcomeReview({
   taskPlans,
   feedback,
   outcomes,
-  improvements
+  improvements,
+  calibrationSummary
 }: {
   predictions: ApiResult<PredictionRecord[]>;
   recommendations: ApiResult<RecommendationRecord[]>;
@@ -6791,6 +6822,7 @@ function PredictionRecommendationOutcomeReview({
   feedback: ApiResult<FeedbackRecord[]>;
   outcomes: ApiResult<OutcomeRecord[]>;
   improvements: ApiResult<ImprovementRecord[]>;
+  calibrationSummary: ApiResult<CalibrationSummary>;
 }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const records = [
@@ -6956,6 +6988,21 @@ function PredictionRecommendationOutcomeReview({
       {[predictions.error, recommendations.error, feedback.error, outcomes.error, improvements.error].filter(Boolean).length > 0 ? (
         <p className="errorText">Some prediction, recommendation, feedback, outcome, or improvement records could not be loaded.</p>
       ) : null}
+      <section className="metrics compact" aria-label="Prediction recommendation calibration summary">
+        <article><span>Calibration status</span><strong>{calibrationSummary.data.calibration_status}</strong></article>
+        <article><span>Records</span><strong>{calibrationSummary.data.record_counts.total}</strong></article>
+        <article><span>Evidence-linked</span><strong>{calibrationSummary.data.record_counts.evidence_linked}</strong></article>
+        <article><span>With outcomes</span><strong>{calibrationSummary.data.record_counts.with_outcome}</strong></article>
+        <article><span>Correct/useful</span><strong>{calibrationSummary.data.outcome_counts.correct + calibrationSummary.data.outcome_counts.useful}</strong></article>
+        <article><span>Wrong/not useful</span><strong>{calibrationSummary.data.outcome_counts.wrong + calibrationSummary.data.outcome_counts.not_useful}</strong></article>
+      </section>
+      {calibrationSummary.error ? (
+        <p className="errorText">Calibration summary could not be loaded: {calibrationSummary.error}</p>
+      ) : null}
+      <div className="guidedManualNotice">
+        <strong>Calibration is descriptive.</strong>
+        <span>Summary counts come from persisted records and explicit outcomes. No forecasting engine is run, no recommendation is executed, and confidence bands are not advanced calibration statistics.</span>
+      </div>
       <section className="split">
         <div>
           <div className="subHeader"><h3>Review Records</h3></div>
@@ -8073,6 +8120,7 @@ export default async function Home() {
     hypotheses,
     predictions,
     recommendations,
+    calibrationSummary,
 	    workItems,
 	    approvals,
 	    feedback,
@@ -8100,6 +8148,35 @@ export default async function Home() {
     getJson<HypothesisRecord[]>("/analysis/hypotheses", []),
     getJson<PredictionRecord[]>("/analysis/predictions", []),
     getJson<RecommendationRecord[]>("/analysis/recommendations", []),
+    getJson<CalibrationSummary>("/analysis/calibration/summary", {
+      schema_version: "prediction_recommendation_calibration_summary.v1",
+      record_counts: {
+        predictions: 0,
+        recommendations: 0,
+        total: 0,
+        evidence_linked: 0,
+        with_outcome: 0
+      },
+      outcome_counts: {
+        correct: 0,
+        wrong: 0,
+        partial: 0,
+        useful: 0,
+        not_useful: 0,
+        inconclusive: 0,
+        total: 0
+      },
+      by_kind: {
+        prediction: { records: 0, outcomes: 0 },
+        recommendation: { records: 0, outcomes: 0 }
+      },
+      confidence_bands: {},
+      calibration_status: "unavailable",
+      limitations: [],
+      forecasting_engine: false,
+      auto_execute_recommendations: false,
+      advanced_calibration: false
+    }),
 	    getJson<WorkItemRecord[]>("/work-items", []),
 	    getJson<ApprovalRecord[]>("/approvals", []),
 	    getJson<FeedbackRecord[]>("/feedback", []),
@@ -8713,6 +8790,7 @@ export default async function Home() {
               feedback={feedback}
               outcomes={outcomes}
               improvements={improvements}
+              calibrationSummary={calibrationSummary}
             />
             <BaselinePatternExpansionPanel
               patterns={patterns}
