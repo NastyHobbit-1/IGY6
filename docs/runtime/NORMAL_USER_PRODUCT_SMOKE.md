@@ -1,4 +1,4 @@
-# Normal-User Product Smoke
+# Normal-User Product Smoke (grok branch - program operating guide in main README)
 
 This checklist verifies the product path:
 

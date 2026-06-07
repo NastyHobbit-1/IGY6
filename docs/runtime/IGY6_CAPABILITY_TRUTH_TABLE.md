@@ -1,10 +1,11 @@
-# IGY6 Capability Truth Table
+# IGY6 Capability Truth Table (grok branch)
 
 **Audit Date:** 2026-06-07 (performed on Grok6 clone)  
 **Current Branch (for this table):** `grok` (in /home/nasty/Grok6 separate clone)  
-**HEAD at audit start:** f05b128 Complete DIFF-245 post-244 capability integrity audit next build phase plan  
-**Governing DIFF for this table + foundations:** DIFF-246 (this work)  
-**Source materials:** IGY6 Finished Product Capability Specification (specs.txt), IGY6_CURRENT_IMPLEMENTATION_AUDIT_PACKAGE.txt + CAPABILITY_TRUTH_TABLE_CODEX_PROMPT.txt + TEMPLATE, DIFF-240 through DIFF-245, AGENTS.md, BRANCH_POLICY.md, CODEX_PROMPT_BASELINE.md, rust-cutover-manifest.json, docs/ui/README.md, code inspection of crates/ (especially igy6-write-api, igy6-evidence-answer, igy6-gateway), apps/web, scripts, infra.
+**Note on this branch:** The program is password protected (default "ThatDog123"), with easy password changing in the User & Security UI section. Optional TOTP authenticator (any standard app) is off by default until linked. Deep/thorough full-access collector with original/full-res images & videos from source. Dedicated easy Image & Video Library for viewing collected media at full res. Dynamic clear local URLs. Everything tied real (artifacts, evidence, graph, worker pipelines, audit) and local-only. See the main README and user-guide.md (updated for grok operating view) for current setup, daily use, and features. All docs have been aligned to program-only instructions.
+
+**Governing work:** grok branch full-access + media lib + user/TOTP + dynamic URL improvements (no active DIFF required per branch policy relaxation).  
+**Source materials:** IGY6 Finished Product Capability Specification (specs.txt), IGY6_CURRENT_IMPLEMENTATION_AUDIT_PACKAGE.txt + CAPABILITY_TRUTH_TABLE_CODEX_PROMPT.txt + TEMPLATE, previous DIFFs, code inspection of current grok collector (deep scrape, infer media, full-access), gateway user endpoints, UI (Media Library + User section + password gate), artifact content serving, etc.
 
 ## 1. Current branch / HEAD / audit date
 See header. Work isolated to Grok6 `grok` branch per user request to complete the product on a new `grok` branch. Primary dev worktree left untouched.

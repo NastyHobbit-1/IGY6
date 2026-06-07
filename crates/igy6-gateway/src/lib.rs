@@ -5,6 +5,9 @@ use walkdir::WalkDir;
 use ureq;  // for web scraping / URL collection
 use igy6_artifacts::detect_content_kind;
 use base64::Engine;  // for content base64 in media library (grok)
+use std::fs;
+use std::path::PathBuf;
+use totp_rs::{Algorithm, Secret, TOTP};  // for optional authenticator TOTP (grok, off by default)
 use std::env;
 use std::fmt;
 use std::fs;
@@ -371,6 +374,11 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/collection-runs/full-local-scan") => {
             full_access_collection_response(&request.body, database_url)
         }
+        // User / security on grok branch: password changing + optional authenticator (TOTP, off by default until linked)
+        ("GET", "/user/status") => json_response(200, "OK", user_status_json(), false),
+        ("POST", "/user/change-password") => json_response(200, "OK", user_change_password(&request.body)?, false),
+        ("POST", "/user/generate-totp") => json_response(200, "OK", user_generate_totp(&request.body)?, false),
+        ("POST", "/user/confirm-totp") => json_response(200, "OK", user_confirm_totp(&request.body)?, false),
         ("POST", "/evidence/documents") => {
             evidence_document_create_response(&request.body, database_url)
         }
@@ -2047,8 +2055,15 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let object: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
     // Password protection for the program (grok branch full access)
     let provided_pass = object.get("password").and_then(|v| v.as_str()).unwrap_or("");
-    if provided_pass != "ThatDog123" {
-        return Err(GatewayError::Forbidden("Program is password protected. Use password \"ThatDog123\" in payload.password for full access collector.".to_string()));
+    let cfg = load_user_config();
+    if provided_pass != cfg.password {
+        return Err(GatewayError::Forbidden("Program is password protected. Provide correct current password in payload.password.".to_string()));
+    }
+    if cfg.totp_enabled {
+        let totp_code = object.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+            return Err(GatewayError::Forbidden("TOTP code required and incorrect (authenticator is linked and enabled).".to_string()));
+        }
     }
     let requested_by = object.get("requested_by_actor_id")
         .and_then(|v| v.as_str())
@@ -10448,6 +10463,154 @@ fn artifact_data_root() -> PathBuf {
         }
     }
     PathBuf::from("/workspace/storage")
+}
+
+// === Grok branch user / password / authenticator support (off by default for TOTP) ===
+// Config stored in a simple JSON next to data root for persistence across runs.
+// Default password "ThatDog123". TOTP off until linked with any standard authenticator app (Google Authenticator, Authy, etc.).
+// All protected operations (full access collector, etc.) require the current password (and TOTP code if enabled).
+// Password change and TOTP linking require current credentials.
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct UserConfig {
+    password: String,
+    totp_secret: Option<String>,
+    totp_enabled: bool,
+}
+
+fn user_config_path() -> PathBuf {
+    if let Ok(root) = env::var("IGY6_DATA_ROOT") {
+        PathBuf::from(root).join(".grok-user.json")
+    } else if let Ok(art) = env::var("ARTIFACT_STORE_PATH") {
+        Path::new(&art).parent().unwrap_or(Path::new(".")).join(".grok-user.json")
+    } else {
+        PathBuf::from(".grok-user.json")
+    }
+}
+
+fn load_user_config() -> UserConfig {
+    let path = user_config_path();
+    if let Ok(data) = fs::read_to_string(&path) {
+        if let Ok(cfg) = serde_json::from_str::<UserConfig>(&data) {
+            return cfg;
+        }
+    }
+    // Default for first run / grok branch
+    UserConfig {
+        password: "ThatDog123".to_string(),
+        totp_secret: None,
+        totp_enabled: false,
+    }
+}
+
+fn save_user_config(cfg: &UserConfig) -> Result<(), GatewayError> {
+    let path = user_config_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let data = serde_json::to_string_pretty(cfg).map_err(|e| GatewayError::Validation(format!("config serialize: {}", e)))?;
+    fs::write(&path, data).map_err(|e| GatewayError::Validation(format!("config write: {}", e)))?;
+    Ok(())
+}
+
+fn get_totp(secret: &str) -> Option<TOTP> {
+    Secret::Encoded(secret.to_string()).to_bytes().ok().and_then(|bytes| {
+        TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes).ok()
+    })
+}
+
+fn verify_totp(secret: &str, code: &str) -> bool {
+    if let Some(totp) = get_totp(secret) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        totp.check(code, now)
+    } else {
+        false
+    }
+}
+
+fn user_status_json() -> String {
+    let cfg = load_user_config();
+    serde_json::json!({
+        "password_set": true,
+        "totp_enabled": cfg.totp_enabled,
+        "has_totp_secret": cfg.totp_secret.is_some(),
+        "note": "TOTP is off by default. Use /user/generate-totp then /user/confirm-totp with a code from your authenticator app to link. Any standard TOTP app works (Google Authenticator, Authy, etc.)."
+    }).to_string()
+}
+
+fn user_change_password(body: &str) -> Result<String, GatewayError> {
+    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let new_pass = obj.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
+    let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut cfg = load_user_config();
+    if current != cfg.password {
+        return Err(GatewayError::Forbidden("current password incorrect".into()));
+    }
+    if cfg.totp_enabled {
+        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+            return Err(GatewayError::Forbidden("TOTP code incorrect".into()));
+        }
+    }
+    if new_pass.len() < 4 {
+        return Err(GatewayError::Validation("new password too short".into()));
+    }
+    cfg.password = new_pass.to_string();
+    save_user_config(&cfg)?;
+    Ok(serde_json::json!({"status": "password changed"}).to_string())
+}
+
+fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
+    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut cfg = load_user_config();
+    if current != cfg.password {
+        return Err(GatewayError::Forbidden("current password incorrect".into()));
+    }
+    if cfg.totp_enabled {
+        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+            return Err(GatewayError::Forbidden("TOTP code incorrect to re-link".into()));
+        }
+    }
+
+    // Generate new secret (standard base32 for any authenticator app)
+    let secret = Secret::generate(20).to_encoded().to_string();
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, Secret::Encoded(secret.clone()).to_bytes().unwrap()).unwrap();
+    let otpauth = totp.get_url("grok-user", "IGY6-grok");
+
+    // Temporarily store pending secret (not enabled until confirmed)
+    cfg.totp_secret = Some(secret.clone());
+    save_user_config(&cfg)?;
+
+    Ok(serde_json::json!({
+        "secret": secret,
+        "otpauth_url": otpauth,
+        "note": "Scan the otpauth_url with any authenticator app or enter the secret manually. Then call /user/confirm-totp with a current code to enable."
+    }).to_string())
+}
+
+fn user_confirm_totp(body: &str) -> Result<String, GatewayError> {
+    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut cfg = load_user_config();
+    if current != cfg.password {
+        return Err(GatewayError::Forbidden("current password incorrect".into()));
+    }
+    let secret = cfg.totp_secret.clone().ok_or_else(|| GatewayError::Validation("no pending secret, call generate-totp first".into()))?;
+    if !verify_totp(&secret, code) {
+        return Err(GatewayError::Forbidden("TOTP code did not verify, try again".into()));
+    }
+    cfg.totp_enabled = true;
+    save_user_config(&cfg)?;
+    Ok(serde_json::json!({"status": "authenticator linked and enabled", "totp_enabled": true}).to_string())
 }
 
 fn collect_local_project_files(

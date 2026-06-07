@@ -3,9 +3,9 @@
   "version": "0.0.0-phase0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "dev": "node scripts/start-dynamic.mjs",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0 --port 3000",
+    "start": "node scripts/start-dynamic.mjs --start",
     "test": "npm run test:ui-smoke",
     "test:ui-smoke": "node scripts/ui-smoke.mjs"
   },

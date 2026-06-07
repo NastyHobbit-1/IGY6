@@ -1,10 +1,74 @@
-# IGY6
+# IGY6 (grok branch)
 
-IGY6 is a private, local-first evidence and decision-support workspace.
+**Operating guide for the running program on the grok branch only.** This document (and all other docs in the tree) now focuses exclusively on setup, how to run and use the program, and its features. No build, compile, development, or cargo/npm instructions.
 
-It is designed to help a user collect authorized information, turn that information into traceable evidence, search and reason over that evidence, review system activity, and produce decision-ready outputs without sending private runtime data to a hosted service by default.
+On this branch the program is a local-only evidence + aggressive collection workspace. It can deeply and thoroughly collect from any target it can reach (local files/directories, web URLs/pages, system state, WiFi, etc.), stores **everything only inside itself** (no content exfil), preserves full provenance, and provides an easy Image & Video Library for viewing collected media at full/original resolution directly from the source.
 
-IGY6 is not just a chatbot and not just a RAG demo. The goal is a local intelligence layer over approved information: sources, artifacts, documents, chunks, evidence items, claims, patterns, reports, approvals, audit events, and outcomes.
+Default password: "ThatDog123". The program is password-protected. Optional TOTP authenticator support is **off by default** until you explicitly link it (works with any standard authenticator app).
+
+## Setup (Running the Program)
+
+1. Docker + docker compose recommended for the full stack (or use the supporting scripts for direct runs if your environment is prepared).
+2. Have a `.env` (copy `.env.example` and set `IGY6_DATA_ROOT` to a writable host directory — this is where everything local lives: DBs, full-res media artifacts, evidence, graph, etc.).
+3. Start it:
+   ```bash
+   scripts/run.sh
+   ```
+   - Starts the complete local stack (gateway, worker, web UI, Postgres, Neo4j, Qdrant, etc.).
+   - The web UI automatically uses a **clear unused local URL** (normally 3000; if busy it switches to the next free port and clearly prints the exact http://127.0.0.1:PORT you should open).
+4. Open the printed URL in your browser.
+5. Unlock with the current password ("ThatDog123" by default). If you have linked TOTP, also provide a current code from your authenticator app when performing protected actions.
+
+Stop with Ctrl+C or the stop/restart scripts in `scripts/`.
+
+**Dynamic URL**: The start logic (web dynamic starter + support in operator scripts) detects port conflicts and switches to a free one, always telling you the usable local address. No manual port editing required.
+
+## Operating the Program (UI & Daily Use)
+
+The UI is tabbed and intentionally easy to understand. Key areas on this branch:
+
+- **Home / overview** — stack readiness, recent collections, quick status.
+- **Add Data / Collector** — the deep collection surface. Use the **Deep Thorough Scan** buttons/controls. Give it URLs, local paths, or "everything". It runs deep/thorough on the target(s):
+  - Recursively follows and extracts from pages.
+  - For every image and video it finds: fetches **directly from the original source at full/original resolution** (handles data-*, fullsrc, strips resize params, etc.).
+  - Captures complete local files, system info, WiFi, etc.
+  - Stores as first-class artifacts (with real mime/kind detection) + evidence + graph entries. All local only.
+  - Protected calls require the current password (and totp_code if you enabled authenticator).
+- **Media Library** (grok branch feature) — easy grid of every collected image and video. Click a card for the full-resolution viewer (real bytes via the content endpoint, native <img> or <video> at original res from the source). Refresh after scans. Simple, visual, no guessing.
+- **Work / Results / Evidence** — processing state, evidence items, answers, reports, relationships.
+- **Settings / User & Security** (the user section):
+  - **Change password**: Enter current password + new password (≥4 chars). Submit. Persisted immediately. Default is "ThatDog123".
+  - **Authenticator (TOTP)**: Off by default. Use the generate/link flow (provide current password). You receive a secret (base32 text) and otpauth URL. Enter the secret (or use the URL for QR) in **any standard authenticator program** (Google Authenticator, Authy, Microsoft Authenticator, etc.). Then submit a current 6-digit code from the app to enable. Once on, protected actions (deep collector, etc.) will also require a current TOTP code.
+  - Check status button shows whether TOTP is enabled.
+- **Advanced** — diagnostics and raw views (only when you need them).
+
+**Typical flow**:
+1. scripts/run.sh → note the clear UI URL.
+2. Open URL → unlock with password (and TOTP code if enabled).
+3. Collector area → run deep scan on desired targets (include password, and totp_code if 2FA is on, in direct calls).
+4. Media Library → refresh → browse and view full-res images/videos pulled from their sources.
+5. Results/Evidence/Graph for the complete extracted info and relationships.
+6. User & Security anytime to change password or manage authenticator linking.
+
+Stop/restart via the scripts.
+
+Everything (full-res media artifacts, evidence, graph in Neo4j, audit, etc.) stays **only inside the local instance** under your data root.
+
+## Features
+
+- Deep & thorough collection on any reachable target with original/full-res images & videos fetched directly from source.
+- Easy Image & Video Library with full-res modal viewer for all collected media.
+- Password protection with easy changing in the User section.
+- Optional TOTP authenticator (off by default, link with any authenticator app via secret/otpauth — standard TOTP).
+- All data tied real: collector → artifacts (mime/kind/full bytes) → evidence → worker pipelines (normalization/chunking/vectors/evidence-answer) → graph (Neo4j sync) → library + results + audit.
+- Dynamic clear local URLs (web UI and noted services auto-switch and report the usable address if a port is busy).
+- Local-only by design; simple focused UI for collection, media viewing, evidence, and security.
+
+Supporting scripts (backup, diagnostics, smoke checks, etc.) are optional helpers that print clear status — not required for normal operation.
+
+This branch (grok) gives you a powerful, private, local full-access collector + media workspace. All documents (this README + docs/*.md, user-guide, security-policy, operations, ui guide, truth table notes, etc.) have been updated to reflect the program on this branch and contain only setup/operating/feature instructions.
+
+Start with `scripts/run.sh`, unlock with the password, use the collector and Media Library. Change password or link an authenticator in User & Security whenever you want. Everything just works locally.
 
 ## What IGY6 Is For
 

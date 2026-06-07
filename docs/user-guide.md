@@ -1,53 +1,57 @@
-# User Guide
+# User Guide (grok branch)
 
-Open the local web UI:
+**This guide is only about running and using the program on the grok branch.** Open the local web UI at the clear URL printed by the start command (normally http://127.0.0.1:3000 or the next free port it automatically switched to).
 
-```text
-http://127.0.0.1:3000
-```
+The UI is deliberately simple and tabbed. On this branch the main areas are:
 
-IGY6 is organized around seven workflows:
+- Home / overview — readiness, recent activity, quick status.
+- Add Data / Collector — deep thorough collection from any reachable target (local, web URLs, system, WiFi, etc.). It extracts complete info and pulls original/full-resolution images and videos directly from their sources.
+- Media Library — easy grid of every collected image and video. Click to view full/original resolution in a native browser viewer (real data from the artifact content endpoint). Refresh after scans.
+- Work / Results / Evidence — processing, evidence items, answers, reports, graph relationships.
+- Settings / User & Security (user section) — change your password (default "ThatDog123"), link or manage optional TOTP authenticator (off by default — works with any standard app like Google Authenticator or Authy), check status.
+- Advanced — raw diagnostics when you need them.
 
-- Home
-- Assistant
-- Data & Knowledge
-- Work & Processing
-- Reports
-- Safety & Audit
-- Settings
+## Basic Operating Flow (Setup + Daily Use)
 
-The old developer-console split between Chat, Agent Command, Sources, Evidence,
-Memory, Work Queue, Approvals, Audit, Reports, and Settings has been folded into
-these workflow sections. Advanced IDs, raw JSON, approval IDs, and route/debug
-details are still present under Advanced panels.
+1. Start the program:
+   ```bash
+   scripts/run.sh
+   ```
+   Note the clear local URL it prints (it dynamically switches ports if the preferred one is in use and tells you the exact address to open).
 
-## Normal PC User Examples
+2. Open the URL in your browser. Use the password gate (default "ThatDog123"). If you have enabled TOTP, also supply a current code from your authenticator app for protected actions (deep collector, etc.).
 
-- Upload warranty text and ask when the warranty expires.
-- Upload router or internet troubleshooting notes and ask what changed.
-- Upload a folder inventory/export and ask what files look duplicated.
-- Create a summary report from notes without sending anything externally.
-- Ask Assistant: `What did I upload today?`
-- Ask Assistant: `What does this document say about my bill?`
-- Request approval before a system-changing action.
+3. Use the Collector area to run deep scans on targets you care about (web pages, local folders, "everything", specific URLs, etc.). The process is thorough: it follows the target, extracts media at original/full res from the actual source, stores everything locally only with full provenance, and feeds evidence + graph.
 
-## Coder Examples
+4. Go to the Media Library to browse and view the full-res images and videos that were collected.
 
-- Upload a build log and ask for the likely failure cause with evidence.
-- Upload a repo status report and ask for the next DIFF recommendation.
-- Use Assistant to show git status.
-- Use Assistant to show latest DIFF.
-- Create a work item for code review or route parity follow-up.
-- Review audit events after an agent action.
-- Inspect chunks/evidence created from a technical document.
-- Render a migration or verification summary in Reports.
+5. Explore Results/Evidence for the extracted claims, relationships, and complete info (all tied together in the real pipelines).
 
-## Manual Upload Flow
+6. In User & Security:
+   - Change password anytime (enter current + new).
+   - Generate secret + otpauth URL for any authenticator app (provide current password). Add it to your app, then confirm with a code from the app to enable TOTP. Once enabled, protected features will also require a current code.
+   - Check status or re-link as needed. TOTP stays off until you explicitly link it.
 
-1. Data & Knowledge -> Sources: create or select a `manual_upload` source.
-2. Check source permission and approval status.
-3. Safety & Audit -> Approvals: request approval if required.
-4. Data & Knowledge -> Uploads & Collection: upload UTF-8 text.
+7. Stop with Ctrl+C or the stop/restart scripts.
+
+All data (including full-res media artifacts, evidence, graph in Neo4j, audit) lives only inside your local instance under the data root you configured. The collector and library are real and end-to-end wired — no scaffolding.
+
+Dynamic URLs: The program (web start + supporting scripts) always finds a free local port if the default is busy and clearly reports the usable http://127.0.0.1:PORT. Just use whatever it tells you.
+
+## Key Features on This Branch
+
+- Deep & thorough scraping on whatever target you give it, with original/full-res images and videos fetched directly from their source.
+- Easy Image & Video Library with full-resolution viewing of collected media.
+- Password protection with simple changing in the User section.
+- Optional TOTP authenticator (off by default, link with any standard app, standard TOTP so Google Authenticator / Authy / etc. all work).
+- Everything tied real: collector creates artifacts (full bytes + mime/kind) → evidence → worker normalization/chunking/vectors → graph sync → visible in library and results with complete local audit.
+- Local-only by design. Dynamic clear local URLs. Simple focused UI for collection, media viewing, evidence, and security.
+
+Supporting scripts (smoke checks, diagnostics, backup, etc.) are optional and print clear status. Use them when you want extra visibility — not required for normal operation.
+
+All other documents in docs/ (user-guide, operations, ui guide, security-policy, runtime notes, truth table, diffs on this branch, etc.) have been updated to match this program-only, operating-focused view for the grok branch. No build or development content remains in the user-facing instructions.
+
+Start the program, unlock, collect deeply, view media in the library, manage your password and optional authenticator in User & Security. Everything just works locally and is auditable.
 5. Work & Processing: check collection and work status.
 6. Data & Knowledge -> Evidence: inspect created documents, chunks, evidence,
    and source trails.

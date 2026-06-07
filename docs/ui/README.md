@@ -1,49 +1,36 @@
-# IGY6 Web UI Guide
+# IGY6 Web UI Guide (grok branch)
 
-This guide explains the IGY6 web interface in plain language.
+This guide explains the web interface in plain language for the running program on the grok branch.
 
-IGY6 is a local-first evidence workspace. You use it to add authorized
-information, check processing, ask questions over stored evidence, review
-results, and inspect safety settings. It is for normal local use first; the
-Advanced tab is only for troubleshooting and technical checks.
+The program is password protected (default "ThatDog123"). Optional TOTP authenticator support is off by default until you link it in the User & Security section (works with any standard authenticator app). All data stays local only. The UI automatically uses a clear free local URL (dynamic port switching with clear printed address if the preferred port is busy).
 
-The main tabs are:
-
-- Home
-- Add Data
-- Work
-- Results
-- Settings
-- Advanced
-
-## Open The UI
-
-Start IGY6:
+## Start & Open
 
 ```bash
 scripts/run.sh
 ```
 
-Check whether services are running:
+Note the clear usable local URL it prints (e.g. http://127.0.0.1:3000 or 3001 etc.). Open that in your browser and unlock with the current password (and TOTP code if you have enabled authenticator for protected features).
 
-```bash
-scripts/status.sh
-```
+Stop with the matching stop/restart scripts.
 
-Open the web UI:
+## Main Areas (Easy to Use on This Branch)
 
-```text
-http://127.0.0.1:3000
-```
+- Home: quick readiness and recent activity.
+- Add Data / Collector: deep thorough collection controls. Point at URLs, local paths, or "everything". It extracts complete info and full/original-res images & videos directly from their sources.
+- Media Library: simple grid of collected images and videos. Click any for full-res viewer (real original bytes via the content endpoint). Refresh after scans.
+- Work / Results / Evidence: processing state, evidence, answers, reports, graph.
+- Settings / User & Security (user section):
+  - Change password (enter current + new).
+  - Generate secret + otpauth URL (any authenticator app), then confirm a code from the app to enable TOTP (off by default).
+  - Check status.
+- Advanced: diagnostics only when needed.
 
-Stop IGY6:
+Use the collector for aggressive local/web/system collection (password + optional totp_code required for protected calls). View results in the Media Library and Results areas. Manage your password and optional authenticator in User & Security. Everything is tied into real local artifacts, evidence, graph, and audit.
 
-```bash
-scripts/stop.sh
-```
+Dynamic URL: the program always picks a free port if needed and tells you the exact address — just use what it prints.
 
-The scripts require `.env`. If it is missing, create it from `.env.example`
-before starting the stack.
+All other docs have been aligned to this program-only operating view for the grok branch.
 
 ## Home
 
