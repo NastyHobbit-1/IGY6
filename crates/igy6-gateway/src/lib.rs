@@ -12014,7 +12014,7 @@ fn agent_capabilities_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"actions\":[{}],\"runtime\":{{\"gateway\":\"rust\",\"fastapi_fallback\":false}}}}",
+        "{{\"actions\":[{}],\"runtime\":{{\"gateway\":\"rust\",\"fastapi_fallback\":false}},\"policy\":{{\"local_first\":true,\"hosted_ai_enabled\":false,\"external_model_policy\":\"blocked_by_default\",\"arbitrary_command_execution\":false,\"prompt_injection_filter\":\"enabled\",\"approval_required_for_system_changing\":true,\"blocked_request_classes\":[\"prompt_injection\",\"hosted_ai\",\"external_model\",\"secret_dump\",\"raw_shell_command\",\"credential_exfiltration\"]}}}}",
         actions
     )
 }
@@ -12325,6 +12325,11 @@ mod tests {
         );
         assert_eq!(response.status_code, 200);
         assert!(response.body.contains("show_project_health"));
+        assert!(response.body.contains("\"hosted_ai_enabled\":false"));
+        assert!(response
+            .body
+            .contains("\"arbitrary_command_execution\":false"));
+        assert!(response.body.contains("prompt_injection"));
         assert!(!response.proxied_to_fallback);
     }
 

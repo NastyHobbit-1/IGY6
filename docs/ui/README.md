@@ -612,6 +612,12 @@ Safety, Approvals, And Policy:
 - Blocked actions show actions that cannot currently run.
 - Approval-required actions show workflows that need explicit approval.
 - External model policy shows the local-first default.
+- Hosted AI and external model requests are blocked by default in the agent
+  request classifier.
+- Prompt-injection and instruction-override language is rejected before a
+  matched action can execute.
+- Raw shell commands, user-provided argv, secret dumps, and arbitrary command
+  execution remain unsupported by the action registry.
 - Backup, Restore, Export, and Delete Audit maps current data classes,
   configured lifecycle paths, vector/graph store visibility, exclusions, and
   dangerous future work. The panel itself is non-destructive and does not create
@@ -754,6 +760,8 @@ Settings and safety:
 - Approvals protect sensitive workflows.
 - External model policy is blocked by default.
 - Settings changes must pass dry-run verification before save.
+- Prompt-injection, hosted AI, secret exfiltration, and raw command requests are
+  unsupported and remain non-executable.
 
 Advanced diagnostics:
 

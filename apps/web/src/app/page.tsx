@@ -361,6 +361,15 @@ type AgentCapabilitiesResponse = {
     docker_socket_path: string | null;
     reason: string | null;
   };
+  policy?: {
+    local_first: boolean;
+    hosted_ai_enabled: boolean;
+    external_model_policy: string;
+    arbitrary_command_execution: boolean;
+    prompt_injection_filter: string;
+    approval_required_for_system_changing: boolean;
+    blocked_request_classes: string[];
+  };
 };
 
 type ApiResult<T> = {
@@ -8213,6 +8222,15 @@ export default async function Home() {
         docker_control_available: false,
         docker_socket_path: null,
         reason: "Agent capabilities were unavailable."
+      },
+      policy: {
+        local_first: true,
+        hosted_ai_enabled: false,
+        external_model_policy: "blocked_by_default",
+        arbitrary_command_execution: false,
+        prompt_injection_filter: "unavailable",
+        approval_required_for_system_changing: true,
+        blocked_request_classes: []
       }
     })
   ]);
@@ -8243,6 +8261,8 @@ export default async function Home() {
   const failedWorkItems = workItems.data.filter((item) => item.status === "failed");
   const blockedActions = agentCapabilities.data.actions.filter((action) => !action.executable_in_api_runtime);
   const approvalRequiredActions = agentCapabilities.data.actions.filter((action) => action.approval_required);
+  const policyPosture = agentCapabilities.data.policy;
+  const blockedRequestClasses = policyPosture?.blocked_request_classes ?? [];
 
   return (
     <main className="consoleShell">
@@ -8957,7 +8977,9 @@ export default async function Home() {
               <article><span>Pending approvals</span><strong>{pendingApprovals.length}</strong></article>
               <article><span>Blocked actions</span><strong>{blockedActions.length}</strong></article>
               <article><span>Approval-required actions</span><strong>{approvalRequiredActions.length}</strong></article>
-              <article><span>External model policy</span><strong>blocked</strong></article>
+              <article><span>External model policy</span><strong>{policyPosture?.external_model_policy ?? "blocked"}</strong></article>
+              <article><span>Hosted AI</span><strong>{policyPosture?.hosted_ai_enabled ? "enabled" : "blocked"}</strong></article>
+              <article><span>Prompt injection filter</span><strong>{policyPosture?.prompt_injection_filter ?? "unknown"}</strong></article>
             </section>
             <LifecycleAuditStatusPanel
               sources={sources}
@@ -9034,7 +9056,9 @@ export default async function Home() {
                 <div className="stack">
                   <article className="item evidenceItem"><div><strong>Approval-required default</strong><span>System-changing actions require explicit local approval.</span></div><StatusPill state="enabled" /></article>
                   <article className="item evidenceItem"><div><strong>Allowed operation classes</strong><span>Read-only checks, retrieval preview, approved stack controls, approved collection.</span></div><StatusPill state="bounded" /></article>
-                  <article className="item evidenceItem"><div><strong>External model policy</strong><span>Local-first evidence workflows do not send data to external models by default.</span></div><StatusPill state="blocked" /></article>
+                  <article className="item evidenceItem"><div><strong>Tool-use policy</strong><span>Raw shell command, user-provided argv, and arbitrary command execution remain unsupported.</span></div><StatusPill state={policyPosture?.arbitrary_command_execution ? "unsafe" : "blocked"} /></article>
+                  <article className="item evidenceItem"><div><strong>External model policy</strong><span>Local-first evidence workflows do not send data to external or hosted AI models by default.</span></div><StatusPill state={policyPosture?.hosted_ai_enabled ? "review" : "blocked"} /></article>
+                  <article className="item evidenceItem"><div><strong>Blocked request classes</strong><span>{blockedRequestClasses.length > 0 ? blockedRequestClasses.join(", ") : "Unavailable from capabilities endpoint."}</span></div><StatusPill state="blocked" /></article>
                   <article className="item evidenceItem"><div><strong>Runtime capability</strong><span>{agentCapabilities.data.runtime.reason ?? "Capability status is reported by the system runtime."}</span></div><StatusPill state={agentCapabilities.data.runtime.docker_control_available ? "runtime-ready" : "runtime-blocked"} /></article>
                 </div>
               </div>
