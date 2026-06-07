@@ -3,8 +3,8 @@
 // If default port in use, automatically switches to next free port and prints the effective local URL.
 // Used by "dev" and "start" scripts so the program always comes up on a clear URL.
 
-const { spawn } = require('child_process');
-const net = require('net');
+import { spawn } from 'child_process';
+import net from 'net';
 
 const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0';

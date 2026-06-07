@@ -47,6 +47,13 @@ igy6_require_repo_files() {
     # Ensure the grok branch single-user password-protected experience
     sed -i 's/^SINGLE_USER_MODE=.*/SINGLE_USER_MODE=true/' "${IGY6_ENV_FILE}" || true
 
+    # Opt out of telemetry gathering (Next.js / "rjs" + supporting services like Neo4j/MLflow/Phoenix)
+    # These are also enforced at the docker-compose service level.
+    sed -i 's/^NEXT_TELEMETRY_DISABLED=.*/NEXT_TELEMETRY_DISABLED=1/' "${IGY6_ENV_FILE}" || true
+    if ! grep -q "^NEXT_TELEMETRY_DISABLED=" "${IGY6_ENV_FILE}"; then
+      echo "NEXT_TELEMETRY_DISABLED=1" >> "${IGY6_ENV_FILE}"
+    fi
+
     # Helpful note for the user (visible in .env)
     if ! grep -q "GROK BRANCH NOTE" "${IGY6_ENV_FILE}"; then
       {
@@ -55,6 +62,7 @@ igy6_require_repo_files() {
         echo "# Default program password is ThatDog123 (change in UI User & Security after first unlock)."
         echo "# All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI."
         echo "# Data lives under ${DATA_DIR} (including full-res images/videos from safe sources only)."
+        echo "# Telemetry fully opted out (NEXT_TELEMETRY_DISABLED=1 + service disables for Neo4j/MLflow/Phoenix)."
       } >> "${IGY6_ENV_FILE}"
     fi
 
@@ -68,6 +76,246 @@ igy6_require_repo_files() {
 igy6_require_docker_compose() {
   command -v docker >/dev/null 2>&1 || igy6_die "Docker CLI is not available on PATH."
   docker compose version >/dev/null 2>&1 || igy6_die "Docker Compose plugin is unavailable. Install Docker Compose v2."
+}
+
+igy6_init_db_schema() {
+  # Apply core table schema idempotently (CREATE IF NOT EXISTS) for grok branch / fresh DBs.
+  # This prevents the "relation does not exist" errors on first start.
+  local schema_sql
+  schema_sql=$(cat <<'SQL'
+CREATE TABLE IF NOT EXISTS sources (
+  id varchar(36) PRIMARY KEY,
+  name varchar(255) NOT NULL,
+  source_type varchar(64) NOT NULL,
+  location text,
+  owner_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  sensitivity varchar(64) NOT NULL DEFAULT 'internal',
+  trust_level varchar(64) NOT NULL DEFAULT 'unreviewed',
+  enabled boolean NOT NULL DEFAULT true,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS collection_runs (
+  id varchar(36) PRIMARY KEY,
+  source_id varchar(36) REFERENCES sources(id),
+  status varchar(64) NOT NULL DEFAULT 'created',
+  dry_run boolean NOT NULL DEFAULT true,
+  requested_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  summary_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS raw_artifacts (
+  id varchar(36) PRIMARY KEY,
+  source_id varchar(36) REFERENCES sources(id),
+  collection_run_id varchar(36) REFERENCES collection_runs(id),
+  content_hash varchar(128) NOT NULL,
+  storage_path text NOT NULL,
+  mime_type varchar(255),
+  size_bytes integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS normalized_documents (
+  id varchar(36) PRIMARY KEY,
+  raw_artifact_id varchar(36) REFERENCES raw_artifacts(id),
+  source_id varchar(36) REFERENCES sources(id),
+  title varchar(255),
+  document_type varchar(64) NOT NULL DEFAULT 'unknown',
+  language varchar(32),
+  text_content text NOT NULL,
+  sensitivity varchar(64) NOT NULL DEFAULT 'internal',
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS chunks (
+  id varchar(36) PRIMARY KEY,
+  document_id varchar(36) NOT NULL REFERENCES normalized_documents(id),
+  chunk_index integer NOT NULL,
+  text_content text NOT NULL,
+  location_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  embedding_status varchar(64) NOT NULL DEFAULT 'not_started',
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS evidence_items (
+  id varchar(36) PRIMARY KEY,
+  source_id varchar(36) REFERENCES sources(id),
+  document_id varchar(36) REFERENCES normalized_documents(id),
+  chunk_id varchar(36) REFERENCES chunks(id),
+  evidence_type varchar(64) NOT NULL,
+  statement text NOT NULL,
+  observed_at timestamptz,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS work_items (
+  id varchar(36) PRIMARY KEY,
+  work_type varchar(64) NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'queued',
+  requested_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  payload_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+  id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  actor_id varchar(128) NOT NULL DEFAULT 'system',
+  event_type varchar(128) NOT NULL,
+  decision varchar(64),
+  resource_type varchar(64),
+  resource_id varchar(128),
+  correlation_id varchar(128),
+  details_json jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE TABLE IF NOT EXISTS patterns (
+  id varchar(36) PRIMARY KEY,
+  pattern_type varchar(64) NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  summary text,
+  evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS hypotheses (
+  id varchar(36) PRIMARY KEY,
+  hypothesis_text text NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  supporting_evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  missing_evidence_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS predictions (
+  id varchar(36) PRIMARY KEY,
+  prediction_text text NOT NULL,
+  expected_result text,
+  disproof_condition text,
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS recommendations (
+  id varchar(36) PRIMARY KEY,
+  recommendation_text text NOT NULL,
+  risk_level varchar(64),
+  approval_required boolean NOT NULL DEFAULT false,
+  expected_result text,
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS claims (
+  id varchar(36) PRIMARY KEY,
+  claim_text text NOT NULL,
+  claim_type varchar(64),
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence integer,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS approvals (
+  id varchar(36) PRIMARY KEY,
+  request_type varchar(64) NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'pending',
+  requested_by_actor_id varchar(128) NOT NULL,
+  decided_by_actor_id varchar(128),
+  decision_reason text,
+  request_payload_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  decided_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback_events (
+  id varchar(36) PRIMARY KEY,
+  target_type varchar(64) NOT NULL,
+  target_id varchar(128) NOT NULL,
+  label varchar(64),
+  actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  note text,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS outcomes (
+  id varchar(36) PRIMARY KEY,
+  target_type varchar(64) NOT NULL,
+  target_id varchar(128) NOT NULL,
+  outcome_status varchar(64) NOT NULL,
+  summary text,
+  occurred_at timestamptz,
+  evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS improvement_items (
+  id varchar(36) PRIMARY KEY,
+  target_area varchar(128) NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  objective text,
+  proposed_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  priority integer DEFAULT 0,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS experiment_runs (
+  id varchar(36) PRIMARY KEY,
+  improvement_item_id varchar(36) REFERENCES improvement_items(id),
+  status varchar(64) NOT NULL DEFAULT 'proposed',
+  mlflow_run_id varchar(128),
+  optuna_study_name varchar(128),
+  metrics_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  artifacts_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS reports (
+  id varchar(36) PRIMARY KEY,
+  title varchar(255) NOT NULL,
+  report_type varchar(64) NOT NULL,
+  status varchar(64) NOT NULL DEFAULT 'draft',
+  requested_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  artifact_path text,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
+)
+  # Wait briefly for postgres to be ready, then apply via docker exec (idempotent)
+  for i in {1..30}; do
+    if docker compose -f "${IGY6_COMPOSE_FILE}" --env-file "${IGY6_ENV_FILE}" exec -T postgres pg_isready -U "${POSTGRES_USER:-adaptive}" -d "${POSTGRES_DB:-adaptive_intelligence}" >/dev/null 2>&1; then
+      echo "$schema_sql" | docker compose -f "${IGY6_COMPOSE_FILE}" --env-file "${IGY6_ENV_FILE}" exec -T postgres psql -U "${POSTGRES_USER:-adaptive}" -d "${POSTGRES_DB:-adaptive_intelligence}" -v ON_ERROR_STOP=1 >/dev/null 2>&1 || true
+      igy6_info "DB schema ensured (core tables created if missing)."
+      return 0
+    fi
+    sleep 1
+  done
+  igy6_warn "Could not confirm Postgres ready for schema init; queries may fail until DB is initialized."
 }
 
 igy6_compose_cmd() {

@@ -1,3 +1,5 @@
+'use client';
+
 type HealthResponse = {
   status: string;
   checks?: Record<string, { status: string; detail?: string }>;
@@ -1229,9 +1231,9 @@ function BrowserWebRouterCollectorMvp() {
           <button type="button" onClick={() => { (window as any).grokLoadMedia = async () => { const c=document.createElement('div'); c.innerHTML='Loading media lib...'; document.body.appendChild(c); try{ const r=await fetch('/api/artifacts'); let as=await r.json(); if(!Array.isArray(as))as=[]; const ms=as.filter((a:any)=>String(a.mime_type||'').toLowerCase().match(/^(image|video)/)); c.innerHTML=ms.map((a:any)=>`<div style="border:1px solid #0f0;margin:2px;padding:2px;cursor:pointer" onclick="window.grokViewMedia('${a.id}','${a.mime_type||''}')">${a.mime_type} ${a.id}</div>`).join('') || 'No media yet (run deep scan).'; }catch(e){c.innerHTML='Err '+e;} }; (window as any).grokLoadMedia(); }}>Open Media Library</button>
           <button type="button" onClick={() => { const p=prompt('Password?'); if(p==='ThatDog123'){ fetch('/api/collection-runs/full-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requested_by_actor_id:'ui',password:'ThatDog123',scope:'everything'})}).then(r=>r.json()).then(j=>alert('Deep scan started. Refresh lib for full res images/videos from sources.')); } else alert('Wrong pass'); }}>Deep Thorough Scan (full res media + complete info)</button>
         </div>
-        <div id="grok-media-viewer" style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}} onclick="this.style.display='none'"></div>
-        <script>
-          (window as any).grokViewMedia = async function(id, mime) {
+        <div id="grok-media-viewer" style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}} onClick={() => { const el = document.getElementById('grok-media-viewer'); if (el) el.style.display = 'none'; }}></div>
+        <script dangerouslySetInnerHTML={{ __html: `
+          window.grokViewMedia = async function(id, mime) {
             const v = document.getElementById('grok-media-viewer'); if(!v) return;
             v.style.display='block'; v.innerHTML = 'Loading full res...';
             try {
@@ -1245,7 +1247,7 @@ function BrowserWebRouterCollectorMvp() {
             } catch(e) { v.innerHTML = 'Error loading: '+e; }
           };
           console.log('%c[Grok UI polished] Password "ThatDog123" for deep/full access. Media lib + deep scrape for full res images/videos tied in and functioning.', 'color:lime');
-        </script>
+        ` }} />
         <label>
           <span>Import type</span>
           <select name="bwr_type" defaultValue="browser_page_text">
