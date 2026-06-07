@@ -28,12 +28,21 @@ function appearsAfter(name, text, earlier, later) {
 }
 
 includesAll("top-level tabs", page, [
-  'htmlFor="tab-home">Home',
-  'htmlFor="tab-add-data">Add Data',
+  'htmlFor="tab-results">Chat',
+  'htmlFor="tab-add-data">Data',
   'htmlFor="tab-work">Work',
-  'htmlFor="tab-results">Results',
   'htmlFor="tab-settings">Settings',
-  'htmlFor="tab-advanced">Advanced'
+  'htmlFor="tab-advanced">More'
+]);
+
+includesAll("chat-first shell", page, [
+  "data-unified-chat",
+  "data-chat-input",
+  "data-chat-send",
+  "data-chat-chip",
+  "UnifiedChatHub",
+  "chatFirstShell",
+  "Ask a question or request an action..."
 ]);
 
 includesAll("workflow section anchors", page, [
@@ -174,10 +183,9 @@ includesAll("safety posture", page, [
   "Background worker ready",
   "Rust API",
   "Rust worker",
-  "FastAPI fallback",
+  "Legacy API",
   "inactive / archived",
-  "Celery beat",
-  "no-external-model",
+  "Legacy scheduler",
   "approval-gated",
   "Background processing is ready",
   "Old Python services"
@@ -195,7 +203,12 @@ includesAll("supporting styles", styles, [
   ".workflowTabs",
   ".lifecycleFlow",
   ".fieldGuide",
-  ".quickStartGrid"
+  ".quickStartGrid",
+  ".unifiedChatHub",
+  ".chatComposer",
+  ".chatQuickChips",
+  ".chatEnginePanel",
+  ".chatFirstShell"
 ]);
 
 if (failures.length > 0) {

@@ -2124,6 +2124,304 @@ function redactLlmUrl(value: string): string {
   return value;
 }
 
+function UnifiedChatHub({
+  sourceCount,
+  evidenceCount,
+  chunkCount,
+  workItemCount,
+  pendingApprovals,
+  vectorReady
+}: {
+  sourceCount: number;
+  evidenceCount: number;
+  chunkCount: number;
+  workItemCount: number;
+  pendingApprovals: number;
+  vectorReady: boolean;
+}) {
+  const script = `
+(() => {
+  const hub = document.querySelector("[data-unified-chat]");
+  if (!hub) return;
+
+  const feed = hub.querySelector("[data-chat-feed]");
+  const input = hub.querySelector("[data-chat-input]");
+  const sendButton = hub.querySelector("[data-chat-send]");
+  const status = hub.querySelector("[data-chat-status]");
+  const actions = hub.querySelector("[data-chat-actions]");
+  const chips = hub.querySelectorAll("[data-chat-chip]");
+  const chatForm = document.querySelector("[data-chat-preview-form]");
+  const chatMessage = document.querySelector("[data-chat-preview-message]");
+  const chatLimit = document.querySelector("[data-chat-preview-limit]");
+  const agentInput = document.querySelector("[data-agent-command-input]");
+  const agentPreview = document.querySelector("[data-agent-preview]");
+  const agentExecute = document.querySelector("[data-agent-execute]");
+  const agentApproval = document.querySelector("[data-agent-request-approval]");
+  const agentExecuteApproved = document.querySelector("[data-agent-execute-approved]");
+  const saveAnswer = document.querySelector("[data-chat-save-answer]");
+  const previewResults = document.querySelector("[data-chat-preview-results]");
+
+  const tabFor = (id) => document.getElementById(id);
+
+  const switchTab = (tabId) => {
+    const tab = tabFor(tabId);
+    if (!tab) return false;
+    tab.checked = true;
+    tab.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  };
+
+  const navigationFromMessage = (text) => {
+    const lower = text.toLowerCase();
+    if (/\\b(add data|upload|new source|import data|bring in)\\b/.test(lower)) return switchTab("tab-add-data");
+    if (/\\b(processing|work queue|work item|check processing|pipeline)\\b/.test(lower)) return switchTab("tab-work");
+    if (/\\b(settings|password|totp|llm provider|environment)\\b/.test(lower)) return switchTab("tab-settings");
+    if (/\\b(approval|safety|audit)\\b/.test(lower)) return switchTab("tab-settings");
+    if (/\\b(diagnostics|advanced|service readiness)\\b/.test(lower)) return switchTab("tab-advanced");
+    if (/\\b(evidence library|documents|reports|memory)\\b/.test(lower)) return switchTab("tab-results");
+    return false;
+  };
+
+  const appendMessage = (role, label, text, extraClass) => {
+    if (!feed) return null;
+    const article = document.createElement("article");
+    article.className = "message " + (role === "user" ? "userMessage" : role === "system" ? "systemMessage" : "assistantMessage") + (extraClass ? " " + extraClass : "");
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = role === "user" ? "YOU" : role === "system" ? "SYS" : "IG";
+    const bubble = document.createElement("div");
+    bubble.className = "messageBubble";
+    const messageLabel = document.createElement("span");
+    messageLabel.className = "messageLabel";
+    messageLabel.textContent = label;
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    bubble.append(messageLabel, paragraph);
+    article.append(avatar, bubble);
+    feed.appendChild(article);
+    feed.scrollTop = feed.scrollHeight;
+    return article;
+  };
+
+  const setStatus = (text) => {
+    if (status) status.textContent = text;
+  };
+
+  const clearActions = () => {
+    if (!actions) return;
+    actions.replaceChildren();
+    actions.hidden = true;
+  };
+
+  const addAction = (label, handler) => {
+    if (!actions) return;
+    actions.hidden = false;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", handler);
+    actions.appendChild(button);
+  };
+
+  const syncInputs = (text) => {
+    if (chatMessage) chatMessage.value = text;
+    if (agentInput) agentInput.value = text;
+  };
+
+  const looksLikeEvidenceQuestion = (intent, text) => {
+    const understanding = intent?.request_understanding || {};
+    const lower = text.toLowerCase();
+    if (understanding.evidence_required) return true;
+    if (understanding.category === "ask_question" || understanding.category === "review_evidence") return true;
+    if (/\\b(what|why|how|when|where|who|cite|evidence|document|upload|bill|log|say|mean|failed|summary)\\b/.test(lower)) return true;
+    if (!intent?.proposed_action && !understanding.unsupported_or_unsafe) return true;
+    return false;
+  };
+
+  const actionLabels = {
+    show_project_health: "Show project health",
+    show_git_status: "Show git status",
+    show_latest_diff: "Show latest DIFF",
+    show_work_items: "Show work items",
+    run_retrieval_preview: "Run retrieval preview",
+    start_stack: "Start stack",
+    stop_stack: "Stop stack",
+    run_last_healthy_stack: "Run last healthy stack"
+  };
+
+  const summarizeIntent = (intent) => {
+    const understanding = intent?.request_understanding || {};
+    const parts = [];
+    if (understanding.wants) parts.push(understanding.wants);
+    if (understanding.category) parts.push("Category: " + understanding.category);
+    if (understanding.next_step) parts.push(understanding.next_step);
+    if (intent?.proposed_action) {
+      parts.push("Matched action: " + (actionLabels[intent.proposed_action] || intent.proposed_action));
+    }
+    if (understanding.evidence_required) parts.push("I'll check local evidence first.");
+    if (understanding.approval_required || intent?.approval_required) parts.push("This needs approval before it can run.");
+    if (understanding.unsupported_or_unsafe) parts.push(understanding.reason || "This request is not supported as written.");
+    return parts.filter(Boolean).join(" ");
+  };
+
+  const runEvidencePath = async () => {
+    if (!chatForm) throw new Error("Evidence engine is unavailable.");
+    chatForm.requestSubmit();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const hitCount = previewResults?.getAttribute("data-hit-count") || "0";
+    const answerStatus = previewResults?.getAttribute("data-answer-status") || "unknown";
+    previewResults?.closest(".chatResultsDock")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return { hitCount: Number(hitCount), answerStatus };
+  };
+
+  const runAgentPreview = async () => {
+    if (!agentPreview) throw new Error("Action engine is unavailable.");
+    agentPreview.click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const summary = document.querySelector("[data-agent-understanding-summary]");
+    return summary?.textContent || "Action preview complete.";
+  };
+
+  const handleSend = async (textOverride) => {
+    const text = (textOverride || input?.value || "").trim();
+    if (!text) return;
+    if (input) input.value = text;
+    syncInputs(text);
+    clearActions();
+    appendMessage("user", "You", text);
+    setStatus("Understanding request...");
+
+    if (navigationFromMessage(text)) {
+      appendMessage("assistant", "Navigation", "Opened the matching workspace view. You can keep chatting here or use the panel that opened.");
+      setStatus("Ready");
+      return;
+    }
+
+    try {
+      const intentResponse = await fetch("/api/agent/intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, parameters: {}, actor_id: "local-owner" })
+      });
+      const intent = await intentResponse.json();
+      const summary = summarizeIntent(intent) || "Request received.";
+      appendMessage("assistant", "IGY6", summary);
+
+      if (looksLikeEvidenceQuestion(intent, text)) {
+        setStatus("Searching local evidence...");
+        const evidence = await runEvidencePath();
+        appendMessage(
+          "assistant",
+          "Evidence",
+          evidence.hitCount > 0
+            ? "Found " + evidence.hitCount + " local evidence hit(s). Review citations below, then save the answer if you want history."
+            : "No matching local evidence yet. Say \"add data\" to upload, or \"check processing\" to see pipeline status."
+        );
+        if (evidence.hitCount > 0 && saveAnswer) {
+          addAction("Save answer record", () => saveAnswer.click());
+        }
+        if (evidence.hitCount === 0) {
+          addAction("Add data", () => switchTab("tab-add-data"));
+          addAction("Check processing", () => switchTab("tab-work"));
+        }
+      } else if (intent?.proposed_action) {
+        setStatus("Previewing bounded action...");
+        const previewSummary = await runAgentPreview();
+        appendMessage("assistant", "Action preview", previewSummary);
+        if (agentExecute && !agentExecute.disabled) addAction("Run safe action", () => agentExecute.click());
+        if (agentApproval && !agentApproval.disabled) addAction("Request approval", () => agentApproval.click());
+        if (agentExecuteApproved && !agentExecuteApproved.disabled) addAction("Run with approval", () => agentExecuteApproved.click());
+      } else {
+        appendMessage(
+          "assistant",
+          "Next step",
+          "Try asking over evidence, requesting project health, or say \"add data\", \"check processing\", or \"open settings\"."
+        );
+        addAction("Show project health", () => handleSend("Show project health."));
+        addAction("Add data", () => switchTab("tab-add-data"));
+      }
+      setStatus("Ready");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      appendMessage("assistant", "Error", detail);
+      setStatus("Error");
+    }
+  };
+
+  sendButton?.addEventListener("click", () => handleSend());
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
+  });
+
+  chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const prompt = chip.getAttribute("data-chat-chip") || "";
+      if (input) input.value = prompt;
+      handleSend(prompt);
+    });
+  });
+})();
+`;
+
+  return (
+    <section className="unifiedChatHub" data-unified-chat aria-label="IGY6 chat">
+      <div className="chatHubHeader">
+        <div>
+          <p className="eyebrow">Chat</p>
+          <h2>Ask, upload, check status, or run safe actions</h2>
+        </div>
+        <span className="statusText" data-chat-status>Ready</span>
+      </div>
+      <div className="retrievalStrip chatHubStats" aria-label="Workspace snapshot">
+        <span>{sourceCount} sources</span>
+        <span>{evidenceCount} evidence items</span>
+        <span>{chunkCount} chunks</span>
+        <span>{workItemCount} work items</span>
+        <span>{pendingApprovals} pending approvals</span>
+        <span>{vectorReady ? "Vector memory ready" : "Vector memory missing"}</span>
+      </div>
+      <div className="conversationWindow chatHubFeed" data-chat-feed>
+        <article className="message systemMessage">
+          <div className="avatar">SYS</div>
+          <div className="messageBubble">
+            <span className="messageLabel">Welcome</span>
+            <p>Type anything here. Ask questions over evidence, upload data, check processing, open settings, or run bounded actions like project health and stack control.</p>
+            <div className="messageMeta">
+              <StatusPill state="local-first" />
+              <StatusPill state="read-only-default" />
+            </div>
+          </div>
+        </article>
+      </div>
+      <div className="chatQuickChips" aria-label="Quick starts">
+        <button type="button" data-chat-chip="What did I upload today?">What did I upload?</button>
+        <button type="button" data-chat-chip="Show project health.">Project health</button>
+        <button type="button" data-chat-chip="Check processing status">Check processing</button>
+        <button type="button" data-chat-chip="Add data">Add data</button>
+        <button type="button" data-chat-chip="Open settings">Settings</button>
+        <button type="button" data-chat-chip="What failed in this build log? Cite the evidence.">Cite build log</button>
+      </div>
+      <div className="chatComposer">
+        <label>
+          <span className="srOnly">Message</span>
+          <textarea
+            data-chat-input
+            rows={2}
+            placeholder="Ask a question or request an action..."
+            defaultValue=""
+          />
+        </label>
+        <button type="button" data-chat-send>Send</button>
+      </div>
+      <div className="chatFollowUpActions" data-chat-actions hidden />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
 function ChatRetrievalPreview() {
   const browserApiBaseUrl = "/api";
 
@@ -2484,7 +2782,7 @@ function ChatRetrievalPreview() {
 `;
 
   return (
-    <section className="panel chatPreviewPanel">
+    <section className="panel chatPreviewPanel chatEnginePanel">
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Ask over local evidence</p>
@@ -3241,7 +3539,9 @@ function AgentCommandPanel({
 	`;
 
   return (
-    <section className="panel agentCommandPanel" id="agent-command" data-agent-command>
+    <section className="panel agentCommandPanel chatEnginePanel" id="agent-command" data-agent-command>
+      <details className="chatEngineDetails" open>
+        <summary>Action engine (runs from chat)</summary>
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Safe local actions</p>
@@ -3449,6 +3749,7 @@ function AgentCommandPanel({
           <pre data-agent-result>Agent action result appears here.</pre>
         </section>
         <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/evidence-summary, /agent/task-plans/:id/work-spec, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
+      </details>
       </details>
 	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
 	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
@@ -8322,34 +8623,28 @@ export default async function Home() {
   const blockedRequestClasses = policyPosture?.blocked_request_classes ?? [];
 
   return (
-    <main className="consoleShell">
+    <main className="consoleShell chatFirstShell">
       <aside className="leftSidebar" aria-label="IGY6 navigation">
         <div className="brandBlock">
           <div className="brandMark">IG</div>
           <div>
             <strong>IGY6</strong>
-            <span>Local evidence app</span>
+            <span>Chat-first evidence workspace</span>
           </div>
         </div>
 
         <div className="sidebarActions">
-          <label className="sidebarButton primary" htmlFor="tab-results">Ask with evidence</label>
-          <label className="sidebarButton" htmlFor="tab-add-data">Add data</label>
-          <label className="sidebarButton" htmlFor="tab-work">Check processing</label>
+          <label className="sidebarButton primary" htmlFor="tab-results">Open chat</label>
         </div>
 
-        <label className="sidebarSearch">
-          <span>Search workspace</span>
-          <input readOnly value="" placeholder="Sources, uploads, evidence, reports..." />
-        </label>
+        <p className="sidebarHint">Say what you want in chat — upload data, check processing, open settings, or run safe actions. No tab hunting required.</p>
 
-        <nav className="navSection" aria-label="Workspace tabs">
-          <label htmlFor="tab-home">Home</label>
-          <label htmlFor="tab-add-data">Add Data</label>
+        <nav className="navSection compactNav" aria-label="Workspace views">
+          <label htmlFor="tab-results">Chat</label>
+          <label htmlFor="tab-add-data">Data</label>
           <label htmlFor="tab-work">Work</label>
-          <label htmlFor="tab-results">Results</label>
           <label htmlFor="tab-settings">Settings</label>
-          <label htmlFor="tab-advanced">Advanced</label>
+          <label htmlFor="tab-advanced">More</label>
         </nav>
 
         <section className="sidebarList" aria-label="Recent work">
@@ -8373,34 +8668,30 @@ export default async function Home() {
       </aside>
 
       <section className="mainConsole">
-        <header className="topBar">
+        <header className="topBar compactTopBar">
           <div>
             <p className="eyebrow">IGY6</p>
-            <h1>Local Evidence Dashboard</h1>
+            <h1>Local Evidence Workspace</h1>
           </div>
           <div className="topStatus">
             <StatusPill state="local-first" />
-            <StatusPill state="system-ready" />
-            <StatusPill state="background-ready" />
-            <StatusPill state="no-external-model" />
             <StatusPill state={health.data.status} />
           </div>
         </header>
 
-        <section className="productTabs" aria-label="Main dashboard tabs">
-          <input className="tabInput" id="tab-home" name="main-dashboard-tab" type="radio" defaultChecked />
+        <section className="productTabs compactTabs" aria-label="Main dashboard tabs">
+          <input className="tabInput" id="tab-home" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" />
-          <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" />
+          <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" defaultChecked />
           <input className="tabInput" id="tab-settings" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-advanced" name="main-dashboard-tab" type="radio" />
           <nav className="tabList" aria-label="Main dashboard">
-            <label role="tab" htmlFor="tab-home">Home</label>
-            <label role="tab" htmlFor="tab-add-data">Add Data</label>
+            <label role="tab" htmlFor="tab-results">Chat</label>
+            <label role="tab" htmlFor="tab-add-data">Data</label>
             <label role="tab" htmlFor="tab-work">Work</label>
-            <label role="tab" htmlFor="tab-results">Results</label>
             <label role="tab" htmlFor="tab-settings">Settings</label>
-            <label role="tab" htmlFor="tab-advanced">Advanced</label>
+            <label role="tab" htmlFor="tab-advanced">More</label>
           </nav>
         </section>
 
@@ -8452,61 +8743,40 @@ export default async function Home() {
         </section>
 
         <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="results">
-          <div className="conversationWindow">
-            <article className="message systemMessage">
-              <div className="avatar">SYS</div>
-              <div className="messageBubble">
-                <span className="messageLabel">Assistant</span>
-                <p>Ask questions and request safe local actions here. IGY6 previews evidence retrieval and fixed allowlisted actions before anything runs.</p>
-                <div className="messageMeta">
-                  <TermHelp term="deterministic" label="deterministic" />
-                  <StatusPill state="not-generated" />
-                  <StatusPill state="read-only-default" />
-                </div>
-              </div>
-            </article>
+          <UnifiedChatHub
+            sourceCount={sources.data.length}
+            evidenceCount={evidenceItems.data.length}
+            chunkCount={chunks.data.length}
+            workItemCount={workItems.data.length}
+            pendingApprovals={pendingApprovals.length}
+            vectorReady={vectorCollection.data.exists}
+          />
 
-            <article className="message userMessage">
-              <div className="avatar">YOU</div>
-              <div className="messageBubble">
-                <span className="messageLabel">Example request</span>
-                <p>What does this document say I need to do next?</p>
-              </div>
-            </article>
+          <section className="chatResultsDock" aria-label="Evidence and action results">
+            <ChatRetrievalPreview />
+          </section>
 
-            <article className="message assistantMessage">
-              <div className="avatar">IG</div>
-              <div className="messageBubble">
-                <span className="messageLabel">Evidence and action status</span>
-                <p>Use Ask over evidence for citations and source trails, or Preview action for project health, git status, latest DIFF, work items, stack start/stop, and last healthy stack.</p>
-                <div className="retrievalStrip">
-                  <span>{evidenceItems.data.length} <TermHelp term="evidenceItem" label="evidence items" /> stored</span>
-                  <span>{chunks.data.length} <TermHelp term="chunk" label="chunks" /> indexed in state</span>
-                  <span><TermHelp term="vectorMemory" label={vectorCollection.data.exists ? "Vector collection ready" : "Vector collection missing"} /></span>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
-          <ChatRetrievalPreview />
-          <MissingEvidencePromptPanel
+          <details className="chatContextPanels">
+            <summary>Context panels (LLM status, evidence gaps, history)</summary>
+            <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
+            <MissingEvidencePromptPanel
             evidenceItems={evidenceItems}
             chunks={chunks}
             sources={sources}
             evidenceAnswers={evidenceAnswers}
             taskPlans={agentTaskPlans}
           />
-          <EvidenceAnswerHistory evidenceAnswers={evidenceAnswers} feedback={feedback} />
-	          <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} taskPlans={agentTaskPlans} />
-	          <AgentTaskHistoryReview
-	            taskPlans={agentTaskPlans}
-	            workItems={workItems}
-	            approvals={approvals}
-	            feedback={feedback}
-	            outcomes={outcomes}
-	            improvements={improvements}
-	          />
+            <EvidenceAnswerHistory evidenceAnswers={evidenceAnswers} feedback={feedback} />
+            <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} taskPlans={agentTaskPlans} />
+            <AgentTaskHistoryReview
+              taskPlans={agentTaskPlans}
+              workItems={workItems}
+              approvals={approvals}
+              feedback={feedback}
+              outcomes={outcomes}
+              improvements={improvements}
+            />
+          </details>
         </section>
 
         <section className="panel diagnosticsPanel tabContent" id="advanced-diagnostics" data-tab-panel="advanced">
