@@ -15,7 +15,7 @@ Default password: "ThatDog123". The program is password-protected. Optional TOTP
    scripts/run.sh
    ```
    - Starts the complete local stack (gateway, worker, web UI, Postgres, Neo4j, Qdrant, etc.).
-   - The web UI automatically uses a **clear unused local URL** (normally 3000; if busy it switches to the next free port and clearly prints the exact http://127.0.0.1:PORT you should open).
+   - The `igy6` CLI and scripts automatically pick **clear unused local ports** when 3000/8000 are busy (`WEB_PORT` / `APP_PORT` in `.env`) and print the exact `http://127.0.0.1:PORT` to open.
 4. Open the printed URL in your browser.
 5. Unlock with the current password ("ThatDog123" by default). If you have linked TOTP, also provide a current code from your authenticator app when performing protected actions.
 
@@ -135,10 +135,9 @@ Supporting infrastructure:
 - PostgreSQL for relational state, evidence metadata, work items, approvals, reports, and audit records.
 - Qdrant for vector memory.
 - Neo4j for graph/relationship memory surfaces.
-- Redis as supporting infrastructure.
 - MLflow and Phoenix as supporting observability/experiment infrastructure.
 
-Archived legacy Python code remains in the repository only for history and rollback review. It is not the active runtime path on `main`.
+Archived legacy Python code remains in the repository only for history and rollback review. It is not the active runtime path on `grok`.
 
 Rollback review material includes `archive/legacy-python/services-api` and
 `archive/legacy-python/services-worker`. Restoring the prior Python/Celery

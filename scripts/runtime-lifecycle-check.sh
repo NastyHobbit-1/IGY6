@@ -11,7 +11,6 @@ FAILURES=0
 
 EXPECTED_SERVICES=(
   postgres
-  redis
   qdrant
   neo4j
   mlflow

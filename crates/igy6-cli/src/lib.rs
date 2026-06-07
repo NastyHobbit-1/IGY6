@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -376,6 +378,275 @@ pub fn run_fixed_argv(
     }
 }
 
+const IGY6_UI_MARKER: &str = "IGY6 Local Evidence Workspace";
+const DEFAULT_WEB_PORT: u16 = 3000;
+const DEFAULT_API_PORT: u16 = 8000;
+const MAX_PORT_TRIES: u16 = 20;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimePorts {
+    web_port: u16,
+    api_port: u16,
+    web_url: String,
+    api_url: String,
+}
+
+fn read_env_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let (line_key, value) = trimmed.split_once('=')?;
+        if line_key.trim() == key {
+            let mut value = value.trim().to_string();
+            if (value.starts_with('"') && value.ends_with('"'))
+                || (value.starts_with('\'') && value.ends_with('\''))
+            {
+                value = value[1..value.len() - 1].to_string();
+            }
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn set_env_value(content: &str, key: &str, value: &str) -> String {
+    let mut replaced = false;
+    let mut lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return line.to_string();
+            }
+            let Some((line_key, _)) = trimmed.split_once('=') else {
+                return line.to_string();
+            };
+            if line_key.trim() == key {
+                replaced = true;
+                format!("{key}={value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    if !replaced {
+        lines.push(format!("{key}={value}"));
+    }
+    let mut rendered = lines.join("\n");
+    if content.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered
+}
+
+fn parse_port(value: Option<&str>, default: u16) -> u16 {
+    value
+        .and_then(|raw| raw.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(default)
+}
+
+fn is_local_port_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn find_free_local_port(start: u16) -> Option<u16> {
+    (start..start.saturating_add(MAX_PORT_TRIES)).find(|port| is_local_port_free(*port))
+}
+
+fn ensure_runtime_ports(repo_root: &Path, env_file: &Path) -> Result<RuntimePorts, CliError> {
+    let mut content = fs::read_to_string(env_file)
+        .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env: {e}")))?;
+
+    let mut web_port = parse_port(read_env_value(&content, "WEB_PORT").as_deref(), DEFAULT_WEB_PORT);
+    let mut api_port = parse_port(read_env_value(&content, "APP_PORT").as_deref(), DEFAULT_API_PORT);
+
+    if !is_local_port_free(web_port) {
+        let next = find_free_local_port(web_port.saturating_add(1))
+            .ok_or_else(|| CliError::ProcessLaunch(format!("No free web port near {web_port}")))?;
+        println!(
+            "Port {web_port} is busy; switching WEB_PORT to {next} for IGY6 UI."
+        );
+        web_port = next;
+    }
+
+    if !is_local_port_free(api_port) {
+        let next = find_free_local_port(api_port.saturating_add(1))
+            .ok_or_else(|| CliError::ProcessLaunch(format!("No free API port near {api_port}")))?;
+        println!(
+            "Port {api_port} is busy; switching APP_PORT to {next} for IGY6 API."
+        );
+        api_port = next;
+    }
+
+    let web_url = format!("http://127.0.0.1:{web_port}");
+    let api_url = format!("http://127.0.0.1:{api_port}");
+
+    content = set_env_value(&content, "WEB_PORT", &web_port.to_string());
+    content = set_env_value(&content, "APP_PORT", &api_port.to_string());
+    content = set_env_value(&content, "WEB_BASE_URL", &web_url);
+    content = set_env_value(&content, "API_BASE_URL", &api_url);
+
+    let database_url = read_env_value(&content, "DATABASE_URL").unwrap_or_default();
+    if database_url.contains("postgresql+psycopg") || database_url.contains("postgres+psycopg") {
+        let normalized = database_url
+            .replace("postgresql+psycopg://", "postgres://")
+            .replace("postgres+psycopg://", "postgres://");
+        content = set_env_value(&content, "DATABASE_URL", &normalized);
+    }
+
+    fs::write(env_file, content)
+        .map_err(|e| CliError::ProcessLaunch(format!("Failed to write .env: {e}")))?;
+
+    let runtime_url_file = repo_root.join("storage").join(".runtime-url");
+    if let Some(parent) = runtime_url_file.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(
+        &runtime_url_file,
+        format!("WEB_BASE_URL={web_url}\nAPI_BASE_URL={api_url}\n"),
+    );
+
+    Ok(RuntimePorts {
+        web_port,
+        api_port,
+        web_url,
+        api_url,
+    })
+}
+
+fn ensure_db_schema(repo_root: &Path) -> Result<(), CliError> {
+    let schema_file = repo_root.join("infra/schema/bootstrap-core.sql");
+    if !schema_file.is_file() {
+        return Ok(());
+    }
+
+    println!("Ensuring PostgreSQL schema...");
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(120) {
+        let check = Command::new("docker")
+            .args([
+                "compose",
+                "-f",
+                "infra/docker-compose.yml",
+                "--env-file",
+                ".env",
+                "exec",
+                "-T",
+                "postgres",
+                "pg_isready",
+                "-U",
+                "adaptive",
+                "-d",
+                "adaptive_intelligence",
+            ])
+            .current_dir(repo_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if matches!(check, Ok(status) if status.success()) {
+            break;
+        }
+        thread::sleep(Duration::from_secs(2));
+    }
+
+    let sql = fs::read_to_string(&schema_file)
+        .map_err(|e| CliError::ProcessLaunch(format!("Failed to read schema SQL: {e}")))?;
+
+    let mut child = Command::new("docker")
+        .args([
+            "compose",
+            "-f",
+            "infra/docker-compose.yml",
+            "--env-file",
+            ".env",
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "adaptive",
+            "-d",
+            "adaptive_intelligence",
+            "-v",
+            "ON_ERROR_STOP=1",
+        ])
+        .current_dir(repo_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| CliError::ProcessLaunch(format!("schema apply failed to start: {e}")))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(sql.as_bytes())
+            .map_err(|e| CliError::ProcessLaunch(format!("schema apply write failed: {e}")))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| CliError::ProcessLaunch(format!("schema apply wait failed: {e}")))?;
+    if !status.success() {
+        return Err(CliError::ProcessLaunch(
+            "PostgreSQL schema apply failed (see docker compose logs postgres)".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn fetch_http_body(host: &str, port: u16, path: &str, timeout: Duration) -> Result<String, CliError> {
+    let addr = format!("{host}:{port}");
+    let mut stream = TcpStream::connect_timeout(
+        &addr.parse().map_err(|_| CliError::ProcessLaunch(format!("bad address {addr}")))?,
+        timeout,
+    )
+    .map_err(|e| CliError::ProcessLaunch(format!("HTTP connect failed for {addr}: {e}")))?;
+
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: text/html\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| CliError::ProcessLaunch(format!("HTTP write failed: {e}")))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| CliError::ProcessLaunch(format!("HTTP read failed: {e}")))?;
+    Ok(response)
+}
+
+fn wait_for_igy6_ui(web_url: &str, web_port: u16, timeout: Duration) -> Result<(), CliError> {
+    println!("Waiting for IGY6 UI at {web_url} (up to {}s)...", timeout.as_secs());
+    let start = Instant::now();
+
+    while start.elapsed() < timeout {
+        if let Ok(body) = fetch_http_body("127.0.0.1", web_port, "/", Duration::from_secs(3)) {
+            if body.contains(IGY6_UI_MARKER) {
+                thread::sleep(Duration::from_secs(2));
+                return Ok(());
+            }
+            if body.contains("Open WebUI") {
+                return Err(CliError::ProcessLaunch(format!(
+                    "Port {web_port} is serving Open WebUI, not IGY6. Stop the conflicting container (docker stop open-webui) or let igy6 pick another WEB_PORT."
+                )));
+            }
+        }
+        thread::sleep(Duration::from_secs(2));
+        print!(".");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+
+    Err(CliError::ProcessTimeout(format!(
+        "IGY6 UI not ready at {web_url}"
+    )))
+}
+
 /// Starts the IGY6 stack in detached mode (triggering bootstrap if needed),
 /// waits for the web UI, then opens the browser. This makes the compiled
 /// `igy6` binary act like a normal executable program.
@@ -422,6 +693,8 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
         }
     }
 
+    let ports = ensure_runtime_ports(repo_root, &env_file)?;
+
     // Start the stack detached (builds if needed). Uses "docker compose" (works on Docker Desktop Windows too)
     println!("Starting IGY6 stack (detached mode)...");
     let up_status = Command::new("docker")
@@ -445,50 +718,30 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
         return Err(CliError::ProcessLaunch("docker compose up -d failed (is Docker running?)".to_string()));
     }
 
-    // Wait for the web UI (port 3000) to be ready - cross platform TCP check
-    wait_for_port("127.0.0.1", 3000, Duration::from_secs(180))?;
+    ensure_db_schema(repo_root)?;
+    wait_for_igy6_ui(&ports.web_url, ports.web_port, Duration::from_secs(240))?;
 
-    let url = "http://127.0.0.1:3000";
-    println!("Web UI is ready at {}", url);
+    println!("Web UI is ready at {}", ports.web_url);
+    println!("API is ready at {}", ports.api_url);
 
-    // Open the browser (webbrowser crate handles Windows, Linux, macOS)
-    match webbrowser::open(url) {
+    match webbrowser::open(&ports.web_url) {
         Ok(_) => println!("Opened browser to the IGY6 UI."),
-        Err(e) => eprintln!("Could not auto-open browser ({}). Please visit {} manually.", e, url),
+        Err(e) => eprintln!(
+            "Could not auto-open browser ({e}). Please visit {} manually.",
+            ports.web_url
+        ),
     }
 
-    println!("\nIGY6 is running as a compiled executable.");
-    println!("- To view logs: docker compose -f infra/docker-compose.yml --env-file .env logs -f web");
-    println!("- To stop: igy6 stop");
-    println!("- Password for UI: ThatDog123 (change in User & Security section)");
+    println!("\nIGY6 is running (Rust gateway + worker, Next.js UI).");
+    println!("- View logs: docker compose -f infra/docker-compose.yml --env-file .env logs -f web api worker");
+    println!("- Stop: igy6 stop");
+    println!("- Password: ThatDog123 (change in User & Security)");
     println!("- Telemetry is disabled.");
 
-    Ok(CliOutcome::success(format!("Started and opened {}\n", url)))
-}
-
-fn wait_for_port(host: &str, port: u16, timeout: Duration) -> Result<(), CliError> {
-    println!("Waiting for UI on {}:{} (up to {}s)...", host, port, timeout.as_secs());
-    let start = Instant::now();
-    let addr = format!("{}:{}", host, port);
-
-    loop {
-        if start.elapsed() > timeout {
-            return Err(CliError::ProcessTimeout(format!("UI on {}:{}", host, port)));
-        }
-
-        if let Ok(_) = std::net::TcpStream::connect_timeout(
-            &addr.parse().unwrap(),
-            Duration::from_secs(2),
-        ) {
-            // Port is open — give it a couple more seconds for the server to be fully ready
-            std::thread::sleep(Duration::from_secs(3));
-            return Ok(());
-        }
-
-        std::thread::sleep(Duration::from_secs(2));
-        print!(".");
-        std::io::Write::flush(&mut std::io::stdout()).ok();
-    }
+    Ok(CliOutcome::success(format!(
+        "Started and opened {}\n",
+        ports.web_url
+    )))
 }
 
 pub fn redact_sensitive_output(output: &str) -> String {

@@ -100,8 +100,8 @@ status with:
 python3 scripts/processing-status-smoke.py
 ```
 
-The live worker is Python/Celery. Rust gateway dispatch is safe-limited and does
-not invoke Celery directly. See `docs/runtime/PROCESSING_STATUS.md` for pipeline
+The live worker is the Rust `igy6-worker` daemon. Gateway dispatch records work
+in PostgreSQL for the worker to claim. See `docs/runtime/PROCESSING_STATUS.md` for pipeline
 details, status meanings, and log commands.
 
 ## Optional Local LLM Plan
@@ -197,7 +197,7 @@ different system instruction, model, temperature, purpose, and
 
 IGY6 is local-first and evidence-only by default. The API path no longer uses
 FastAPI fallback after DIFF-138, but full Rust-only repository/runtime operation
-is not claimed while Python/Celery worker and beat services remain active. It
+is not claimed while legacy Python/Celery services remain archived. It
 does not send evidence to an external model by default. It does not run
 arbitrary shell text from Assistant input.
 

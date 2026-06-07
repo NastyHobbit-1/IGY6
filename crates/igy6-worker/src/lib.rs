@@ -56,7 +56,7 @@ impl From<VectorMemoryError> for WorkerError {
 pub const WORKER_EMBEDDING_METHOD: &str = "local_hash_v1";
 pub const WORKER_VECTOR_GENERATED_BY: &str = "DIFF-053";
 pub const DEFAULT_DATABASE_URL: &str =
-    "postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence";
+    "postgres://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence";
 pub const DEFAULT_QDRANT_URL: &str = "http://qdrant:6333";
 pub const DEFAULT_IGY6_DATA_ROOT: &str = "../IGY6_Data";
 pub const DEFAULT_QDRANT_CHUNK_COLLECTION: &str = "igy6_chunks";

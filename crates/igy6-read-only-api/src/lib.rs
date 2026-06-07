@@ -76,7 +76,7 @@ pub fn handle_request(request: &HttpRequest, manifest_content: Option<&str>) -> 
         "/health/ready" => json_response(
             200,
             "OK",
-            "{\"status\":\"ok\",\"checks\":{\"rust_sidecar\":{\"status\":\"ok\"}},\"fastapi_primary\":true}".to_string(),
+            "{\"status\":\"ok\",\"checks\":{\"rust_sidecar\":{\"status\":\"ok\"}},\"primary_gateway\":\"rust\"}".to_string(),
         ),
         "/rust-migration/status" => {
             let summary = summarize_manifest(manifest_content.unwrap_or_default());
@@ -84,7 +84,7 @@ pub fn handle_request(request: &HttpRequest, manifest_content: Option<&str>) -> 
                 200,
                 "OK",
                 format!(
-                    "{{\"status\":\"ok\",\"cutover_ready\":{},\"complete_phases\":{},\"pending_phases\":{},\"fastapi_primary\":true}}",
+                    "{{\"status\":\"ok\",\"cutover_ready\":{},\"complete_phases\":{},\"pending_phases\":{},\"primary_gateway\":\"rust\"}}",
                     summary.cutover_ready, summary.complete_phases, summary.pending_phases
                 ),
             )
@@ -118,7 +118,7 @@ pub fn render_http_response(response: &HttpResponse) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-read-only-api\n\nUsage:\n  igy6-read-only-api [--bind 127.0.0.1:8766]\n  igy6-read-only-api --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n\nFastAPI remains the primary API. This sidecar is read-only and local-first.\n"
+    "igy6-read-only-api\n\nUsage:\n  igy6-read-only-api [--bind 127.0.0.1:8766]\n  igy6-read-only-api --help\n\nRoutes:\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n\nRead-only migration sidecar library. The Rust gateway is the primary API.\n"
 }
 
 fn json_response(status_code: u16, reason: &str, body: String) -> HttpResponse {
@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_route_keeps_fastapi_primary() {
+    fn ready_route_reports_rust_primary() {
         let response = handle_request(
             &HttpRequest {
                 method: "GET".to_string(),
@@ -177,7 +177,7 @@ mod tests {
             None,
         );
         assert_eq!(response.status_code, 200);
-        assert!(response.body.contains("\"fastapi_primary\":true"));
+        assert!(response.body.contains("\"primary_gateway\":\"rust\""));
     }
 
     #[test]

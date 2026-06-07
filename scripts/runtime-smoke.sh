@@ -15,14 +15,12 @@ FAILURES=0
 
 EXPECTED_SERVICES=(
   postgres
-  redis
   qdrant
   neo4j
   mlflow
   phoenix
   api
   worker
-  beat
   web
 )
 
@@ -157,9 +155,14 @@ run_check() {
   require_command curl
   check_compose_config
   check_running_services
-  check_http_ok "API live" "http://127.0.0.1:8000/health/live"
-  check_http_available "API ready" "http://127.0.0.1:8000/health/ready"
-  check_http_ok "Web UI" "http://127.0.0.1:3000"
+  local api_port web_port
+  api_port="$(grep -E '^APP_PORT=' "${ENV_FILE}" | tail -n1 | cut -d= -f2- | tr -d '\r' || true)"
+  web_port="$(grep -E '^WEB_PORT=' "${ENV_FILE}" | tail -n1 | cut -d= -f2- | tr -d '\r' || true)"
+  api_port="${api_port:-8000}"
+  web_port="${web_port:-3000}"
+  check_http_ok "API live" "http://127.0.0.1:${api_port}/health/live"
+  check_http_available "API ready" "http://127.0.0.1:${api_port}/health/ready"
+  check_http_ok "Web UI" "http://127.0.0.1:${web_port}"
 
   if [[ "${FAILURES}" -gt 0 ]]; then
     note_diagnostics

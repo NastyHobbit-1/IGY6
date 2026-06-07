@@ -40,7 +40,8 @@ done
 
 igy6_require_repo_files
 igy6_require_docker_compose
-igy6_init_db_schema
 
-igy6_info "Starting IGY6 local stack. Press Ctrl+C to stop foreground log streaming; containers may continue according to Docker Compose behavior."
-igy6_run_compose up --build
+igy6_info "Starting IGY6 local stack (detached), then streaming logs. Press Ctrl+C to stop log streaming; containers keep running."
+igy6_run_compose up --build -d
+igy6_init_db_schema
+igy6_run_compose logs -f

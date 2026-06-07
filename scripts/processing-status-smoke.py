@@ -95,20 +95,12 @@ class ProcessingSmoke:
         return services
 
     def check_service_set(self, services: set[str]) -> None:
-        for service in ("worker", "redis", "postgres", "qdrant", "api", "web"):
+        for service in ("worker", "postgres", "qdrant", "neo4j", "api", "web"):
             self.check(
                 service in services,
                 f"service {service} is running",
                 f"service {service} is not running",
             )
-
-    def check_redis(self) -> None:
-        result = self.compose("exec", "-T", "redis", "redis-cli", "ping")
-        self.check(
-            result.returncode == 0 and "PONG" in result.stdout,
-            "Redis responds to PING",
-            "Redis did not respond to PING",
-        )
 
     def check_postgres(self) -> None:
         user = self.env.get("POSTGRES_USER", "adaptive")
@@ -162,8 +154,6 @@ class ProcessingSmoke:
         self.check_compose_config()
         services = self.running_services()
         self.check_service_set(services)
-        if "redis" in services:
-            self.check_redis()
         if "postgres" in services:
             self.check_postgres()
         self.check_api_processing_views()
@@ -173,7 +163,7 @@ class ProcessingSmoke:
             print("  scripts/runtime-smoke.sh --check")
             print("  docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 worker")
             print("  docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api")
-            print("  docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 redis")
+            print("  docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 neo4j")
             return 1
         return 0
 

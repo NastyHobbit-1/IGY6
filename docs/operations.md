@@ -20,11 +20,14 @@ health and logs.
 
 ## Worker
 
+The active worker is the Rust `igy6-worker` daemon:
+
 ```bash
-docker compose -f infra/docker-compose.yml --env-file .env exec -T worker celery -A app.celery_app:celery_app inspect ping
+docker compose -f infra/docker-compose.yml --env-file .env logs -f worker
+docker compose -f infra/docker-compose.yml --env-file .env run --rm worker igy6-worker --check
 ```
 
-Expected result: one Celery node responds with `pong`.
+Expected result: JSON status with `"service":"igy6-worker"` and `"rust_only_runtime_claimed":true`.
 
 ## Migrations
 

@@ -11,18 +11,12 @@ services:
       - type: bind
         source: ${IGY6_DATA_ROOT}/postgres
         target: /var/lib/postgresql/data
+      - type: bind
+        source: ./schema/bootstrap-core.sql
+        target: /docker-entrypoint-initdb.d/01-bootstrap-core.sql
+        read_only: true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7
-    ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -48,7 +42,6 @@ services:
       NEO4J_server_default__listen__address: 0.0.0.0
       NEO4J_server_bolt_listen__address: 0.0.0.0:7687
       NEO4J_server_http_listen__address: 0.0.0.0:7474
-      NEO4J_server_telemetry_enabled: "false"
     ports:
       - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
       - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
@@ -112,12 +105,13 @@ services:
     build:
       context: ..
       dockerfile: crates/igy6-gateway/Dockerfile
+    env_file:
+      - ../.env
     environment:
       GATEWAY_BIND_ADDR: 0.0.0.0:8000
-      DATABASE_URL: ${DATABASE_URL}
       ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
       ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
-      IGY6_DATA_ROOT: ${IGY6_DATA_ROOT}
+      IGY6_DATA_ROOT: /workspace/storage
     ports:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
@@ -127,17 +121,28 @@ services:
       - type: bind
         source: ..
         target: /workspace/project
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   worker:
     build:
       context: ..
       dockerfile: crates/igy6-worker/Dockerfile
+    env_file:
+      - ../.env
     environment:
-      DATABASE_URL: ${DATABASE_URL}
       IGY6_DATA_ROOT: /workspace/storage
-      QDRANT_URL: ${QDRANT_URL}
-      QDRANT_CHUNK_COLLECTION: ${QDRANT_CHUNK_COLLECTION}
-      QDRANT_CHUNK_VECTOR_SIZE: ${QDRANT_CHUNK_VECTOR_SIZE}
       IGY6_WORKER_SHUTDOWN_FILE: ${IGY6_WORKER_SHUTDOWN_FILE:-worker/control/shutdown}
     command:
       - igy6-worker
@@ -151,18 +156,30 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+      api:
+        condition: service_healthy
     volumes:
       - type: bind
         source: ${IGY6_DATA_ROOT}
         target: /workspace/storage
+    restart: unless-stopped
 
   web:
     build:
       context: ../apps/web
     environment:
       API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL}
+      PORT: "3000"
       NEXT_TELEMETRY_DISABLED: 1
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s

@@ -2,7 +2,7 @@
 
 ## Automatic Codex Entrypoint
 
-Codex and other coding agents must treat this file as the automatic project instruction entrypoint for IGY6 work on `dev`.
+Codex and other coding agents must treat this file as the automatic project instruction entrypoint for IGY6 work on `grok`.
 
 This file is dev-only build-agent instruction material. It must not be promoted to `main` unless a later DIFF explicitly changes the branch policy.
 
@@ -21,7 +21,7 @@ Do not implement from memory, ambition, or inferred intent. Verify the current r
 
 ## Branch Policy
 
-Work on `dev` for development and build-agent assisted work.
+Work on `grok` for development and build-agent assisted work on this branch.
 
 Do not merge `dev` into `main`.
 
@@ -70,7 +70,7 @@ The current active application runtime is Rust-based:
 - Legacy Python/Celery worker: archived and inactive.
 - Celery beat: inactive/retired from active Compose runtime.
 
-Supporting services include PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix.
+Supporting services include PostgreSQL, Qdrant, Neo4j, MLflow, and Phoenix. Redis and Celery are retired from the active Compose runtime.
 
 Do not describe FastAPI, Python/Celery, or beat as active runtime services unless working inside archive/rollback history or an explicit rollback DIFF.
 

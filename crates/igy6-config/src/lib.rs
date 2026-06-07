@@ -17,11 +17,7 @@ pub const REQUIRED_KEYS: &[&str] = &[
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "DATABASE_URL",
-    "REDIS_HOST",
-    "REDIS_PORT",
-    "REDIS_URL",
-    "CELERY_BROKER_URL",
-    "CELERY_RESULT_BACKEND",
+    "WEB_PORT",
     "QDRANT_HOST",
     "QDRANT_PORT",
     "QDRANT_URL",
@@ -61,11 +57,7 @@ pub const ENV_REQUIRED_KEYS: &[&str] = &[
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "DATABASE_URL",
-    "REDIS_HOST",
-    "REDIS_PORT",
-    "REDIS_URL",
-    "CELERY_BROKER_URL",
-    "CELERY_RESULT_BACKEND",
+    "WEB_PORT",
     "QDRANT_HOST",
     "QDRANT_PORT",
     "QDRANT_URL",
@@ -95,7 +87,7 @@ const BOOLEAN_KEYS: &[&str] = &["SINGLE_USER_MODE", "APPROVAL_REQUIRED_DEFAULT"]
 const PORT_KEYS: &[&str] = &[
     "APP_PORT",
     "POSTGRES_PORT",
-    "REDIS_PORT",
+    "WEB_PORT",
     "QDRANT_PORT",
     "NEO4J_HTTP_PORT",
     "NEO4J_BOLT_PORT",
@@ -105,9 +97,6 @@ const URL_KEYS: &[&str] = &[
     "API_BASE_URL",
     "WEB_BASE_URL",
     "DATABASE_URL",
-    "REDIS_URL",
-    "CELERY_BROKER_URL",
-    "CELERY_RESULT_BACKEND",
     "QDRANT_URL",
     "NEO4J_URI",
     "MLFLOW_TRACKING_URI",
@@ -640,8 +629,8 @@ fn is_plausible_url(key: &str, value: &str) -> bool {
 
     match key {
         "NEO4J_URI" => matches!(scheme, "bolt" | "neo4j"),
-        "DATABASE_URL" => scheme.starts_with("postgresql") && rest.contains('/'),
-        "REDIS_URL" | "CELERY_BROKER_URL" | "CELERY_RESULT_BACKEND" => scheme == "redis",
+        "DATABASE_URL" => matches!(scheme, "postgres" | "postgresql") && rest.contains('/'),
+        _ if key.starts_with("REDIS") || key.starts_with("CELERY") => scheme == "redis",
         _ => matches!(scheme, "http" | "https"),
     }
 }
@@ -740,6 +729,7 @@ mod tests {
     const VALID_ENV: &str = "APP_ENV=local
 APP_HOST=127.0.0.1
 APP_PORT=8000
+WEB_PORT=3000
 API_BASE_URL=http://127.0.0.1:8000
 WEB_BASE_URL=http://127.0.0.1:3000
 POSTGRES_HOST=postgres
@@ -747,12 +737,7 @@ POSTGRES_PORT=5432
 POSTGRES_DB=adaptive_intelligence
 POSTGRES_USER=adaptive
 POSTGRES_PASSWORD=change-me-local-only
-DATABASE_URL=postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_URL=redis://redis:6379/0
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/1
+DATABASE_URL=postgres://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
 QDRANT_URL=http://qdrant:6333
