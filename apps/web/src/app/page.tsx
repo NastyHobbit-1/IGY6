@@ -363,6 +363,15 @@ type BrowserWebRouterImportType = {
   sensitivity: string;
 };
 
+type MediaImportType = {
+  key: string;
+  label: string;
+  status: string;
+  acceptedInput: string;
+  unsupportedReason: string;
+  safeNext: string;
+};
+
 type TermHelpContent = {
   title: string;
   explanation: string;
@@ -950,6 +959,41 @@ const BROWSER_WEB_ROUTER_IMPORT_TYPES: BrowserWebRouterImportType[] = [
   }
 ];
 
+const MEDIA_IMPORT_TYPES: MediaImportType[] = [
+  {
+    key: "pdf",
+    label: "PDF",
+    status: "metadata-preview",
+    acceptedInput: "File label, size/type metadata, and user-provided extracted text.",
+    unsupportedReason: "No verified local PDF text extraction path is active in this DIFF.",
+    safeNext: "Copy verified PDF text into Guided Upload when extraction is done outside IGY6."
+  },
+  {
+    key: "image",
+    label: "Image / screenshot",
+    status: "unsupported-planned",
+    acceptedInput: "File label, size/type metadata, and optional user-provided OCR text.",
+    unsupportedReason: "No verified local OCR dependency/path is active in this DIFF.",
+    safeNext: "Paste trusted OCR text into Guided Upload after local review."
+  },
+  {
+    key: "audio",
+    label: "Audio",
+    status: "unsupported-planned",
+    acceptedInput: "File label, size/type metadata, and optional user-provided transcript.",
+    unsupportedReason: "No verified local transcription dependency/path is active in this DIFF.",
+    safeNext: "Paste a reviewed transcript into Guided Upload."
+  },
+  {
+    key: "video",
+    label: "Video",
+    status: "unsupported-planned",
+    acceptedInput: "File label, size/type metadata, and optional user-provided transcript or notes.",
+    unsupportedReason: "No verified local video transcription or frame OCR path is active in this DIFF.",
+    safeNext: "Paste reviewed transcript or notes into Guided Upload."
+  }
+];
+
 function ConnectorContractStatusPanel() {
   return (
     <section className="panelInset" id="connector-contracts" data-connector-contract-status>
@@ -1110,6 +1154,132 @@ function BrowserWebRouterCollectorMvp() {
         <span>Choose a type, enter explicit scope, paste authorized text, and preview what would be collected or excluded.</span>
       </div>
       <script type="application/json" data-browser-web-router-types-json dangerouslySetInnerHTML={{ __html: importTypesJson }} />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
+function MediaImportMvp() {
+  const mediaTypesJson = JSON.stringify(MEDIA_IMPORT_TYPES).replace(/</g, "\\u003c");
+  const script = `
+(() => {
+  const root = document.querySelector("[data-media-import-mvp]");
+  if (!root) return;
+  const mediaTypes = JSON.parse(root.querySelector("[data-media-import-types-json]")?.textContent || "[]");
+  const form = root.querySelector("[data-media-import-preview-form]");
+  const typeSelect = root.querySelector("[name='media_type']");
+  const fileInput = root.querySelector("[name='media_file']");
+  const result = root.querySelector("[data-media-import-result]");
+  const typeStatus = root.querySelector("[data-media-import-type-status]");
+  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const selectedType = () => mediaTypes.find((item) => item.key === typeSelect?.value) || mediaTypes[0];
+  const formatBytes = (size) => {
+    if (!Number.isFinite(size)) return "unknown";
+    if (size < 1024) return size + " B";
+    if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+    return (size / (1024 * 1024)).toFixed(1) + " MB";
+  };
+  const render = (payload) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = payload.title;
+    const body = document.createElement("span");
+    body.textContent = payload.message;
+    result.append(title, body);
+    const details = document.createElement("dl");
+    payload.details.forEach((detail) => {
+      const term = document.createElement("dt");
+      term.textContent = detail.label;
+      const description = document.createElement("dd");
+      description.textContent = detail.value;
+      details.append(term, description);
+    });
+    result.append(details);
+    const list = document.createElement("ul");
+    payload.next.forEach((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      list.appendChild(item);
+    });
+    result.append(list);
+  };
+  const updateStatus = () => {
+    const type = selectedType();
+    if (!typeStatus || !type) return;
+    typeStatus.textContent = type.label + " status: " + type.status + ". " + type.unsupportedReason;
+  };
+  typeSelect?.addEventListener("change", updateStatus);
+  updateStatus();
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const type = selectedType();
+    const file = fileInput?.files?.[0] || null;
+    const extractedText = value("media_extracted_text");
+    const fileSize = file ? file.size : null;
+    const bounded = fileSize === null || fileSize <= 25 * 1024 * 1024;
+    render({
+      title: "Media import preview only",
+      message: "No binary media was uploaded, parsed, OCRed, transcribed, or sent to a hosted service.",
+      details: [
+        { label: "media type", value: type.label + " · " + type.status },
+        { label: "file label", value: file ? file.name : (value("media_label") || "not selected") },
+        { label: "browser-reported MIME", value: file?.type || "not provided" },
+        { label: "size", value: file ? formatBytes(file.size) : "not selected" },
+        { label: "size bound", value: bounded ? "within 25 MB preview bound" : "too large for this MVP preview" },
+        { label: "accepted input", value: type.acceptedInput },
+        { label: "extraction status", value: extractedText ? "user-provided extracted text can be collected through Guided Upload after review" : type.unsupportedReason },
+        { label: "lineage posture", value: "future implementation must preserve source, artifact, document, chunk, and evidence lineage" },
+        { label: "external services", value: "none" }
+      ],
+      next: [
+        type.safeNext,
+        "Do not paste secrets, private paths, credentials, or unreviewed media contents.",
+        "This panel records no artifact; use Guided Upload only for reviewed UTF-8 text."
+      ]
+    });
+  });
+})();
+`;
+
+  return (
+    <section className="guidedManualText" id="media-import" data-media-import-mvp>
+      <div className="guidedManualNotice">
+        <strong>PDF, image, audio, and video import foundation.</strong>
+        <span>Metadata and extraction-posture preview only. Binary parsing, OCR, transcription, and hosted media services are not enabled here.</span>
+      </div>
+      <form className="guidedManualForm" data-media-import-preview-form>
+        <label>
+          <span>Media type</span>
+          <select name="media_type" defaultValue="pdf">
+            {MEDIA_IMPORT_TYPES.map((type) => (
+              <option key={type.key} value={type.key}>{type.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="actionHint" data-media-import-type-status />
+        <label>
+          <span>File label if no file selected</span>
+          <input name="media_label" placeholder="statement.pdf, screenshot.png, meeting-audio.wav" />
+        </label>
+        <label>
+          <span>Optional local file metadata preview</span>
+          <input name="media_file" type="file" accept=".pdf,image/*,audio/*,video/*" />
+        </label>
+        <label>
+          <span>Reviewed extracted text or transcript if already available</span>
+          <textarea name="media_extracted_text" rows={5} placeholder="Optional reviewed text. This panel does not collect it; use Guided Upload after review." />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit">Preview media import status</button>
+          <span>No binary upload or parsing starts from this preview.</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-media-import-result>
+        <strong>Ready</strong>
+        <span>Select a media type and preview support status, size bounds, and safe next steps.</span>
+      </div>
+      <script type="application/json" data-media-import-types-json dangerouslySetInnerHTML={{ __html: mediaTypesJson }} />
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
@@ -8035,6 +8205,7 @@ export default async function Home() {
             <ConversationHistoryImport sources={sources} approvals={approvals} />
             <UserObservationIngestion sources={sources} approvals={approvals} />
             <BrowserWebRouterCollectorMvp />
+            <MediaImportMvp />
             <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
             <div className="stack">
               {recentRuns.map((run) => (

@@ -210,6 +210,20 @@ Browser / Web / Router Import Dry-Run:
   tokens, credentials, browser local storage, private account data, router
   secrets, or perform router writes.
 
+PDF / Image / Audio / Video Import Foundation:
+
+- Provides a metadata and support-status preview for PDF, image/screenshot,
+  audio, and video inputs.
+- Lets you select a media type, optionally select a local file for browser-side
+  name/type/size metadata, and paste reviewed extracted text or transcript if
+  you already have it.
+- Does not upload binary media, parse PDFs, run OCR, transcribe audio/video,
+  call hosted OCR/transcription APIs, or create artifacts from this panel.
+- PDF, image, audio, and video parsing remain unsupported/planned unless a
+  later DIFF adds and verifies local extraction.
+- To collect reviewed text now, paste the extracted text into Guided Upload as
+  UTF-8 text after removing secrets and private path details.
+
 ### Buttons And Actions
 
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
@@ -223,6 +237,9 @@ Browser / Web / Router Import Dry-Run:
 - `Preview dry-run only` for browser/web/router text uses only the fields
   entered in the page to summarize scope, exclusions, sensitivity, and audit
   posture. It does not call the API or collect artifacts.
+- `Preview media import status` summarizes media type, file metadata, size
+  posture, extraction status, and safe next steps. It does not upload or parse
+  the file.
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
