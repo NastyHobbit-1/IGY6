@@ -1,0 +1,67 @@
+{
+  "classes": {
+    "approvals": {
+      "records": [
+        {
+          "id": "approval-fixture-1",
+          "request_type": "manual_upload_collection",
+          "status": "approved"
+        }
+      ],
+      "status": "included"
+    },
+    "artifact_metadata": {
+      "records": [
+        {
+          "content_hash": "[excluded]",
+          "id": "artifact-fixture-1",
+          "mime_type": "text/plain",
+          "size_bytes": 42,
+          "storage_path": "[redacted-local-reference]"
+        }
+      ],
+      "status": "included"
+    },
+    "sources": {
+      "records": [
+        {
+          "id": "source-fixture-1",
+          "name": "Synthetic safe source",
+          "source_type": "manual_upload",
+          "trust_level": "review-needed"
+        }
+      ],
+      "status": "included"
+    }
+  },
+  "created_at_utc": "2026-06-07T00:00:00Z",
+  "export": {
+    "endpoint_paths": {
+      "approvals": "/approvals",
+      "artifact_metadata": "/artifacts",
+      "sources": "/sources"
+    },
+    "exclusions": [
+      ".env and .env backups",
+      "raw artifact bytes",
+      "raw document, chunk, evidence, answer, and report text content"
+    ],
+    "included_classes": [
+      "sources",
+      "approvals",
+      "artifact_metadata"
+    ],
+    "mode": "metadata_only",
+    "record_counts": {
+      "approvals": 1,
+      "artifact_metadata": 1,
+      "sources": 1
+    }
+  },
+  "repo": {
+    "branch": "dev",
+    "head": "synthetic-fixture"
+  },
+  "schema_version": "igy6.backup_export.v1",
+  "warnings": []
+}
