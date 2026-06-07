@@ -2130,7 +2130,9 @@ function UnifiedChatHub({
   chunkCount,
   workItemCount,
   pendingApprovals,
-  vectorReady
+  vectorReady,
+  llmEnabled,
+  llmModel
 }: {
   sourceCount: number;
   evidenceCount: number;
@@ -2138,6 +2140,8 @@ function UnifiedChatHub({
   workItemCount: number;
   pendingApprovals: number;
   vectorReady: boolean;
+  llmEnabled: boolean;
+  llmModel: string;
 }) {
   const script = `
 (() => {
@@ -2264,6 +2268,8 @@ function UnifiedChatHub({
     return parts.filter(Boolean).join(" ");
   };
 
+  const llmEnabled = hub.getAttribute("data-llm-enabled") === "true";
+
   const runEvidencePath = async () => {
     if (!chatForm) throw new Error("Evidence engine is unavailable.");
     chatForm.requestSubmit();
@@ -2272,6 +2278,22 @@ function UnifiedChatHub({
     const answerStatus = previewResults?.getAttribute("data-answer-status") || "unknown";
     previewResults?.closest(".chatResultsDock")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     return { hitCount: Number(hitCount), answerStatus };
+  };
+
+  const runLlmEvidenceAnswer = async (text) => {
+    const response = await fetch("/api/chat/evidence-answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: text,
+        limit: Number(chatLimit?.value || 5)
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.detail || response.statusText || "Evidence answer failed");
+    }
+    return payload;
   };
 
   const runAgentPreview = async () => {
@@ -2308,8 +2330,33 @@ function UnifiedChatHub({
       appendMessage("assistant", "IGY6", summary);
 
       if (looksLikeEvidenceQuestion(intent, text)) {
-        setStatus("Searching local evidence...");
+        setStatus(llmEnabled ? "Searching evidence and calling local Ollama..." : "Searching local evidence...");
+        let llmPayload = null;
+        if (llmEnabled) {
+          try {
+            llmPayload = await runLlmEvidenceAnswer(text);
+          } catch (error) {
+            appendMessage(
+              "assistant",
+              "Local model",
+              error instanceof Error ? error.message : "Local model call failed; showing deterministic evidence instead."
+            );
+          }
+        }
         const evidence = await runEvidencePath();
+        if (llmPayload?.llm_text) {
+          appendMessage("assistant", "Ollama answer", llmPayload.llm_text);
+        } else if (llmPayload?.generation_mode === "local_llm_evidence_grounded" && llmPayload?.redacted_output_preview) {
+          appendMessage("assistant", "Ollama answer", llmPayload.redacted_output_preview);
+        } else if (llmPayload && llmEnabled) {
+          appendMessage(
+            "assistant",
+            "Local model",
+            llmPayload.llm_error
+              ? "Ollama was unavailable (" + llmPayload.llm_error + "). Deterministic evidence is shown below."
+              : "No local model text returned (" + (llmPayload.generation_mode || "unknown") + "). Deterministic evidence is shown below."
+          );
+        }
         appendMessage(
           "assistant",
           "Evidence",
@@ -2367,7 +2414,13 @@ function UnifiedChatHub({
 `;
 
   return (
-    <section className="unifiedChatHub" data-unified-chat aria-label="IGY6 chat">
+    <section
+      className="unifiedChatHub"
+      data-unified-chat
+      data-llm-enabled={llmEnabled ? "true" : "false"}
+      data-llm-model={llmModel || "not-selected"}
+      aria-label="IGY6 chat"
+    >
       <div className="chatHubHeader">
         <div>
           <p className="eyebrow">Chat</p>
@@ -2376,6 +2429,7 @@ function UnifiedChatHub({
         <span className="statusText" data-chat-status>Ready</span>
       </div>
       <div className="retrievalStrip chatHubStats" aria-label="Workspace snapshot">
+        <span>{llmEnabled ? `Ollama · ${llmModel || "model not set"}` : "Deterministic evidence mode"}</span>
         <span>{sourceCount} sources</span>
         <span>{evidenceCount} evidence items</span>
         <span>{chunkCount} chunks</span>
@@ -8750,6 +8804,8 @@ export default async function Home() {
             workItemCount={workItems.data.length}
             pendingApprovals={pendingApprovals.length}
             vectorReady={vectorCollection.data.exists}
+            llmEnabled={(settingValue(envSettings.data, "LLM_PROVIDER", "none") || "none") === "ollama"}
+            llmModel={settingValue(envSettings.data, "OLLAMA_MODEL", "") || "not selected"}
           />
 
           <section className="chatResultsDock" aria-label="Evidence and action results">

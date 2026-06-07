@@ -27,7 +27,10 @@ use igy6_evidence_answer::{
 use igy6_host_bridge::{allowed_action as host_bridge_allowed_action, redact_output};
 use igy6_llm::{load_local_llm_routing_config, LlmConfig, LlmProvider, StdHttpTransport};
 use igy6_read_only_api::summarize_manifest;
-use igy6_retrieval_preview::{build_hydrated_chunk_search_result, build_retrieval_preview};
+use igy6_retrieval_preview::{
+    build_hydrated_chunk_search_result, build_retrieval_preview, HydratedChunkSearchHit,
+    RetrievalChunk, RetrievalDocument, RetrievalEvidenceItem, RetrievalRawArtifact, RetrievalSource,
+};
 use igy6_vector_memory::{
     collection_status_request, ensure_collection_request, plan_chunk_vector_point,
     search_points_request, upsert_points_request, HttpMethod, HttpRequestPlan, QdrantSettings,
@@ -333,7 +336,7 @@ pub fn handle_gateway_request_with_db(
             retrieval_preview_response(&request.body, database_url)
         }
         ("POST", "/chat/evidence-answer") => {
-            json_response(200, "OK", evidence_answer_json(&request.body), false)
+            evidence_answer_response(&request.body, database_url)
         }
         ("POST", "/evidence-answers") => {
             evidence_answer_record_create_response(&request.body, database_url)
@@ -1009,6 +1012,14 @@ fn retrieval_chunk_search_response(body: &str, database_url: Option<&str>) -> Ga
 
 fn retrieval_preview_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     action_route_response(live_retrieval_preview(body, database_url))
+}
+
+fn evidence_answer_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    if database_url.filter(|value| !value.trim().is_empty()).is_some() {
+        action_route_response(live_evidence_answer(body, database_url))
+    } else {
+        json_response(200, "OK", evidence_answer_json(body), false)
+    }
 }
 
 fn report_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -4035,6 +4046,234 @@ fn live_retrieval_preview(body: &str, database_url: Option<&str>) -> Result<Stri
         }
     })
     .to_string())
+}
+
+fn live_evidence_answer(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let payload = parse_chat_retrieval_search(body)?;
+    let task_name = extract_json_string(body, "task_name")
+        .or_else(|| extract_json_string(body, "task"))
+        .unwrap_or_else(|| igy6_llm::DEFAULT_TASK_NAME.to_string());
+    let preview_json = live_retrieval_preview(body, database_url)?;
+    let preview: Value = serde_json::from_str(&preview_json)
+        .map_err(|error| GatewayError::ServiceUnavailable(error.to_string()))?;
+    let retrieval_context_value = preview
+        .get("retrieval_context")
+        .cloned()
+        .unwrap_or_else(|| preview.clone());
+    let query = preview
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or(payload.query.as_str())
+        .to_string();
+    let collection_name = preview
+        .get("collection_name")
+        .and_then(Value::as_str)
+        .or_else(|| retrieval_context_value.get("collection_name").and_then(Value::as_str))
+        .unwrap_or("igy6_chunks")
+        .to_string();
+    let collection_exists = preview
+        .get("collection_exists")
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            retrieval_context_value
+                .get("collection_exists")
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(false);
+    let hits = hydrated_hits_from_retrieval_value(
+        retrieval_context_value
+            .get("hits")
+            .or_else(|| preview.get("items")),
+    );
+    let retrieval_context = build_hydrated_chunk_search_result(
+        &query,
+        &collection_name,
+        collection_exists,
+        hits,
+        payload.limit as usize,
+    );
+    let answer = match LlmConfig::from_env() {
+        Ok(config) if config.provider == LlmProvider::Ollama => {
+            match load_local_llm_routing_config() {
+                Ok(routing_config) => answer_with_optional_llm_for_task(
+                    retrieval_context,
+                    &config,
+                    &routing_config,
+                    &task_name,
+                    &StdHttpTransport,
+                ),
+                Err(error) => {
+                    deterministic_fallback_for_llm_config_error(retrieval_context, &error)
+                }
+            }
+        }
+        Ok(config) => answer_with_optional_llm(retrieval_context, &config, &StdHttpTransport),
+        Err(error) => deterministic_fallback_for_llm_config_error(retrieval_context, &error),
+    };
+    Ok(evidence_grounded_answer_json(&answer))
+}
+
+fn hydrated_hits_from_retrieval_value(hits_value: Option<&Value>) -> Vec<HydratedChunkSearchHit> {
+    let Some(hits) = hits_value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    hits.iter()
+        .filter_map(hydrated_hit_from_retrieval_value)
+        .collect()
+}
+
+fn hydrated_hit_from_retrieval_value(hit: &Value) -> Option<HydratedChunkSearchHit> {
+    let chunk_value = hit.get("chunk")?;
+    let document_value = hit.get("document")?;
+    let chunk_id = json_string_field(chunk_value, "id")?;
+    let document_id = json_string_field(chunk_value, "document_id")
+        .or_else(|| json_string_field(document_value, "id"))?;
+    let chunk_index = chunk_value
+        .get("chunk_index")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0) as usize;
+    let text_content = json_string_field(chunk_value, "text_content")
+        .or_else(|| json_string_field(chunk_value, "text"))
+        .unwrap_or_default();
+    if text_content.trim().is_empty() {
+        let evidence_statement = hit
+            .get("evidence_items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| json_string_field(item, "statement"));
+        if evidence_statement.is_none() {
+            return None;
+        }
+    }
+    let qdrant_payload_summary = hit
+        .get("qdrant_payload")
+        .map(|payload| payload.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+    let source = hit.get("source").and_then(parse_retrieval_source);
+    let raw_artifact = hit.get("raw_artifact").and_then(parse_retrieval_raw_artifact);
+    let evidence_items = hit
+        .get("evidence_items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parse_retrieval_evidence_item)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(HydratedChunkSearchHit {
+        score: hit.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+        qdrant_payload_summary,
+        chunk: RetrievalChunk {
+            id: chunk_id,
+            document_id: document_id.clone(),
+            chunk_index,
+            text_content: if text_content.trim().is_empty() {
+                evidence_items
+                    .first()
+                    .map(|item| item.statement.clone())
+                    .unwrap_or_default()
+            } else {
+                text_content
+            },
+            embedding_status: json_string_field(chunk_value, "embedding_status")
+                .unwrap_or_else(|| "unknown".to_string()),
+        },
+        document: RetrievalDocument {
+            id: json_string_field(document_value, "id").unwrap_or(document_id),
+            raw_artifact_id: json_optional_string_field(document_value, "raw_artifact_id"),
+            source_id: json_optional_string_field(document_value, "source_id"),
+            title: json_optional_string_field(document_value, "title"),
+            document_type: json_string_field(document_value, "document_type")
+                .unwrap_or_else(|| "text".to_string()),
+            sensitivity: json_string_field(document_value, "sensitivity")
+                .unwrap_or_else(|| "internal".to_string()),
+        },
+        source,
+        raw_artifact,
+        evidence_items,
+    })
+}
+
+fn json_string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn json_optional_string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn parse_retrieval_source(value: &Value) -> Option<RetrievalSource> {
+    Some(RetrievalSource {
+        id: json_string_field(value, "id")?,
+        name: json_string_field(value, "name").unwrap_or_else(|| "source".to_string()),
+        source_type: json_string_field(value, "source_type")
+            .unwrap_or_else(|| "manual_upload".to_string()),
+        trust_level: json_string_field(value, "trust_level")
+            .unwrap_or_else(|| "standard".to_string()),
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    })
+}
+
+fn parse_retrieval_raw_artifact(value: &Value) -> Option<RetrievalRawArtifact> {
+    Some(RetrievalRawArtifact {
+        id: json_string_field(value, "id")?,
+        source_id: json_optional_string_field(value, "source_id"),
+        content_hash: json_string_field(value, "content_hash")
+            .unwrap_or_else(|| "unknown".to_string()),
+        storage_path: json_string_field(value, "storage_path")
+            .unwrap_or_else(|| "unknown".to_string()),
+    })
+}
+
+fn parse_retrieval_evidence_item(value: &Value) -> Option<RetrievalEvidenceItem> {
+    Some(RetrievalEvidenceItem {
+        id: json_string_field(value, "id")?,
+        source_id: json_optional_string_field(value, "source_id"),
+        document_id: json_optional_string_field(value, "document_id"),
+        chunk_id: json_optional_string_field(value, "chunk_id"),
+        evidence_type: json_string_field(value, "evidence_type")
+            .unwrap_or_else(|| "document_chunk".to_string()),
+        statement: json_string_field(value, "statement").unwrap_or_default(),
+        confidence: value
+            .get("confidence")
+            .and_then(Value::as_i64)
+            .map(|value| value as i32),
+    })
+}
+
+fn evidence_grounded_answer_json(answer: &igy6_evidence_answer::EvidenceGroundedAnswer) -> String {
+    let deterministic = &answer.deterministic_answer;
+    format!(
+        "{{\"message\":\"{}\",\"answer_status\":\"{}\",\"generation_mode\":\"{}\",\"llm_provider\":\"{}\",\"llm_status\":\"{}\",\"llm_text\":{},\"llm_error\":{},\"redacted_output_preview\":{},\"prompt_evidence_bytes\":{},\"retrieval_count\":{},\"facts\":[],\"source_trails\":[],\"assumptions\":{},\"uncertainty\":{},\"missing_information\":{}}}",
+        escape_json(&deterministic.message),
+        answer.answer_status,
+        escape_json(&answer.generation_mode),
+        escape_json(&answer.llm_provider),
+        escape_json(&answer.llm_status),
+        option_string_json(answer.llm_text.as_deref()),
+        option_string_json(answer.llm_error.as_deref()),
+        option_string_json(answer.redacted_output_preview.as_deref()),
+        answer.prompt_evidence_bytes,
+        deterministic.retrieval_context.hits.len(),
+        json_owned_string_array(&deterministic.assumptions),
+        json_owned_string_array(&deterministic.uncertainty),
+        json_owned_string_array(&deterministic.missing_information)
+    )
 }
 
 fn hydrated_vector_retrieval_chunks(
@@ -12989,22 +13228,7 @@ fn evidence_answer_json(body: &str) -> String {
         Ok(config) => answer_with_optional_llm(retrieval_context, &config, &StdHttpTransport),
         Err(error) => deterministic_fallback_for_llm_config_error(retrieval_context, &error),
     };
-    let deterministic = &answer.deterministic_answer;
-    format!(
-        "{{\"message\":\"{}\",\"answer_status\":\"{}\",\"generation_mode\":\"{}\",\"llm_provider\":\"{}\",\"llm_status\":\"{}\",\"llm_text\":{},\"llm_error\":{},\"redacted_output_preview\":{},\"prompt_evidence_bytes\":{},\"facts\":[],\"source_trails\":[],\"assumptions\":{},\"uncertainty\":{},\"missing_information\":{}}}",
-        escape_json(&deterministic.message),
-        answer.answer_status,
-        escape_json(&answer.generation_mode),
-        escape_json(&answer.llm_provider),
-        escape_json(&answer.llm_status),
-        option_string_json(answer.llm_text.as_deref()),
-        option_string_json(answer.llm_error.as_deref()),
-        option_string_json(answer.redacted_output_preview.as_deref()),
-        answer.prompt_evidence_bytes,
-        json_owned_string_array(&deterministic.assumptions),
-        json_owned_string_array(&deterministic.uncertainty),
-        json_owned_string_array(&deterministic.missing_information)
-    )
+    evidence_grounded_answer_json(&answer)
 }
 
 fn json_response(
