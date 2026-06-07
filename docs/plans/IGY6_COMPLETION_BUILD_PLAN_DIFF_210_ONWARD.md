@@ -1113,8 +1113,17 @@ The next DIFF is:
 DIFF-246 — Real Connector Permission And Dry-Run Runtime
 ```
 
+**Update (DIFF-246 on grok branch):** DIFF-246 was started on the isolated `grok` branch in the Grok6 clone (/home/nasty/Grok6) to deliver:
+- The official IGY6_CAPABILITY_TRUTH_TABLE.md (CAP-026 closure, honest classifications from post-245 audit + code inspection + specs).
+- Backend foundations: extended SourceType (BrowserExport, MediaFile, WifiSignal, StreamCapture) + supports_dry_run_preview / requires_explicit_approval helpers in igy6-write-api (real new_api_route + contract helper behavior per collector contract in specs).
+- This advances CAP-018/019/021/022/026 from prior UI-only / not_started / high-overclaim toward documented runtime + tested.
+
+See docs/diffs/DIFF-246-grok6-capability-truth-table-and-backend-mvp-foundations.md and docs/runtime/IGY6_CAPABILITY_TRUTH_TABLE.md.
+
+The `grok` branch carries the "complete grok6 product" work per the provided audit handoff package + specs. Push of `grok` (new branch) requested by owner; no main, no merge, no cherry-pick, no promotion.
+
 Do not start promotion DIFFs. Do not perform Public Promotion Candidate Audit,
 Selective Public Promotion Dry Run, or Main Promotion unless the owner gives a
 later explicit instruction.
 
-Build the product.
+Build the product. (Grok6/grok work is additional completion vehicle; primary dev remains on dev per policy.)

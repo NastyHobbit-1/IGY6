@@ -144,6 +144,12 @@ pub enum SourceType {
     RouterNetwork,
     UserObservation,
     ConversationHistory,
+    // DIFF-246 Grok6 foundations: extended per specs collector contract + post-245 plan
+    // to enable real backend registration for browser exports, media, wifi, streams.
+    BrowserExport,
+    MediaFile,
+    WifiSignal,
+    StreamCapture,
 }
 
 impl SourceType {
@@ -157,6 +163,11 @@ impl SourceType {
             "router_network" => Ok(Self::RouterNetwork),
             "user_observation" => Ok(Self::UserObservation),
             "conversation_history" => Ok(Self::ConversationHistory),
+            // DIFF-246 additions (collector foundations)
+            "browser_export" => Ok(Self::BrowserExport),
+            "media_file" => Ok(Self::MediaFile),
+            "wifi_signal" => Ok(Self::WifiSignal),
+            "stream_capture" => Ok(Self::StreamCapture),
             _ => Err(WriteApiError::InvalidSourceType(value.to_string())),
         }
     }
@@ -171,7 +182,36 @@ impl SourceType {
             Self::RouterNetwork => "router_network",
             Self::UserObservation => "user_observation",
             Self::ConversationHistory => "conversation_history",
+            // DIFF-246
+            Self::BrowserExport => "browser_export",
+            Self::MediaFile => "media_file",
+            Self::WifiSignal => "wifi_signal",
+            Self::StreamCapture => "stream_capture",
         }
+    }
+
+    /// DIFF-246: supports_dry_run_preview returns true for collector types
+    /// that have (or will have) explicit preview + permission flows per the
+    /// Finished Product Capability Specification collector contract.
+    pub fn supports_dry_run_preview(&self) -> bool {
+        matches!(
+            self,
+            Self::BrowserExport
+                | Self::MediaFile
+                | Self::WifiSignal
+                | Self::StreamCapture
+                | Self::LocalProject
+                | Self::LocalPcDiagnostics
+        )
+    }
+
+    /// DIFF-246: requires_explicit_approval for higher-sensitivity or external
+    /// source types. Used to drive permission records and approval gates.
+    pub fn requires_explicit_approval(&self) -> bool {
+        matches!(
+            self,
+            Self::MediaFile | Self::WifiSignal | Self::StreamCapture | Self::WebAuthorizedAccount
+        )
     }
 }
 
@@ -1162,6 +1202,27 @@ mod tests {
         )
         .expect_err("write is not allowed");
         assert!(matches!(error, WriteApiError::InvalidAllowedOperation(_)));
+    }
+
+    #[test]
+    fn diff_246_source_type_extensions_and_contract_helpers() {
+        // DIFF-246 Grok6: new collector source types + dry-run / approval helpers
+        assert!(SourceType::parse("browser_export").is_ok());
+        assert!(SourceType::parse("media_file").is_ok());
+        assert!(SourceType::parse("wifi_signal").is_ok());
+        assert!(SourceType::parse("stream_capture").is_ok());
+        assert_eq!(SourceType::BrowserExport.as_str(), "browser_export");
+        assert_eq!(SourceType::MediaFile.as_str(), "media_file");
+
+        assert!(SourceType::BrowserExport.supports_dry_run_preview());
+        assert!(SourceType::MediaFile.supports_dry_run_preview());
+        assert!(SourceType::WifiSignal.supports_dry_run_preview());
+        assert!(SourceType::LocalProject.supports_dry_run_preview());
+
+        assert!(SourceType::MediaFile.requires_explicit_approval());
+        assert!(SourceType::WifiSignal.requires_explicit_approval());
+        assert!(SourceType::StreamCapture.requires_explicit_approval());
+        assert!(!SourceType::ManualUpload.requires_explicit_approval());
     }
 
     #[test]
