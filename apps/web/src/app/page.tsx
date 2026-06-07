@@ -486,7 +486,7 @@ const TERM_HELP: Record<string, TermHelpContent> = {
     explanation: "Graph Memory stores relationship and lineage foundation data, such as how sources, artifacts, documents, chunks, evidence, and reports connect.",
     manage: "Review graph schema status in Data & Knowledge and Neo4j settings in Settings.",
     purpose: "It prepares IGY6 for relationship inspection and evidence lineage.",
-    warning: "This is not full autonomous graph reasoning yet."
+    warning: "This is lineage and relationship support, not advanced graph reasoning."
   },
   neo4j: {
     title: "Neo4j",
@@ -520,14 +520,14 @@ const TERM_HELP: Record<string, TermHelpContent> = {
     title: "Evidence Answer",
     explanation: "Evidence Answer creates an evidence-grounded answer from local retrieved evidence.",
     manage: "Use Assistant evidence controls or the chat evidence-answer API.",
-    purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic backup answers.",
+    purpose: "It preserves local facts, assumptions, uncertainty, citations, source trails, and deterministic fallback answers.",
     warning: "Local LLM generation is optional, disabled by default, evidence-required, and falls back deterministically when unavailable."
   },
   localLlm: {
     title: "Local LLM",
     explanation: "Local LLM means optional Ollama generation running on this machine, not a cloud model.",
     manage: "Review provider, model, timeout, and evidence-required state in Settings.",
-    purpose: "It can draft evidence-grounded wording from retrieved evidence while preserving deterministic backup answers.",
+    purpose: "It can draft evidence-grounded wording from retrieved evidence while preserving deterministic fallback answers.",
     warning: "It must not execute actions, bypass approvals, or answer without evidence."
   },
   deterministic: {
@@ -5086,16 +5086,16 @@ function LifecycleAuditStatusPanel({
 }) {
   const envHas = (key: string) => envSettings.data.settings.find((setting) => setting.key === key)?.has_value ?? false;
   const dataClasses = [
-    { label: "sources", count: sources.data.length, backup: "yes", export: "metadata", restore: "future", deletion: "future explicit DIFF" },
-    { label: "permissions/approvals", count: approvals.data.length, backup: "yes", export: "audit metadata", restore: "future", deletion: "restricted" },
-    { label: "raw artifacts", count: artifacts.data.length, backup: "optional sensitive", export: "owner-selected only", restore: "future", deletion: "dangerous" },
-    { label: "documents/chunks", count: documents.data.length + chunks.data.length, backup: "yes", export: "metadata/previews", restore: "future rebuild", deletion: "dangerous" },
-    { label: "evidence/claims/answers", count: evidenceItems.data.length + claims.data.length + evidenceAnswers.data.length, backup: "yes", export: "citation metadata", restore: "future", deletion: "dangerous" },
-    { label: "feedback/outcomes", count: feedback.data.length + outcomes.data.length, backup: "yes", export: "review metadata", restore: "future", deletion: "restricted" },
-    { label: "work/task records", count: workItems.data.length + taskPlans.data.length, backup: "yes", export: "metadata", restore: "future", deletion: "restricted" },
-    { label: "reports", count: reports.data.length, backup: "yes", export: "markdown if rendered", restore: "future", deletion: "future explicit DIFF" },
-    { label: "patterns/predictions/recommendations", count: patterns.data.length + hypotheses.data.length + predictions.data.length + recommendations.data.length, backup: "yes", export: "analysis metadata", restore: "future", deletion: "restricted" },
-    { label: "improvements/experiments", count: improvements.data.length + experiments.data.length, backup: "metadata plus artifacts", export: "metadata", restore: "future", deletion: "restricted" }
+    { label: "sources", count: sources.data.length, backup: "metadata export MVP", export: "metadata", restore: "dry-run validation only", deletion: "future explicit DIFF" },
+    { label: "permissions/approvals", count: approvals.data.length, backup: "metadata export MVP", export: "audit metadata", restore: "dry-run validation only", deletion: "restricted" },
+    { label: "raw artifacts", count: artifacts.data.length, backup: "not in MVP", export: "metadata only", restore: "future", deletion: "dangerous" },
+    { label: "documents/chunks", count: documents.data.length + chunks.data.length, backup: "metadata export MVP", export: "content excluded", restore: "dry-run validation only", deletion: "dangerous" },
+    { label: "evidence/claims/answers", count: evidenceItems.data.length + claims.data.length + evidenceAnswers.data.length, backup: "metadata export MVP", export: "content excluded", restore: "dry-run validation only", deletion: "dangerous" },
+    { label: "feedback/outcomes", count: feedback.data.length + outcomes.data.length, backup: "metadata export MVP", export: "review metadata", restore: "dry-run validation only", deletion: "restricted" },
+    { label: "work/task records", count: workItems.data.length + taskPlans.data.length, backup: "metadata export MVP", export: "metadata", restore: "dry-run validation only", deletion: "restricted" },
+    { label: "reports", count: reports.data.length, backup: "metadata export MVP", export: "metadata; raw markdown excluded", restore: "dry-run validation only", deletion: "future explicit DIFF" },
+    { label: "patterns/predictions/recommendations", count: patterns.data.length + hypotheses.data.length + predictions.data.length + recommendations.data.length, backup: "metadata export MVP", export: "analysis metadata", restore: "dry-run validation only", deletion: "restricted" },
+    { label: "improvements/experiments", count: improvements.data.length + experiments.data.length, backup: "metadata export MVP", export: "metadata", restore: "dry-run validation only", deletion: "restricted" }
   ];
   const lifecycleReadiness = [
     { label: "IGY6_DATA_ROOT", state: envHas("IGY6_DATA_ROOT") ? "configured" : "not reported", detail: "Root for runtime data. Values are not printed here." },
@@ -5117,7 +5117,7 @@ function LifecycleAuditStatusPanel({
       </div>
       <div className="guidedManualNotice">
         <strong>Audit only.</strong>
-        <span>This panel maps data classes and lifecycle boundaries. It does not delete, restore, create backup archives, dump runtime data, print secrets, or modify `.env`.</span>
+        <span>This panel maps data classes and lifecycle boundaries. It does not delete, restore, create full backup archives, dump runtime data, print secrets, or modify `.env`.</span>
       </div>
       {[sources.error, artifacts.error, documents.error, chunks.error, evidenceItems.error, evidenceAnswers.error, reports.error, envSettings.error, vectorCollection.error, graphSchema.error].filter(Boolean).length > 0 ? (
         <p className="errorText">Some lifecycle inputs could not be loaded; audit counts may be incomplete.</p>
@@ -5137,7 +5137,7 @@ function LifecycleAuditStatusPanel({
               <article className="item evidenceItem" key={item.label}>
                 <div>
                   <strong>{item.label}</strong>
-                  <span>Backup: {item.backup} · Export: {item.export}</span>
+                  <span>Backup/export: {item.backup} · Export detail: {item.export}</span>
                   <span>Restore: {item.restore} · Delete: {item.deletion}</span>
                 </div>
                 <div><StatusPill state={`${item.count}-records`} /></div>
@@ -5168,8 +5168,8 @@ function LifecycleAuditStatusPanel({
           <div className="subHeader"><h3>Dangerous Future Work</h3></div>
           <div className="stack">
             <article className="item evidenceItem"><div><strong>Destructive delete</strong><span>Requires explicit future DIFF, confirmation, audit event, and dependency review.</span></div><StatusPill state="not-implemented" /></article>
-            <article className="item evidenceItem"><div><strong>Restore</strong><span>Requires compatibility checks, conflict handling, and rollback plan before implementation.</span></div><StatusPill state="not-implemented" /></article>
-            <article className="item evidenceItem"><div><strong>Backup archive</strong><span>No archive is created in this DIFF; future backups need secret exclusion and raw-artifact policy.</span></div><StatusPill state="not-created" /></article>
+            <article className="item evidenceItem"><div><strong>Restore</strong><span>Current restore support is dry-run validation only; writing runtime records still needs a future explicit DIFF.</span></div><StatusPill state="dry-run-only" /></article>
+            <article className="item evidenceItem"><div><strong>Full backup archive</strong><span>Metadata export exists; full backup archives for raw artifacts and service stores still need secret exclusion and raw-artifact policy.</span></div><StatusPill state="future-diff" /></article>
           </div>
         </div>
       </section>

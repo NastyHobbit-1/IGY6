@@ -527,12 +527,15 @@ Safety, Approvals, And Policy:
 - External model policy shows the local-first default.
 - Backup, Restore, Export, and Delete Audit maps current data classes,
   configured lifecycle paths, vector/graph store visibility, exclusions, and
-  dangerous future work. It is non-destructive and does not create backup
-  archives, delete data, restore data, print secrets, dump runtime/private data,
-  or edit `.env`.
+  dangerous future work. The panel itself is non-destructive and does not create
+  full backup archives, delete data, restore data, print secrets, dump
+  runtime/private data, or edit `.env`.
+- Metadata-only local export and restore dry-run validation exist as lifecycle
+  scripts. They are not complete service backups or destructive restore
+  workflows.
 - Lifecycle audit treats secrets and `.env` as excluded from product exports.
-  Raw artifacts are sensitive and should only be included by future
-  owner-selected backup/export flows with explicit warnings.
+  Raw artifacts are sensitive and are excluded from the metadata export MVP;
+  future owner-selected backup/export flows need explicit warnings.
 
 Approvals:
 
@@ -839,6 +842,7 @@ operator docs or scripts.
   is completed.
 - Empty states are real empty states, not demo placeholders.
 - Advanced controls may require exact IDs and approvals.
-- Reports, graph reasoning, forecasting, and self-improvement workflows are
-  only as complete as their current API-backed records and later DIFFs make
-  them.
+- Report, graph, prediction/recommendation, and improvement workflows are
+  implemented only to the extent supported by their current API-backed records
+  and later DIFFs; advanced graph reasoning, forecasting engines, and
+  autonomous self-improvement are not claimed.

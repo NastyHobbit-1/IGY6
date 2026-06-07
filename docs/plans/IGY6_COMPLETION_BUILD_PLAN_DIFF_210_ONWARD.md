@@ -7,7 +7,9 @@ Promotion branch: `main` only by explicit owner instruction
 
 ## 1. Purpose
 
-This document defines the build path from DIFF-210 to a complete IGY6 product.
+This document defines the build path from DIFF-210 toward the intended IGY6
+product. It is a completion target, not a claim that the current product is
+complete.
 
 IGY6 is not just a chatbot and not just a RAG demo. The product goal is a private, local-first adaptive intelligence system that can ingest trusted information, turn it into traceable evidence, reason over that evidence, plan safe work, ask for approval, execute bounded supported actions, record outcomes, and improve its methods through controlled user-approved feedback loops.
 
