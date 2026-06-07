@@ -212,7 +212,10 @@ Current biggest product gaps:
 12. Backup/restore/export/delete
 13. Graph lineage/entity/claim extraction
 14. Pattern expansion
-15. Main/public promotion pipeline
+15. Source/media/collector expansion
+16. Graph, pattern, prediction, and improvement expansion
+17. Guardrails, lifecycle hardening, and release readiness
+18. Main/public promotion pipeline, deferred until explicit owner instruction
 
 ## 8. Ordered DIFF Plan
 
@@ -540,46 +543,198 @@ Scope:
 - unsupported capability warnings
 - remove/soften claims not implemented
 
-### DIFF-234 — Public Promotion Candidate Audit
+### DIFF-234 — Defer Promotion And Consolidate Next Build Phase
 
-Purpose: Identify safe files for `main`.
-
-Scope:
-
-- compare `origin/main..dev`
-- classify changed files
-- public/runtime-safe
-- dev-only
-- needs review
-- do not promote
-- no promotion
-
-### DIFF-235 — Selective Public Promotion Dry Run
-
-Purpose: Test applying only public-safe files to a promotion branch.
+Purpose: Defer promotion and replace the old promotion sequence with the next
+consolidated product-build phase.
 
 Scope:
 
-- create local promotion branch only if owner permits
-- no push
-- no private files
-- build/test
-- report conflicts
+- update this build plan only
+- record owner instruction that promotion is deferred
+- do not perform public promotion audit
+- do not create promotion branches
+- do not touch `main`
+- define DIFF-235 through DIFF-244 as the next 10 product-build DIFFs
 
-### DIFF-236 — Main Promotion
+### DIFF-235 — Source Expansion And Connector Contract Foundation
 
-Purpose: Owner-approved selective promotion to `main`.
+Purpose: Define and implement the foundation for additional source types and
+connector behavior.
 
 Scope:
 
-- only audited public/runtime-safe files
-- no dev DIFF records unless owner explicitly includes them
-- verify build
-- owner approval before push
+- source policy
+- scope validation
+- dry-run requirements
+- connector metadata
+- sensitivity classification
+- cleanup posture
+- audit boundaries
+- do not scrape accounts or browsers directly unless separately implemented in
+  later DIFFs
 
-## 9. Larger Post-MVP Blocks
+### DIFF-236 — Browser / Web / Router Collector MVP
 
-After DIFF-236, continue with larger product areas.
+Purpose: Add controlled browser/web/router collection MVPs with explicit user
+scope, dry-run preview, read-only default, audit events, and no hidden
+collection.
+
+Scope:
+
+- browser/web/router collector contracts and safe UI/API paths where scoped
+- explicit user scope and dry-run preview before collection
+- read-only default behavior
+- audit events for collection attempts and decisions
+- no cookies, tokens, credentials, or private account data unless a later
+  explicitly scoped permission model supports it
+- no hidden collection
+
+### DIFF-237 — PDF / Image / Audio / Video Import MVP
+
+Purpose: Add media import foundations for common document/media types.
+
+Scope:
+
+- PDF text extraction only where local, safe, and verified
+- image OCR only where local, safe, and verified
+- audio transcription only where local, safe, and verified
+- video transcription only where local, safe, and verified
+- honest unsupported states for formats, codecs, file sizes, and missing local
+  tools
+- no hosted AI or hidden external transfer
+
+### DIFF-238 — Local Project And PC Diagnostics Collector Hardening
+
+Purpose: Improve local project collection and add authorized PC diagnostics
+import.
+
+Scope:
+
+- explicit user-selected paths/files
+- dry-run preview
+- path traversal and scope boundaries
+- no arbitrary filesystem crawling
+- diagnostics import as user-authorized records
+- safe redaction and audit posture
+
+### DIFF-239 — Graph Extraction And Relationship Reasoning Foundation
+
+Purpose: Expand entity, claim, event, and relationship extraction with
+provenance and review status.
+
+Scope:
+
+- entity, claim, event, and relationship extraction improvements
+- provenance links to source/artifact/document/chunk/evidence
+- review status and trust posture
+- graph/lineage explanation improvements
+- no claim of full graph reasoning
+
+### DIFF-240 — Pattern / Conflict / Drift / Anomaly Expansion
+
+Purpose: Expand pattern detection to recurrence, missing-information gaps,
+cross-source agreement/conflict, configuration drift, anomaly signals,
+failed-advice recurrence, and successful-method recurrence.
+
+Scope:
+
+- recurrence
+- missing-information gaps
+- cross-source agreement and conflict
+- configuration drift
+- anomaly signals
+- failed-advice recurrence
+- successful-method recurrence
+- do not claim advanced statistical validation unless implemented
+
+### DIFF-241 — Prediction / Recommendation Generation And Calibration MVP
+
+Purpose: Improve prediction/recommendation generation, evidence links,
+uncertainty, confidence, disproof criteria, outcome tracking, and calibration
+review.
+
+Scope:
+
+- evidence-linked prediction/recommendation generation
+- uncertainty and confidence display
+- disproof criteria and expected result capture
+- outcome tracking
+- calibration review
+- no automatic recommendation execution
+
+### DIFF-242 — Self-Improvement Experiment Workflow MVP
+
+Purpose: Implement the controlled self-improvement workflow from improvement
+item to experiment proposal, run/dry-run metadata, success criteria, result
+comparison, and approval-gated accepted method.
+
+Scope:
+
+- improvement item to experiment proposal flow
+- run/dry-run metadata
+- success criteria
+- result comparison
+- approval-gated accepted method records
+- no autonomous self-modification
+
+### DIFF-243 — Guardrails / Tool-Use / External-Model Policy Hardening
+
+Purpose: Add stronger prompt-injection, tool-use, approval, external-model, and
+hosted-service policy checks.
+
+Scope:
+
+- prompt-injection checks
+- tool-use guardrails
+- approval hardening
+- external-model and hosted-service policy checks
+- sensitive/system-changing actions remain explicit and auditable
+
+### DIFF-244 — Data Lifecycle Hardening And Release Readiness
+
+Purpose: Continue backup/export/restore/delete/retention diagnostics,
+normal-user product smoke, release readiness checks, and claim audits.
+
+Scope:
+
+- backup/export/restore/delete/retention diagnostics
+- normal-user product smoke hardening
+- release readiness checks
+- product claims audits
+- promotion can be reconsidered after this DIFF, but only by explicit owner
+  instruction
+- no promotion, branch switch, merge, cherry-pick, push, or public-file
+  promotion unless the owner explicitly requests a later promotion DIFF
+
+## 9. Promotion Deferral
+
+Promotion is deferred until explicit owner instruction.
+
+The old promotion sequence is removed from the active ordered plan and deferred:
+
+- DIFF-234 — Public Promotion Candidate Audit
+- DIFF-235 — Selective Public Promotion Dry Run
+- DIFF-236 — Main Promotion
+
+Future promotion audit, selective promotion dry-run, and main promotion work
+will be rescheduled later only if the owner explicitly requests it.
+
+Promotion rules remain:
+
+- do not merge `dev` into `main`;
+- do not cherry-pick broad dev commits into `main`;
+- do not touch `main` during product-build DIFFs;
+- do not create promotion branches without explicit owner instruction;
+- selectively promote only necessary public/runtime-safe files later, when the
+  owner requests it;
+- keep private/dev/build instruction files on `dev`.
+
+## 10. Larger Post-MVP Blocks
+
+After DIFF-244, promotion may be reconsidered only by explicit owner
+instruction. Product expansion should continue through scoped DIFFs unless the
+owner requests a promotion audit.
 
 ### Source Expansion
 
@@ -630,7 +785,7 @@ After DIFF-236, continue with larger product areas.
 - action sandbox policy
 - audit event coverage
 
-## 10. Realistic DIFF Count From DIFF-210
+## 11. Realistic DIFF Count From DIFF-210
 
 These counts assume small, reviewable, verifiable DIFFs.
 
@@ -646,9 +801,11 @@ Full original adaptive-intelligence product from DIFF-210:
 
 - about 90 to 150 more DIFFs
 
-Do not compress these estimates unless DIFF size increases and risk tolerance changes.
+DIFF-235 through DIFF-244 intentionally consolidate the next major product
+areas into 10 larger build DIFFs. Each must still stay scoped, verifiable, and
+honest about unsupported states.
 
-## 11. Prompt Template For Future Product DIFFs
+## 12. Prompt Template For Future Product DIFFs
 
 Use this template for each future DIFF.
 
@@ -739,16 +896,16 @@ Final response must include:
 - confirmation no main work, merge, cherry-pick, push, fake controls, arbitrary command execution, .env edit, or runtime/private data dump
 ```
 
-## 12. Immediate Next Action
+## 13. Immediate Next Action
 
 The next DIFF is:
 
 ```text
-DIFF-210 — Source Trust And Sensitivity Management UX
+DIFF-235 — Source Expansion And Connector Contract Foundation
 ```
 
-Do not use the prior DIFF-210 smoke coverage prompt.
-
-Do not create more smoke tooling right now.
+Do not start promotion DIFFs. Do not perform Public Promotion Candidate Audit,
+Selective Public Promotion Dry Run, or Main Promotion unless the owner gives a
+later explicit instruction.
 
 Build the product.
