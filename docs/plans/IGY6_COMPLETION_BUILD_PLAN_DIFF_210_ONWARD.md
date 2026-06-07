@@ -113,7 +113,8 @@ For every DIFF, classify what was actually added:
 4. New API route
 5. New persistence/schema
 6. New worker/runtime behavior
-7. Live-stack verified behavior
+7. Script/lifecycle behavior
+8. Live-stack verified behavior
 
 Do not describe a larger feature as complete unless these are true:
 
@@ -707,6 +708,189 @@ Scope:
 - no promotion, branch switch, merge, cherry-pick, push, or public-file
   promotion unless the owner explicitly requests a later promotion DIFF
 
+### DIFF-245 — Post-244 Capability Integrity Audit And Next Build Phase Plan
+
+Purpose: Audit the actual capability state after DIFF-240 through DIFF-244,
+prevent false-complete drift, and define the next product-build sequence.
+
+Scope:
+
+- classify DIFF-240 through DIFF-244 by actual behavior added
+- distinguish backend/API/script behavior from UI/docs-only surfaces
+- record live-stack verification still pending owner WSL smoke
+- confirm DIFF-235 through DIFF-239 were UI/docs-only control surfaces
+- extend the active plan with DIFF-246 through DIFF-255
+- no runtime implementation, branch promotion, merge, cherry-pick, push, or
+  main work
+
+### DIFF-246 — Real Connector Permission And Dry-Run Runtime
+
+Purpose: Convert connector policy/status surfaces into a real bounded
+connector permission and dry-run runtime foundation.
+
+Scope:
+
+- inspect source permissions, approvals, audit events, collection runs, and
+  DIFF-235 connector contract wording
+- add or harden backend/API support for connector scope validation, dry-run
+  requests, sensitivity classification metadata, and audit records
+- require explicit user scope and approval posture for connector-backed source
+  types
+- keep future collectors disabled unless their backend path exists
+- no browser/account scraping, credential collection, hidden collection, or
+  external service transfer
+
+### DIFF-247 — Browser/Web/Router Import Backend MVP
+
+Purpose: Add the safest backend MVP for browser, web, and router import flows.
+
+Scope:
+
+- prefer manual paste/upload of browser page text exports, web page text, and
+  router diagnostic text unless safe bounded fetch support already exists
+- create backend/API dry-run and import records with explicit scope,
+  exclusions, sensitivity posture, approval state, and audit events
+- preserve source/artifact/document/chunk/evidence lineage for imported text
+  where the pipeline supports it
+- no cookies, tokens, credentials, browser profile reads, account scraping,
+  website crawling, network scanning, router writes, or hidden external
+  requests
+
+### DIFF-248 — Media Import Backend MVP
+
+Purpose: Add local, safe backend support for media import metadata and the
+smallest verified extraction path.
+
+Scope:
+
+- inspect current artifact handling, normalization, chunking, evidence
+  creation, file type checks, and DIFF-237 UI status surface
+- implement bounded metadata persistence and one verified local extraction path
+  where safe, preferably PDF text extraction if a local dependency/path already
+  exists
+- mark image OCR, audio transcription, and video transcription unsupported or
+  planned unless local safe tooling is implemented and tested
+- enforce file size/type bounds and preserve lineage
+- no hosted OCR/transcription APIs, hidden transfer, unbounded binary parsing,
+  or raw media dumps
+
+### DIFF-249 — Local Project/Diagnostics Import Backend MVP
+
+Purpose: Add backend support for authorized local project manifests and PC
+diagnostics imports without arbitrary filesystem crawling.
+
+Scope:
+
+- inspect local_project source behavior, diagnostics scripts, source
+  permissions, approvals, dry-runs, and DIFF-238 UI surface
+- support explicit user-provided manifests/diagnostic exports and bounded
+  dry-run/import records
+- redact private paths and secret-shaped fields before persistence where
+  practical
+- preserve lineage when imported into the evidence pipeline
+- no live system probing, command execution, arbitrary path reads, recursive
+  crawling, `.env`, SSH key, browser profile, token, cookie, or credential
+  collection
+
+### DIFF-250 — Graph Entity/Claim/Event Persistence And Review
+
+Purpose: Move graph/entity/claim/event/relationship review beyond UI-only
+candidate rows into scoped persisted records.
+
+Scope:
+
+- inspect current claim records, entity/event candidates, relationship review
+  surfaces, Neo4j posture, evidence lineage, and DIFF-239 outcome
+- add minimal persistence/API behavior for entity, claim, event, or
+  relationship review records with provenance and review status
+- require source/evidence/chunk/document links where available
+- use Neo4j only if the current sync path is safe and verified; otherwise use
+  relational persistence and state that full graph reasoning remains incomplete
+- no hosted AI, correlation discovery claim, raw evidence mutation, or full
+  graph reasoning claim
+
+### DIFF-251 — Pattern Detection Persistence And Review Hardening
+
+Purpose: Harden DIFF-240 baseline pattern detection into safer persisted
+review workflow behavior.
+
+Scope:
+
+- inspect persisted pattern records, detector metadata, review status, linked
+  evidence/outcome/source IDs, and UI review flow
+- improve duplicate handling, detector keys, review-state transitions, and
+  evidence/source support summaries
+- add tests for validation and persistence paths where gaps exist
+- keep categories baseline and descriptive only
+- no advanced statistical validation, forecasting, causality, or automatic
+  behavior changes
+
+### DIFF-252 — Prediction/Recommendation Persistence And Outcome Calibration Hardening
+
+Purpose: Harden prediction/recommendation persistence, outcome linkage, and
+descriptive calibration review.
+
+Scope:
+
+- inspect DIFF-241 calibration summary, DIFF-222/223 creation/outcome behavior,
+  outcome records, evidence links, and UI review flow
+- improve validation of confidence, uncertainty, expected result, disproof
+  criteria, timeframe, outcome status, and calibration status
+- strengthen record/outcome linkage and descriptive confidence-band summaries
+- add tests for backend validation and calibration helper behavior
+- no forecasting engine claim, advanced calibration claim, or automatic
+  recommendation execution
+
+### DIFF-253 — Self-Improvement Experiment Persistence And Approval Hardening
+
+Purpose: Harden the DIFF-242 experiment proposal workflow and approval-gated
+accepted-method path.
+
+Scope:
+
+- inspect improvement items, experiment proposal records, approvals, accepted
+  method metadata, outcome records, and result comparison fields
+- improve proposal validation, status transitions, accepted/rejected/deferred
+  handling, and approval lookup behavior
+- add tests for rejection paths and accepted-method approval requirements
+- keep experiment execution manual or dry-run unless a later DIFF implements a
+  bounded approved executor
+- no autonomous self-modification, self-editing, method auto-promotion, MLflow
+  run creation, Optuna study creation, Phoenix trace workflow, or hosted AI
+
+### DIFF-254 — Guardrail Policy Test Matrix And Enforcement Hardening
+
+Purpose: Expand DIFF-243 guardrails into a clearer policy matrix with stronger
+tests and enforcement.
+
+Scope:
+
+- inspect agent intent classification, action registry, approvals, policy
+  crate, local LLM routing, and UI safety posture
+- add a test matrix for prompt injection, hosted/external model requests,
+  secret exfiltration, raw commands, dangerous action wording, approval
+  requirements, and unsupported actions
+- improve backend policy response details and enforcement where gaps are found
+- ensure sensitive/system-changing actions stay explicit and auditable
+- no new dangerous tools, shell execution, hosted AI enablement, `.env` edits,
+  or hidden external transfer
+
+### DIFF-255 — Release Readiness Runtime Verification And Gap Closure
+
+Purpose: Use the owner-run smoke posture and Codex-safe checks to close the
+highest-risk lifecycle/release-readiness gaps without promotion.
+
+Scope:
+
+- inspect DIFF-244 release-readiness checklist, lifecycle scripts, diagnostics,
+  product smoke, and owner-provided WSL smoke result if available
+- close scoped gaps in export validation, restore dry-run validation,
+  diagnostics redaction, product smoke checklist, claims audit, or release
+  readiness docs
+- record what is live-stack verified versus Codex-only verified
+- do not promote, touch `main`, merge, cherry-pick, push, delete runtime data,
+  restore runtime data, or create unsafe backup archives
+
 ## 9. Promotion Deferral
 
 Promotion is deferred until explicit owner instruction.
@@ -732,9 +916,34 @@ Promotion rules remain:
 
 ## 10. Larger Post-MVP Blocks
 
-After DIFF-244, promotion may be reconsidered only by explicit owner
-instruction. Product expansion should continue through scoped DIFFs unless the
-owner requests a promotion audit.
+After DIFF-245, promotion remains deferred until explicit owner instruction.
+Product expansion continues through DIFF-246 through DIFF-255 unless the owner
+requests a different product build sequence. Do not start promotion audit,
+promotion dry-run, main promotion, public-file promotion, promotion branches,
+main work, merges, cherry-picks, or pushes without explicit owner instruction.
+
+DIFF-235 through DIFF-239 were UI/docs-only control surfaces. They established
+visible source/connector, browser/web/router, media, local project/diagnostics,
+and graph review posture, but they did not add backend collector runtime,
+media parsing runtime, filesystem diagnostics collection, or persisted graph
+relationship extraction behavior.
+
+DIFF-240 through DIFF-244 added some real backend/API/script behavior:
+
+- DIFF-240 added Rust gateway baseline pattern detection expansion.
+- DIFF-241 added Rust gateway calibration summary read behavior.
+- DIFF-242 added Rust gateway experiment proposal persistence workflow.
+- DIFF-243 added Rust agent/gateway policy hardening.
+- DIFF-244 added lifecycle/release-readiness script behavior.
+
+These behaviors passed Codex-safe build/test/script checks, but full live-stack
+verification remains pending owner WSL smoke unless a later DIFF records an
+owner-provided successful result.
+
+DIFF-246 through DIFF-255 should prefer real backend/API/script/persistence or
+runtime behavior over UI-only surfaces. UI-only DIFFs are allowed only when the
+DIFF record proves backend work is unsafe, too broad for the DIFF, or already
+complete and adequately verified.
 
 ### Source Expansion
 
@@ -801,9 +1010,9 @@ Full original adaptive-intelligence product from DIFF-210:
 
 - about 90 to 150 more DIFFs
 
-DIFF-235 through DIFF-244 intentionally consolidate the next major product
-areas into 10 larger build DIFFs. Each must still stay scoped, verifiable, and
-honest about unsupported states.
+DIFF-235 through DIFF-244 intentionally consolidated one major product phase.
+DIFF-246 through DIFF-255 define the next product-build phase. Each must still
+stay scoped, verifiable, and honest about unsupported states.
 
 ## 12. Prompt Template For Future Product DIFFs
 
@@ -901,7 +1110,7 @@ Final response must include:
 The next DIFF is:
 
 ```text
-DIFF-235 — Source Expansion And Connector Contract Foundation
+DIFF-246 — Real Connector Permission And Dry-Run Runtime
 ```
 
 Do not start promotion DIFFs. Do not perform Public Promotion Candidate Audit,
