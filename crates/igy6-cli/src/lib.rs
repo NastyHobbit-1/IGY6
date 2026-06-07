@@ -85,6 +85,7 @@ impl std::error::Error for CliError {}
 enum CommandAction {
     Render(String),
     RunFixedArgv(&'static [&'static str]),
+    StartWithBrowser,
 }
 
 pub fn execute_cli<I>(args: I) -> Result<CliOutcome, CliError>
@@ -97,6 +98,9 @@ where
         CommandAction::Render(output) => Ok(CliOutcome::success(output)),
         CommandAction::RunFixedArgv(argv) => {
             run_fixed_argv(argv, &repo_root, DEFAULT_SCRIPT_TIMEOUT)
+        }
+        CommandAction::StartWithBrowser => {
+            start_stack_and_open_browser(&repo_root)
         }
     }
 }
@@ -122,7 +126,8 @@ where
 {
     let args: Vec<String> = args.into_iter().collect();
     let Some(command) = args.first().map(String::as_str) else {
-        return Ok(CommandAction::Render(help_text()));
+        // Bare `igy6` launches the full program (starts stack + opens browser)
+        return Ok(CommandAction::StartWithBrowser);
     };
 
     match command {
@@ -135,6 +140,11 @@ where
         "run" => {
             require_exact_len(&args, 1, "igy6 run")?;
             Ok(CommandAction::RunFixedArgv(RUN_SCRIPT))
+        }
+        "start" => {
+            require_exact_len(&args, 1, "igy6 start")?;
+            // Special handling below in execute
+            Ok(CommandAction::StartWithBrowser)
         }
         "stop" => {
             require_exact_len(&args, 1, "igy6 stop")?;
@@ -206,9 +216,11 @@ pub fn help_text() -> String {
     format!(
         "IGY6 local Rust CLI\n\n\
 Usage:\n  \
+igy6                 # Start the full stack (detached) + open browser to UI\n  \
+igy6 start           # Same as above\n  \
 igy6 --help\n  \
 igy6 health\n  \
-igy6 run\n  \
+igy6 run             # Foreground logs (old scripts/run.sh behavior)\n  \
 igy6 stop\n  \
 igy6 run-last-healthy\n  \
 igy6 config check\n  \
@@ -364,6 +376,121 @@ pub fn run_fixed_argv(
     }
 }
 
+/// Starts the IGY6 stack in detached mode (triggering bootstrap if needed),
+/// waits for the web UI, then opens the browser. This makes the compiled
+/// `igy6` binary act like a normal executable program.
+/// Works on Linux, macOS, and Windows (requires Docker Desktop on Windows).
+pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliError> {
+    // Cross-platform bootstrap: create .env from example if missing (grok branch defaults)
+    let env_file = repo_root.join(".env");
+    if !env_file.exists() {
+        let example = repo_root.join(".env.example");
+        if example.exists() {
+            fs::copy(&example, &env_file)
+                .map_err(|e| CliError::ProcessLaunch(format!("Failed to copy .env.example: {}", e)))?;
+            
+            // Set grok-friendly defaults
+            let data_dir = dirs::home_dir()
+                .map(|h| h.join("IGY6_Data").to_string_lossy().to_string())
+                .unwrap_or_else(|| "./IGY6_Data".to_string());
+            
+            // Simple in-place edits for key vars
+            let mut content = fs::read_to_string(&env_file)
+                .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env: {}", e)))?;
+            
+            content = content.replace("IGY6_DATA_ROOT=../IGY6_Data", &format!("IGY6_DATA_ROOT={}", data_dir));
+            if !content.contains("SINGLE_USER_MODE=") {
+                content.push_str("\nSINGLE_USER_MODE=true\n");
+            } else {
+                content = content.replace("SINGLE_USER_MODE=false", "SINGLE_USER_MODE=true");
+            }
+            if !content.contains("GROK BRANCH NOTE") {
+                content.push_str(&format!(
+                    "\n# GROK BRANCH NOTE (auto-added by igy6 installer)\n\
+                     # Default program password is ThatDog123 (change in UI User & Security after first unlock).\n\
+                     # All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI.\n\
+                     # Data lives under {} (including full-res images/videos from safe sources only).\n\
+                     # Telemetry disabled.\n",
+                    data_dir
+                ));
+            }
+            
+            fs::write(&env_file, content)
+                .map_err(|e| CliError::ProcessLaunch(format!("Failed to write .env: {}", e)))?;
+            
+            println!("Created .env with grok defaults (password: ThatDog123, data dir: {})", data_dir);
+        }
+    }
+
+    // Start the stack detached (builds if needed). Uses "docker compose" (works on Docker Desktop Windows too)
+    println!("Starting IGY6 stack (detached mode)...");
+    let up_status = Command::new("docker")
+        .args([
+            "compose",
+            "-f",
+            "infra/docker-compose.yml",
+            "--env-file",
+            ".env",
+            "up",
+            "-d",
+            "--build",
+        ])
+        .current_dir(repo_root)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| CliError::ProcessLaunch(format!("docker compose failed: {}", e)))?;
+
+    if !up_status.success() {
+        return Err(CliError::ProcessLaunch("docker compose up -d failed (is Docker running?)".to_string()));
+    }
+
+    // Wait for the web UI (port 3000) to be ready - cross platform TCP check
+    wait_for_port("127.0.0.1", 3000, Duration::from_secs(180))?;
+
+    let url = "http://127.0.0.1:3000";
+    println!("Web UI is ready at {}", url);
+
+    // Open the browser (webbrowser crate handles Windows, Linux, macOS)
+    match webbrowser::open(url) {
+        Ok(_) => println!("Opened browser to the IGY6 UI."),
+        Err(e) => eprintln!("Could not auto-open browser ({}). Please visit {} manually.", e, url),
+    }
+
+    println!("\nIGY6 is running as a compiled executable.");
+    println!("- To view logs: docker compose -f infra/docker-compose.yml --env-file .env logs -f web");
+    println!("- To stop: igy6 stop");
+    println!("- Password for UI: ThatDog123 (change in User & Security section)");
+    println!("- Telemetry is disabled.");
+
+    Ok(CliOutcome::success(format!("Started and opened {}\n", url)))
+}
+
+fn wait_for_port(host: &str, port: u16, timeout: Duration) -> Result<(), CliError> {
+    println!("Waiting for UI on {}:{} (up to {}s)...", host, port, timeout.as_secs());
+    let start = Instant::now();
+    let addr = format!("{}:{}", host, port);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(CliError::ProcessTimeout(format!("UI on {}:{}", host, port)));
+        }
+
+        if let Ok(_) = std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap(),
+            Duration::from_secs(2),
+        ) {
+            // Port is open — give it a couple more seconds for the server to be fully ready
+            std::thread::sleep(Duration::from_secs(3));
+            return Ok(());
+        }
+
+        std::thread::sleep(Duration::from_secs(2));
+        print!(".");
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+    }
+}
+
 pub fn redact_sensitive_output(output: &str) -> String {
     output
         .lines()
@@ -450,6 +577,17 @@ fn require_exact_len(
 }
 
 fn find_repo_root(start: &Path) -> Result<PathBuf, CliError> {
+    // Allow overriding via env var for installed binaries (useful on Windows and for global installs)
+    if let Ok(env_root) = env::var("IGY6_REPO") {
+        let p = PathBuf::from(env_root);
+        if p.join("Cargo.toml").is_file()
+            && p.join("configs/rust-cutover-manifest.json").is_file()
+            && p.join("infra/docker-compose.yml").is_file()
+        {
+            return Ok(p);
+        }
+    }
+
     for candidate in start.ancestors() {
         if candidate.join("Cargo.toml").is_file()
             && candidate

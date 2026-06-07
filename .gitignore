@@ -33,3 +33,6 @@ IGY6_Data/
 
 mlruns/
 *.sqlite
+
+target/
+
