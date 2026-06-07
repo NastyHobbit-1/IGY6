@@ -75,6 +75,47 @@ pub fn detect_content_kind(data: &[u8], filename: Option<&str>) -> ContentKind {
     ContentKind { mime, kind, metadata: meta }
 }
 
+/// On grok branch: deep PDF (and text) extraction.
+/// Returns the extracted text content when possible (real content for evidence/normalized docs),
+/// instead of placeholders. This enables "deep pdf collection" and similar for other media types.
+pub fn extract_text_if_possible(data: &[u8], kind: &ContentKind) -> Option<String> {
+    if kind.kind == "pdf" || kind.mime.to_lowercase().contains("pdf") {
+        // Use pdf-extract for real text extraction from PDF (no external binaries needed for basic)
+        match pdf_extract::extract_text_from_mem(data) {
+            Ok(text) if !text.trim().is_empty() => {
+                return Some(text);
+            }
+            _ => {
+                // Fallback to raw if extraction fails (still better than nothing for some PDFs)
+                if let Ok(s) = std::str::from_utf8(data) {
+                    if s.len() > 20 {
+                        return Some(format!("[PDF raw fallback]\n{}", s.chars().take(4000).collect::<String>()));
+                    }
+                }
+            }
+        }
+    }
+
+    if kind.kind == "text" || kind.mime.starts_with("text/") || kind.mime == "application/json" || kind.mime == "text/html" {
+        return std::str::from_utf8(data).ok().map(|s| s.to_string());
+    }
+
+    // For images/audio/video etc., we can return a rich metadata summary as "text" for evidence mining
+    // This covers "some of that nature" – at least description/metadata is extracted and usable for claims/graph.
+    if kind.kind == "image" || kind.kind == "video" || kind.kind == "audio" {
+        let mut desc = format!("Binary {} ({} bytes)", kind.kind, data.len());
+        if let Some(magic) = kind.metadata.get("magic") {
+            desc.push_str(&format!(", magic: {}", magic));
+        }
+        if let Some(fname) = kind.metadata.get("filename") {
+            desc.push_str(&format!(", file: {}", fname));
+        }
+        return Some(desc);
+    }
+
+    None
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactStoreError {
     InvalidDataRoot(String),

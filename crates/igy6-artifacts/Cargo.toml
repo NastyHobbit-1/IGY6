@@ -8,3 +8,4 @@ edition = "2021"
 infer = "0.15"
 walkdir = "2"
 serde_json = "1"
+pdf-extract = "0.7"  # for deep PDF text extraction (grok branch: real content, not placeholder)

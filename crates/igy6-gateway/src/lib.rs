@@ -10,17 +10,16 @@ use std::path::PathBuf;
 use totp_rs::{Algorithm, Secret, TOTP};  // for optional authenticator TOTP (grok, off by default)
 use std::env;
 use std::fmt;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{
     action_definition, classify_agent_intent, understand_user_request, AgentActionDefinition,
     AgentIntentRequest, ACTION_REGISTRY,
 };
-use igy6_artifacts::{ArtifactStore, StoredArtifact};
+use igy6_artifacts::{ArtifactStore, StoredArtifact, extract_text_if_possible};  // grok: now does real deep PDF (and other media) text extraction
 use igy6_evidence_answer::{
     answer_with_optional_llm, answer_with_optional_llm_for_task,
     deterministic_fallback_for_llm_config_error,
@@ -376,9 +375,18 @@ pub fn handle_gateway_request_with_db(
         }
         // User / security on grok branch: password changing + optional authenticator (TOTP, off by default until linked)
         ("GET", "/user/status") => json_response(200, "OK", user_status_json(), false),
-        ("POST", "/user/change-password") => json_response(200, "OK", user_change_password(&request.body)?, false),
-        ("POST", "/user/generate-totp") => json_response(200, "OK", user_generate_totp(&request.body)?, false),
-        ("POST", "/user/confirm-totp") => json_response(200, "OK", user_confirm_totp(&request.body)?, false),
+        ("POST", "/user/change-password") => {
+            let resp_body = user_change_password(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+            json_response(200, "OK", resp_body, false)
+        },
+        ("POST", "/user/generate-totp") => {
+            let resp_body = user_generate_totp(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+            json_response(200, "OK", resp_body, false)
+        },
+        ("POST", "/user/confirm-totp") => {
+            let resp_body = user_confirm_totp(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+            json_response(200, "OK", resp_body, false)
+        },
         ("POST", "/evidence/documents") => {
             evidence_document_create_response(&request.body, database_url)
         }
@@ -1704,15 +1712,20 @@ fn ingest_manual_upload_collection(
 
     // grok branch: synthesize placeholder text_content for non-text or failed-utf8 media/browser/etc sources
     // so the rest of the pipeline (normalized document + chunks + evidence) still runs and produces traceable records.
-    let text_content: String = text_content.unwrap_or_else(|| {
-        let mime = upload.mime_type.as_deref().unwrap_or("application/octet-stream");
-        format!(
-            "[Non-text / binary content registered via grok branch collector foundations]\nsource_type: {}\nMIME: {}\noriginal_size_bytes: {}\nfilename: {}\n\nThis document acts as a provenance stub. Deep extraction (OCR, vision, audio, PDF text, frame analysis, signal processing) is out of scope for the base collector or performed externally and re-ingested as text where authorized.",
-            source.source_type,
-            mime,
-            content.len(),
-            upload.filename.as_deref().unwrap_or("<unknown>")
-        )
+    // grok branch: use real deep extraction for PDF/media when possible (even in manual paths)
+    let kind_for_extract = detect_content_kind(&content, upload.filename.as_deref());
+    let extracted = extract_text_if_possible(&content, &kind_for_extract);
+    let text_content: String = extracted.unwrap_or_else(|| {
+        text_content.unwrap_or_else(|| {
+            let mime = upload.mime_type.as_deref().unwrap_or("application/octet-stream");
+            format!(
+                "[Non-text / binary content registered via grok branch collector foundations]\nsource_type: {}\nMIME: {}\noriginal_size_bytes: {}\nfilename: {}\n\nThis document acts as a provenance stub. (Deep PDF/media extraction attempted.)",
+                source.source_type,
+                mime,
+                content.len(),
+                upload.filename.as_deref().unwrap_or("<unknown>")
+            )
+        })
     });
     let permission =
         load_permission_for_collection(&mut transaction, &upload.source_permission_id)?;
@@ -2136,24 +2149,30 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
 
                     // Create evidence stub for everything
                     let ev_id = generated_record_id("evidence");
-                    let text_fallback = if kind.kind == "text" {
-                        String::from_utf8_lossy(&data).chars().take(8000).collect()
-                    } else {
-                        format!("[binary {} - {} bytes - full content stored as artifact {}]", kind.mime, data.len(), art_id)
-                    };
+                    // grok branch: DEEP PDF (and similar media) collection - use real extraction instead of placeholder
+                    let extracted_text = extract_text_if_possible(&data, &kind);
+                    let text_for_doc = extracted_text.clone().unwrap_or_else(|| {
+                        if kind.kind == "text" {
+                            String::from_utf8_lossy(&data).chars().take(8000).collect()
+                        } else {
+                            format!("[binary {} - {} bytes - full content stored as artifact {}]", kind.mime, data.len(), art_id)
+                        }
+                    });
                     let _ = tx.execute(
                         "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                        &[&ev_id, &art_id, &path.file_name().unwrap_or_default().to_string_lossy().to_string(), &kind.kind, &text_fallback, &meta]
+                        &[&ev_id, &art_id, &path.file_name().unwrap_or_default().to_string_lossy().to_string(), &kind.kind, &text_for_doc, &meta]
                     );
                     evidence_created.push(ev_id.clone());
 
-                    // Aggressive simple mining for claims/relationships (grok full mode)
-                    if let Some(claim) = simple_mine_claim_from_text(&text_fallback, &path.to_string_lossy()) {
+                    // Use the *real* extracted text (PDF text, image metadata, etc.) for aggressive mining
+                    let text_for_mining = extracted_text.as_deref().unwrap_or(&text_for_doc);
+                    if let Some(claim) = simple_mine_claim_from_text(text_for_mining, &path.to_string_lossy()) {
                         graph_candidates.push(serde_json::json!({
                             "type": "claim",
                             "text": claim,
                             "source_artifact": art_id,
-                            "from_full_access": true
+                            "from_full_access": true,
+                            "extracted": extracted_text.is_some()  // marks that this came from deep extraction (PDF etc.)
                         }));
                     }
                     local_files += 1;
@@ -2215,6 +2234,60 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
             if let Some(s) = item.as_str() {
                 if s.starts_with("http://") || s.starts_with("https://") {
                     if let Ok(resp) = ureq::get(s).timeout(std::time::Duration::from_secs(20)).call() {
+                        // Deep PDF support for direct PDF URLs in web targets (grok)
+                        let is_pdf_url = s.to_lowercase().ends_with(".pdf");
+                        let content_type = resp.header("Content-Type").unwrap_or("").to_lowercase();
+                        let is_pdf_content = content_type.contains("pdf") || is_pdf_url;
+
+                        if is_pdf_content {
+                            // Fetch as raw bytes for PDF deep extraction
+                            let mut pdf_bytes = Vec::new();
+                            {
+                                let mut rdr = resp.into_reader();
+                                let _ = std::io::Read::read_to_end(&mut rdr, &mut pdf_bytes);
+                            }
+                            if !pdf_bytes.is_empty() {
+                                let kind = detect_content_kind(&pdf_bytes, Some(s));
+                                let store = ArtifactStore::new(artifact_data_root()).unwrap();
+                                if let Ok(stored) = store.write_bytes(&pdf_bytes) {
+                                    let art_id = generated_record_id("artifact");
+                                    let meta = serde_json::json!({
+                                        "scraped_url": s,
+                                        "full_access_web": true,
+                                        "deep_scrape": true,
+                                        "mime": kind.mime,
+                                        "kind": kind.kind
+                                    });
+                                    let _ = tx.execute(
+                                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
+                                        &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime.to_string(), &(stored.size_bytes as i64), &meta]
+                                    );
+                                    collected_artifacts.push(art_id.clone());
+                                    web_count += 1;
+
+                                    // Real deep PDF text extraction + evidence
+                                    let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_else(|| format!("[PDF from web {} - {} bytes]", s, pdf_bytes.len()));
+                                    let ev_id = generated_record_id("evidence");
+                                    let _ = tx.execute(
+                                        "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
+                                        &[&ev_id, &art_id, &s, &"pdf".to_string(), &extracted, &meta]
+                                    );
+                                    evidence_created.push(ev_id.clone());
+
+                                    if let Some(claim) = simple_mine_claim_from_text(&extracted, s) {
+                                        graph_candidates.push(serde_json::json!({
+                                            "type": "web_pdf_claim",
+                                            "text": claim,
+                                            "source_artifact": art_id,
+                                            "from_full_access": true
+                                        }));
+                                    }
+                                }
+                            }
+                            continue;  // handled as PDF
+                        }
+
+                        // Normal HTML/text page handling
                         if let Ok(body) = resp.into_string() {
                             let data = body.as_bytes();
                             let store = ArtifactStore::new(artifact_data_root()).unwrap();
@@ -10514,8 +10587,17 @@ fn save_user_config(cfg: &UserConfig) -> Result<(), GatewayError> {
 }
 
 fn get_totp(secret: &str) -> Option<TOTP> {
+    // totp-rs 5.x compatible
     Secret::Encoded(secret.to_string()).to_bytes().ok().and_then(|bytes| {
-        TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes).ok()
+        TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            bytes,
+            None,
+            "grok-user".to_string(),
+        ).ok()
     })
 }
 
@@ -10579,10 +10661,21 @@ fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
         }
     }
 
-    // Generate new secret (standard base32 for any authenticator app)
-    let secret = Secret::generate(20).to_encoded().to_string();
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, Secret::Encoded(secret.clone()).to_bytes().unwrap()).unwrap();
-    let otpauth = totp.get_url("grok-user", "IGY6-grok");
+    // Generate new secret (standard base32 for any authenticator app) - totp-rs 5.x
+    let secret = Secret::generate_secret().to_encoded().to_string();
+    let totp = match TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Encoded(secret.clone()).to_bytes().unwrap(),
+        None,
+        "grok-user".to_string(),
+    ) {
+        Ok(t) => t,
+        Err(_) => return Err(GatewayError::Validation("failed to create TOTP".into())),
+    };
+    let otpauth = totp.get_url();
 
     // Temporarily store pending secret (not enabled until confirmed)
     cfg.totp_secret = Some(secret.clone());

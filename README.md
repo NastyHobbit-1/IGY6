@@ -56,7 +56,7 @@ Everything (full-res media artifacts, evidence, graph in Neo4j, audit, etc.) sta
 
 ## Features
 
-- Deep & thorough collection on any reachable target with original/full-res images & videos fetched directly from source.
+- Deep & thorough collection on any reachable target with original/full-res images & videos fetched directly from source. Real deep PDF text extraction (plus rich metadata for images etc.) turns collected content into proper evidence/claims/graph instead of placeholders.
 - Easy Image & Video Library with full-res modal viewer for all collected media.
 - Password protection with easy changing in the User section.
 - Optional TOTP authenticator (off by default, link with any authenticator app via secret/otpauth — standard TOTP).
