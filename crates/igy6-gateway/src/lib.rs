@@ -78,6 +78,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/approvals/{approval_id}/decision"),
     ("GET", "/artifacts"),
     ("GET", "/artifacts/{artifact_id}"),
+    ("GET", "/artifacts/{artifact_id}/content"),  // grok: for image/video library full res view (base64 for simplicity)
     ("POST", "/artifacts"),
     ("GET", "/audit-events"),
     ("GET", "/audit-events/{audit_event_id}"),
@@ -520,6 +521,8 @@ pub fn handle_gateway_request_with_db(
                 action_route_response(get_graph_node_relationships(&node_label, &node_id))
             } else if let Some(chunk_id) = retrieval_chunk_trail_path(&request.path) {
                 action_route_response(get_retrieval_chunk_trail(&chunk_id, database_url))
+            } else if let Some(id) = artifact_content_path(&request.path) {
+                artifact_content_response(&id, database_url)
             } else if let Some(route) = db_read_route(&request.path) {
                 db_read_response(route, database_url)
             } else {
@@ -616,6 +619,63 @@ fn db_read_route(path: &str) -> Option<DbReadRoute> {
         }),
         _ => db_detail_route(path),
     }
+}
+
+// grok branch: helper to detect artifact content request for image/video library
+fn artifact_content_path(path: &str) -> Option<String> {
+    let p = path.trim_matches('/');
+    if p.starts_with("artifacts/") && p.ends_with("/content") {
+        if let Some(rest) = p.strip_prefix("artifacts/") {
+            if let Some(id) = rest.strip_suffix("/content") {
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn artifact_content_response(id: &str, database_url: Option<&str>) -> GatewayResponse {
+    let database_url = match database_url.filter(|v| !v.trim().is_empty()) {
+        Some(u) => u,
+        None => return json_response(503, "Service Unavailable", "{\"detail\":\"DATABASE_URL required\"}".to_string(), false),
+    };
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = match Client::connect(&postgres_url, NoTls) {
+        Ok(c) => c,
+        Err(e) => return json_response(502, "Bad Gateway", format!("{{\"detail\":\"DB connect error: {}\"}}", e), false),
+    };
+    let row = match client.query_opt(
+        "SELECT content_hash, mime_type, size_bytes FROM raw_artifacts WHERE id = $1 LIMIT 1",
+        &[&id],
+    ) {
+        Ok(Some(r)) => r,
+        Ok(None) => return json_response(404, "Not Found", format!("{{\"detail\":\"Artifact {} not found\"}}", id), false),
+        Err(e) => return json_response(502, "Bad Gateway", format!("{{\"detail\":\"DB query error: {}\"}}", e), false),
+    };
+    let content_hash: String = row.get(0);
+    let mime_type: Option<String> = row.get(1);
+    let size_bytes: Option<i32> = row.get(2);
+    let mime = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    let store = match ArtifactStore::new(artifact_data_root()) {
+        Ok(s) => s,
+        Err(e) => return json_response(500, "Internal Server Error", format!("{{\"detail\":\"Storage error: {}\"}}", e), false),
+    };
+    let bytes = match store.read_by_hash(&content_hash) {
+        Ok(b) => b,
+        Err(e) => return json_response(500, "Internal Server Error", format!("{{\"detail\":\"Read artifact error: {}\"}}", e), false),
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let body = serde_json::json!({
+        "id": id,
+        "mime_type": mime,
+        "size_bytes": size_bytes.unwrap_or(bytes.len() as i32),
+        "base64_content": b64,
+        "data_url_prefix": format!("data:{};base64,", mime),
+        "note": "For <img src=\"data:...\"> or <video src=\"data:...\"> . Full original res from source preserved in artifact."
+    }).to_string();
+    json_response(200, "OK", body, false)
 }
 
 fn db_detail_route(path: &str) -> Option<DbReadRoute> {
@@ -1984,6 +2044,11 @@ fn full_access_collection_response(body: &str, database_url: Option<&str>) -> Ga
 fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     // Payload can be minimal: { "requested_by_actor_id": "...", "scope": "everything" | ["path1", "url:..."] , "source_id" optional }
     let object: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
+    // Password protection for the program (grok branch full access)
+    let provided_pass = object.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    if provided_pass != "ThatDog123" {
+        return Err(GatewayError::Forbidden("Program is password protected. Use password \"ThatDog123\" in payload.password for full access collector.".to_string()));
+    }
     let requested_by = object.get("requested_by_actor_id")
         .and_then(|v| v.as_str())
         .unwrap_or("local-owner")
@@ -2126,13 +2191,14 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     }
     summary["system_snapshots"] = serde_json::json!(sys_count);
 
-    // 3. Web scraping / URL collection if any "url:" in scope or payload
+    // 3. Web scraping / URL collection - DEEP and THOROUGH on grok: fetch page, extract and fetch original/full-res images/videos from their source (prefer data-*, no resize params), complete info + media
     let mut web_count = 0;
+    let mut media_from_web = 0;
     if let Some(scope) = object.get("scope").and_then(|s| s.as_array()) {
         for item in scope {
             if let Some(s) = item.as_str() {
                 if s.starts_with("http://") || s.starts_with("https://") {
-                    if let Ok(resp) = ureq::get(s).timeout(std::time::Duration::from_secs(15)).call() {
+                    if let Ok(resp) = ureq::get(s).timeout(std::time::Duration::from_secs(20)).call() {
                         if let Ok(body) = resp.into_string() {
                             let data = body.as_bytes();
                             let store = ArtifactStore::new(artifact_data_root()).unwrap();
@@ -2140,7 +2206,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 let art_id = generated_record_id("artifact");
                                 let _ = tx.execute(
                                     "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                                    &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"scraped_url": s, "full_access_web": true})]
+                                    &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"scraped_url": s, "full_access_web": true, "deep_scrape": true})]
                                 );
                                 collected_artifacts.push(art_id.clone());
                                 web_count += 1;
@@ -2148,6 +2214,52 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 // Aggressive link/claim mining
                                 for cap in extract_simple_links_and_claims(&body, s) {
                                     graph_candidates.push(cap);
+                                }
+
+                                // Deep thorough media: extract srcs for img/video and fetch original/full res from source
+                                let media_srcs = extract_img_and_video_srcs(&body, s);
+                                for msrc in media_srcs {
+                                    if let Ok(mresp) = ureq::get(&msrc).timeout(std::time::Duration::from_secs(30)).call() {
+                                        let mut mbytes = Vec::new();
+                                        if let Ok(mut rdr) = mresp.into_reader() {
+                                            let _ = std::io::Read::read_to_end(&mut rdr, &mut mbytes);
+                                        }
+                                        if !mbytes.is_empty() {
+                                            let kind = detect_content_kind(&mbytes, None);
+                                            if kind.kind == "image" || kind.kind == "video" {
+                                                if let Ok(mstored) = store.write_bytes(&mbytes) {
+                                                    let mart_id = generated_record_id("artifact");
+                                                    let mmeta = serde_json::json!({
+                                                        "full_res_from_source": true,
+                                                        "original_url": msrc,
+                                                        "parent_page": s,
+                                                        "mime": kind.mime,
+                                                        "kind": kind.kind,
+                                                        "deep_scraped": true
+                                                    });
+                                                    let _ = tx.execute(
+                                                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
+                                                        &[&mart_id, &mstored.content_hash, &mstored.storage_path, &kind.mime, &(mstored.size_bytes as i64), &mmeta]
+                                                    );
+                                                    collected_artifacts.push(mart_id.clone());
+                                                    media_from_web += 1;
+
+                                                    // evidence stub
+                                                    let ev_id = generated_record_id("evidence");
+                                                    let stub = format!("[Full res media from source {} via deep scrape of {}]", msrc, s);
+                                                    let _ = tx.execute(
+                                                        "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
+                                                        &[&ev_id, &mart_id, &msrc, &kind.kind, &stub, &mmeta]
+                                                    );
+                                                    evidence_created.push(ev_id.clone());
+
+                                                    if let Some(claim) = simple_mine_claim_from_text(&stub, &msrc) {
+                                                        graph_candidates.push(serde_json::json!({"type": "media_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2157,6 +2269,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         }
     }
     summary["web_scraped"] = serde_json::json!(web_count);
+    summary["media_from_deep_scrape"] = serde_json::json!(media_from_web);
 
     // 4. Persist graph candidates via existing memory/graph routes if possible, or direct
     for cand in &graph_candidates {
@@ -2265,6 +2378,49 @@ fn extract_simple_links_and_claims(html_or_text: &str, base: &str) -> Vec<serde_
         }));
     }
     out
+}
+
+// grok branch deep scrape: extract image/video srcs from HTML for full res original from source
+fn extract_img_and_video_srcs(html: &str, base_url: &str) -> Vec<String> {
+    let mut srcs = Vec::new();
+    let lower = html.to_lowercase();
+    // simple extraction for src, data-src, data-fullsrc, poster etc for img/video/source
+    for attr in ["src=", "data-src=", "data-fullsrc=", "data-original=", "poster=", "srcset="] {
+        let mut search = &lower[..];
+        while let Some(pos) = search.find(attr) {
+            let rest = &search[pos + attr.len()..];
+            if let Some(qpos) = rest.find(|c: char| c == '"' || c == '\'') {
+                let quote = &rest[qpos..qpos+1];
+                if let Some(end) = rest[qpos+1..].find(quote) {
+                    let raw = &rest[qpos+1..qpos+1+end];
+                    if !raw.is_empty() && raw.len() < 1000 && (raw.starts_with("http") || raw.starts_with("/") || raw.starts_with("data:") == false) {
+                        let resolved = if raw.starts_with("http") {
+                            raw.to_string()
+                        } else if raw.starts_with("//") {
+                            format!("https:{}", raw)
+                        } else if raw.starts_with("/") {
+                            // naive base
+                            if let Some(host_end) = base_url.find('/', 8) {
+                                format!("{}{}", &base_url[..host_end], raw)
+                            } else {
+                                format!("{}{}", base_url, raw)
+                            }
+                        } else {
+                            raw.to_string()
+                        };
+                        // clean common resize params for full res
+                        let clean = resolved.split('?').next().unwrap_or(&resolved).to_string();
+                        if !srcs.contains(&clean) {
+                            srcs.push(clean);
+                        }
+                    }
+                }
+            }
+            search = &search[pos + 5..];
+            if srcs.len() > 50 { break; }
+        }
+    }
+    srcs
 }
 
 fn record_agent_action_request(

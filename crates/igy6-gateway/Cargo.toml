@@ -19,4 +19,5 @@ sha2 = "0.11"
 walkdir = "2"
 infer = "0.15"
 ureq = "2.9"  # simple blocking HTTP for web scraping / URL collection
+base64 = "0.21"  # for serving artifact content as base64 for UI media viewer (grok branch)
 # For potential future media deep extract (pdf etc) we can add more later; keep light for now
