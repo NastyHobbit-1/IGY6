@@ -338,6 +338,22 @@ type ApiResult<T> = {
   error: string | null;
 };
 
+type ConnectorContractStep = {
+  key: string;
+  label: string;
+  requirement: string;
+};
+
+type SourceConnectorStatus = {
+  sourceType: string;
+  status: string;
+  defaultScope: string;
+  dryRun: string;
+  collect: string;
+  sensitivity: string;
+  cleanupAudit: string;
+};
+
 type TermHelpContent = {
   title: string;
   explanation: string;
@@ -350,17 +366,17 @@ type TermHelpContent = {
 const TERM_HELP: Record<string, TermHelpContent> = {
   source: {
     title: "Source",
-    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and planned types such as local_pc_diagnostics, router_network, web_public, and web_authorized_account.",
+    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and planned or disabled connector-backed types such as browser_export, web_public, local_pc_diagnostics, router_network, and media_import.",
     manage: "Manage sources in Data & Knowledge; raw route controls are in Advanced.",
     purpose: "Sources define what evidence IGY6 is allowed to use before collection, normalization, search, reports, or review.",
     warning: "A registered source does not grant broad PC or account access; permissions and approvals still apply."
   },
   sourceType: {
     title: "Source Type",
-    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or planned router/web/PC diagnostic types.",
+    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or planned/disabled browser, web, router, PC diagnostic, and media import types.",
     manage: "Choose the type when creating a source in Data & Knowledge or the advanced source API workflow.",
     purpose: "The type controls which collection workflow and safety expectations apply.",
-    warning: "Some source types are planned and not full collectors yet."
+    warning: "Some source types are contract entries only and are not full collectors yet."
   },
   sourcePermission: {
     title: "Source Permission",
@@ -769,6 +785,166 @@ function StatusPill({ state }: { state: string }) {
 
 function EmptyState({ label }: { label: string }) {
   return <p className="empty">{label}</p>;
+}
+
+const CONNECTOR_CONTRACT_STEPS: ConnectorContractStep[] = [
+  {
+    key: "validate_scope",
+    label: "Validate scope",
+    requirement: "User-entered scope must be explicit, bounded, and recorded before preview or collection."
+  },
+  {
+    key: "dry_run",
+    label: "Dry-run preview",
+    requirement: "Collector must report what would be collected, what is excluded, sensitivity, and approval posture before collecting."
+  },
+  {
+    key: "collect",
+    label: "Collect",
+    requirement: "Collection must use fixed source behavior only; no account scraping, hidden external transfer, arbitrary crawling, or credential capture."
+  },
+  {
+    key: "normalize",
+    label: "Normalize",
+    requirement: "Collected content must preserve source, artifact, document, chunk, and evidence lineage where processing succeeds."
+  },
+  {
+    key: "classify_sensitivity",
+    label: "Classify sensitivity",
+    requirement: "Source and collection metadata must record sensitivity, external model policy, and unsafe or unsupported content posture."
+  },
+  {
+    key: "extract_metadata",
+    label: "Extract metadata",
+    requirement: "Metadata should be safe labels, counts, media/type posture, and review hints rather than raw private paths or secrets."
+  },
+  {
+    key: "cleanup",
+    label: "Cleanup",
+    requirement: "Temporary state must be scoped and non-destructive; no runtime data deletion unless a later DIFF explicitly authorizes it."
+  },
+  {
+    key: "audit",
+    label: "Audit",
+    requirement: "Permissions, approvals, dry-runs, collections, unsupported states, and review decisions must remain locally auditable."
+  }
+];
+
+const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
+  {
+    sourceType: "manual_upload",
+    status: "implemented",
+    defaultScope: "User-pasted UTF-8 text or safe text extract.",
+    dryRun: "Supported through source permission and collection dry-run records.",
+    collect: "Existing manual upload path creates artifacts and processing work.",
+    sensitivity: "User selected on source; external model policy blocked by default.",
+    cleanupAudit: "No source mutation; collection run, approval, and audit records apply."
+  },
+  {
+    sourceType: "conversation_history",
+    status: "implemented",
+    defaultScope: "Manual local UTF-8 paste of authorized conversation/history text.",
+    dryRun: "Approval-aware guided flow; collection stops while approval is pending.",
+    collect: "Existing manual text pipeline under conversation_history metadata.",
+    sensitivity: "Safe labels only; no browser, account, service, or connector import.",
+    cleanupAudit: "Source, permission, approval, artifact, and work records remain traceable."
+  },
+  {
+    sourceType: "user_observation",
+    status: "implemented",
+    defaultScope: "Owner-entered observation, decision, preference, correction, or note.",
+    dryRun: "Approval-aware guided flow; no automatic truth verification.",
+    collect: "Existing manual text pipeline under user_observation metadata.",
+    sensitivity: "User selected or sensitive flag; external model policy blocked.",
+    cleanupAudit: "Observation records are local context and do not rewrite evidence."
+  },
+  {
+    sourceType: "local_project",
+    status: "partial",
+    defaultScope: "Explicit container-visible folder and scoped paths only.",
+    dryRun: "Requires bounded path preview before collection.",
+    collect: "Existing source type exists; broad PC crawling is not allowed.",
+    sensitivity: "Binary or secret-like content must be excluded or fail honestly.",
+    cleanupAudit: "Collection must preserve path bounds and audit decisions."
+  },
+  {
+    sourceType: "browser_export",
+    status: "planned-disabled",
+    defaultScope: "User-provided browser export or pasted page text only.",
+    dryRun: "Must preview selected export scope before any collection.",
+    collect: "No browser profile reads, cookies, tokens, local storage, or account scraping.",
+    sensitivity: "Treat as sensitive until reviewed.",
+    cleanupAudit: "Future imports must record excluded credential/session material."
+  },
+  {
+    sourceType: "web_public",
+    status: "planned-disabled",
+    defaultScope: "User-provided URL or manually pasted page text.",
+    dryRun: "Must show URL, fetch/crawl limits, and external request posture.",
+    collect: "No hidden fetches, crawling, login, or account/private data collection.",
+    sensitivity: "Public page does not mean safe to export externally.",
+    cleanupAudit: "External request audit is required before live fetching is enabled."
+  },
+  {
+    sourceType: "router_network",
+    status: "planned-disabled",
+    defaultScope: "Manual router status/export text chosen by the user.",
+    dryRun: "Must preview fields and redact secrets before import.",
+    collect: "No router writes, network scans, login automation, or credential capture.",
+    sensitivity: "Network identifiers and device names are sensitive by default.",
+    cleanupAudit: "Future router collection must be read-only and approval-gated."
+  },
+  {
+    sourceType: "local_pc_diagnostics",
+    status: "planned-disabled",
+    defaultScope: "Authorized diagnostic export or explicit selected file only.",
+    dryRun: "Must preview file/count/size and secret exclusions.",
+    collect: "No arbitrary filesystem crawling or command execution.",
+    sensitivity: "Diagnostics are sensitive by default and must redact paths where practical.",
+    cleanupAudit: "Future collector must record scope, exclusions, and review state."
+  },
+  {
+    sourceType: "media_import",
+    status: "planned-disabled",
+    defaultScope: "User-selected PDF/image/audio/video metadata and safe extracted text.",
+    dryRun: "Must report media type, size bound, extraction method, and unsupported reason.",
+    collect: "No hosted OCR/transcription calls and no unbounded binary processing.",
+    sensitivity: "Media contents and labels are sensitive until reviewed.",
+    cleanupAudit: "Future extraction must preserve artifact/document/evidence lineage."
+  }
+];
+
+function ConnectorContractStatusPanel() {
+  return (
+    <section className="panelInset" id="connector-contracts" data-connector-contract-status>
+      <div className="subHeader">
+        <h3>Source And Connector Contract</h3>
+        <StatusPill state="policy-foundation" />
+      </div>
+      <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. This surface does not scrape browsers, accounts, routers, websites, or the local filesystem.</p>
+      <div className="fieldGuide">
+        {CONNECTOR_CONTRACT_STEPS.map((step) => (
+          <article key={step.key}>
+            <strong>{step.label}</strong>
+            <span>{step.requirement}</span>
+          </article>
+        ))}
+      </div>
+      <div className="table compactTable" aria-label="Source and connector implementation status">
+        {SOURCE_CONNECTOR_STATUS.map((entry) => (
+          <div className="row" key={entry.sourceType}>
+            <strong>{entry.sourceType}</strong>
+            <StatusPill state={entry.status} />
+            <span>{entry.defaultScope}</span>
+            <span>{entry.dryRun}</span>
+            <span>{entry.collect}</span>
+            <span>{entry.sensitivity}</span>
+            <span>{entry.cleanupAudit}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function jsonString(value: unknown): string | null {
@@ -7648,6 +7824,7 @@ export default async function Home() {
               ))}
             </div>
             {sources.data.length === 0 ? <EmptyState label="No sources registered yet." /> : null}
+            <ConnectorContractStatusPanel />
             <SourceTrustSensitivityManagement
               sources={sources}
               collectionRuns={collectionRuns}

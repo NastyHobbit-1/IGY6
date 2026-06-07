@@ -137,6 +137,16 @@ Sources:
   indicators.
 - Source detail shows metadata and bounded previews only. It does not dump raw
   artifact contents, expose secrets, or claim complete policy enforcement.
+- Source and connector contract shows the required behavior future collectors
+  must satisfy before becoming active product paths: scope validation, dry-run
+  preview, bounded collection, normalization, sensitivity classification, safe
+  metadata, cleanup posture, and audit.
+- Connector status distinguishes implemented manual text paths from partial or
+  planned-disabled source types. Browser, web, router, PC diagnostics, and
+  media import entries are policy/status entries unless a later DIFF implements
+  and verifies their collectors.
+- The contract view does not scrape browsers, accounts, routers, websites, or
+  the local filesystem; it is a source policy and implementation-status view.
 
 Guided Upload:
 
