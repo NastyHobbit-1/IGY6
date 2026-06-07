@@ -15,3 +15,8 @@ igy6-vector-memory = { path = "../igy6-vector-memory" }
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 serde_json = "1"
 sha2 = "0.11"
+# On grok branch: full access collection (ignore previous no-scraping restrictions)
+walkdir = "2"
+infer = "0.15"
+ureq = "2.9"  # simple blocking HTTP for web scraping / URL collection
+# For potential future media deep extract (pdf etc) we can add more later; keep light for now

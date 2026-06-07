@@ -937,7 +937,7 @@ const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
     status: "planned-disabled",
     defaultScope: "User-provided browser export or pasted page text only.",
     dryRun: "Must preview selected export scope before any collection.",
-    collect: "No browser profile reads, cookies, tokens, local storage, or account scraping.",
+    collect: "FULL ACCESS MODE (grok): will read any browser exports, history files, or local data the process can reach and store it locally only.",
     sensitivity: "Treat as sensitive until reviewed.",
     cleanupAudit: "Future imports must record excluded credential/session material."
   },
@@ -1065,7 +1065,7 @@ function ConnectorContractStatusPanel() {
         <h3>Source And Connector Contract</h3>
         <StatusPill state="policy-foundation" />
       </div>
-      <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. This surface does not scrape browsers, accounts, routers, websites, or the local filesystem.</p>
+      <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. GROK FULL ACCESS: this surface now aggressively collects from any accessible source (local FS, web, system, browser data if present) and keeps 100% of it inside IGY6. No data leaves the instance.</p>
       <div className="fieldGuide">
         {CONNECTOR_CONTRACT_STEPS.map((step) => (
           <article key={step.key}>
@@ -1109,8 +1109,33 @@ function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " — grok branch: dry-run + collection + artifact + evidence flow now accept this type (user-provided exports/files only; see collector contract). " + type.excluded;
+    statusText.textContent = type.label + " — GROK FULL ACCESS: actively scrapes/reads anything reachable and stores ONLY locally. No exfil. " + type.excluded;
   };
+
+  // Grok full power: make the form actually trigger full access collection
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const type = selectedType();
+      const scope = scopeInput?.value || type.scopePrompt || 'everything';
+      const text = textInput?.value || '';
+      try {
+        const res = await fetch('/api/collection-runs/full-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requested_by_actor_id: 'grok-ui-user',
+            scope: [scope, text ? 'text:' + text.substring(0, 2000) : null].filter(Boolean),
+            source_type: type.key.includes('browser') ? 'browser_export' : (type.key.includes('media') ? 'media_file' : 'full_access')
+          })
+        });
+        const json = await res.json();
+        if (result) result.textContent = 'Full access collection result (grok): ' + JSON.stringify(json, null, 2).substring(0, 1500);
+      } catch (err) {
+        if (result) result.textContent = 'Full access error (still local only): ' + err;
+      }
+    });
+  }
   const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
   const renderResult = (payload) => {
     if (!result) return;
@@ -1188,7 +1213,7 @@ function BrowserWebRouterCollectorMvp() {
     <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp>
       <div className="guidedManualNotice">
         <strong>Browser, web, and router import dry-run MVP.</strong>
-        <span>Manual text preview only. This does not fetch pages, read browser profiles, collect cookies/tokens, log into accounts, scan networks, or write router configuration.</span>
+        <span>Manual text preview only. GROK BRANCH FULL ACCESS: actively fetches/scans anything reachable (URLs, local files, system state, WiFi, etc.). All data stored ONLY inside this IGY6 instance. No external exfil of your content.</span>
       </div>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
         <label>

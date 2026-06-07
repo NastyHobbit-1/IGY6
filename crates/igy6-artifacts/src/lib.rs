@@ -19,6 +19,62 @@ pub struct StoredArtifact {
     pub existed: bool,
 }
 
+/// On grok branch (full access mode): rich media / content kind detection.
+/// Uses magic bytes (infer) + filename hint. Everything stays local.
+#[derive(Debug, Clone)]
+pub struct ContentKind {
+    pub mime: String,
+    pub kind: String, // "text", "image", "pdf", "audio", "video", "binary", "archive", etc.
+    pub metadata: serde_json::Value,
+}
+
+pub fn detect_content_kind(data: &[u8], filename: Option<&str>) -> ContentKind {
+    let mut mime = "application/octet-stream".to_string();
+    let mut kind = "binary".to_string();
+    let mut meta = serde_json::json!({});
+
+    if let Some(kind_infer) = infer::get(data) {
+        mime = kind_infer.mime_type().to_string();
+        kind = match kind_infer.matcher_type() {
+            infer::MatcherType::Image => "image".to_string(),
+            infer::MatcherType::Video => "video".to_string(),
+            infer::MatcherType::Audio => "audio".to_string(),
+            infer::MatcherType::Archive => "archive".to_string(),
+            infer::MatcherType::Doc => {
+                if mime.contains("pdf") { "pdf".to_string() } else { "document".to_string() }
+            }
+            _ => "binary".to_string(),
+        };
+        meta["magic"] = serde_json::json!(kind_infer.to_string());
+    }
+
+    if let Some(name) = filename {
+        meta["filename"] = serde_json::json!(name);
+        let lower = name.to_lowercase();
+        if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".log") {
+            mime = "text/plain".to_string();
+            kind = "text".to_string();
+        } else if lower.ends_with(".json") {
+            mime = "application/json".to_string();
+            kind = "text".to_string();
+        } else if lower.ends_with(".html") || lower.ends_with(".htm") {
+            mime = "text/html".to_string();
+            kind = "text".to_string();
+        }
+    }
+
+    // Try UTF-8 detection for text
+    if kind == "binary" && std::str::from_utf8(data).is_ok() {
+        kind = "text".to_string();
+        if mime == "application/octet-stream" {
+            mime = "text/plain".to_string();
+        }
+    }
+
+    meta["size"] = serde_json::json!(data.len());
+    ContentKind { mime, kind, metadata: meta }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactStoreError {
     InvalidDataRoot(String),
