@@ -74,14 +74,14 @@ The UI is tabbed and intentionally easy to understand. Key areas on this branch:
 - **Advanced** — diagnostics and raw views (only when you need them).
 
 **Typical flow**:
-1. scripts/run.sh → note the clear UI URL.
+1. `igy6 start` → note the clear UI URL (or read `WEB_BASE_URL` from `.env`).
 2. Open URL → unlock with password (and TOTP code if enabled).
 3. Collector area → run deep scan on desired targets (include password, and totp_code if 2FA is on, in direct calls).
 4. Media Library → refresh → browse and view full-res images/videos pulled from their sources.
 5. Results/Evidence/Graph for the complete extracted info and relationships.
 6. User & Security anytime to change password or manage authenticator linking.
 
-Stop/restart via the scripts.
+Stop/restart via `igy6 stop` / `igy6 start` or the scripts.
 
 Everything (full-res media artifacts, evidence, graph in Neo4j, audit, etc.) stays **only inside the local instance** under your data root.
 
@@ -99,7 +99,7 @@ Supporting scripts (backup, diagnostics, smoke checks, etc.) are optional helper
 
 This branch (grok) gives you a powerful, private, local full-access collector + media workspace. All documents (this README + docs/*.md, user-guide, security-policy, operations, ui guide, truth table notes, etc.) have been updated to reflect the program on this branch and contain only setup/operating/feature instructions.
 
-Start with `scripts/run.sh`, unlock with the password, use the collector and Media Library. Change password or link an authenticator in User & Security whenever you want. Everything just works locally.
+Start with `igy6 start`, unlock with the password, use the collector and Media Library. Change password or link an authenticator in User & Security whenever you want. Everything just works locally.
 
 ## What IGY6 Is For
 
@@ -199,7 +199,7 @@ Rust API gateway
   +--> Rust worker daemon
   +--> Qdrant vector memory
   +--> Neo4j graph memory
-  +--> Redis / MLflow / Phoenix supporting services
+  +--> MLflow / Phoenix supporting observability services
 ```
 
 Core Rust crates include:
