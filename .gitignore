@@ -28,6 +28,7 @@ storage/mlflow/
 storage/phoenix/
 IGY6_Data/
 .igy6-local/smoke-results/
+.igy6-local/exports/
 
 mlruns/
 *.sqlite
