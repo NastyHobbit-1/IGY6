@@ -7171,11 +7171,48 @@ function BaselinePatternExpansionPanel({
       source: "normalized evidence statements"
     });
   });
+  const configGroups = new Map<string, EvidenceItemRecord[]>();
+  evidenceItems.data.forEach((item) => {
+    const normalized = item.statement.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!/(config|configuration|setting|version|feature flag|threshold)/.test(normalized)) return;
+    const key = normalized.split(/[:=\-]/)[0]?.trim().slice(0, 80);
+    if (!key || key.length < 3) return;
+    configGroups.set(key, [...(configGroups.get(key) ?? []), item]);
+  });
+  Array.from(configGroups.entries()).forEach(([key, items]) => {
+    const distinctStatements = new Set(items.map((item) => item.statement.toLowerCase().replace(/\s+/g, " ").trim()));
+    if (distinctStatements.size < 2) return;
+    candidates.push({
+      type: "configuration_drift",
+      summary: `Configuration-like evidence for ${key} differs across ${items.length} records.`,
+      evidenceIds: items.slice(0, 10).map((item) => item.id),
+      supportCount: items.length,
+      confidence: 55,
+      status: "candidate",
+      unverified: "This is keyword grouping, not a full configuration parser.",
+      nextAction: "Inspect source context and verify whether the setting actually drifted.",
+      source: "configuration-like evidence statements"
+    });
+  });
+  const anomalyItems = evidenceItems.data.filter((item) => /(anomaly|unexpected|outlier|spike|regression|unusual|sudden|abnormal)/i.test(item.statement));
+  if (anomalyItems.length > 0) {
+    candidates.push({
+      type: "anomaly_signal",
+      summary: `${anomalyItems.length} evidence item(s) contain anomaly or unexpected-state language.`,
+      evidenceIds: anomalyItems.slice(0, 10).map((item) => item.id),
+      supportCount: anomalyItems.length,
+      confidence: 50,
+      status: "candidate",
+      unverified: "This is keyword matching, not statistical anomaly detection.",
+      nextAction: "Review the evidence and supporting source before treating this as an anomaly.",
+      source: "local evidence statements"
+    });
+  }
   const failedAdvice = repeatedSignalCandidate(negativeSignals, "failed_advice_recurrence", "Open Outcome Learning Summary and propose an improvement candidate if this repeats.");
   const successfulMethod = repeatedSignalCandidate(positiveSignals, "successful_method_recurrence", "Keep recording outcomes; do not auto-promote the method without review.");
   if (failedAdvice) candidates.push(failedAdvice);
   if (successfulMethod) candidates.push(successfulMethod);
-  const supportedCategories = ["recurrence", "missing_information_gap", "cross_source_agreement", "cross_source_conflict", "failed_advice_recurrence", "successful_method_recurrence"];
+  const supportedCategories = ["recurrence", "missing_information_gap", "cross_source_agreement", "cross_source_conflict", "configuration_drift", "anomaly_signal", "failed_advice_recurrence", "successful_method_recurrence"];
   const candidateOptions = candidates.filter((candidate) => candidate.evidenceIds.length > 0);
   const candidateOptionsJson = JSON.stringify(candidateOptions).replace(/</g, "\\u003c");
   const savedPatternDetails = patterns.data.map((pattern) => ({
@@ -7262,7 +7299,7 @@ function BaselinePatternExpansionPanel({
         recurrence_threshold: Number(value("recurrence_threshold") || 3),
         actor_id: "local-owner"
       });
-      show("Baseline detector finished", "Existing detector ran for recurrence, missing-information gap, and cross-source statement review. Reload to inspect saved candidates.", { id: Array.isArray(payload.patterns) ? payload.patterns.length + " candidates" : "detector", pattern_type: "baseline", status: "recorded" });
+      show("Baseline detector finished", "Baseline detector ran for recurrence, missing-information gaps, agreement/conflict, configuration drift, anomaly signals, and outcome recurrence. Reload to inspect saved candidates.", { id: Array.isArray(payload.patterns) ? payload.patterns.length + " candidates" : "detector", pattern_type: "baseline", status: "recorded" });
     } catch (error) {
       show("Baseline detector failed", String(error));
     }
@@ -7285,7 +7322,7 @@ function BaselinePatternExpansionPanel({
       </div>
       <div className="guidedManualNotice">
         <strong>Baseline signals only.</strong>
-        <span>Patterns are review prompts from existing local records. They do not provide advanced statistical validation, forecasting, anomaly detection, or automatic behavior changes.</span>
+        <span>Patterns are review prompts from existing local records. They do not provide advanced statistical validation, forecasting, statistical anomaly detection, or automatic behavior changes.</span>
       </div>
       <section className="metrics compact" aria-label="Supported pattern categories">
         {supportedCategories.map((category) => (

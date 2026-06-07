@@ -526,14 +526,17 @@ Search Memory And Findings:
   predictions, and recommendations.
 - Baseline Pattern Expansion shows saved patterns and local review candidates
   for recurrence, missing-information gaps, cross-source agreement,
-  cross-source conflict, failed-advice recurrence, and successful-method
-  recurrence.
+  cross-source conflict, configuration drift, anomaly signals, failed-advice
+  recurrence, and successful-method recurrence.
 - Pattern candidates show linked evidence where available, support count or
   confidence, review status, what remains unverified, and a safe next action.
 - Saving a candidate uses existing pattern records and requires linked evidence
   IDs. Review-only candidates without evidence IDs are not persisted.
+- The baseline detector can persist candidate pattern records from existing
+  evidence/outcome metadata. It stores support/evidence counts and detector
+  metadata for review.
 - Pattern review does not claim advanced statistical validation, forecasting,
-  anomaly detection, or automatic behavior changes.
+  statistical anomaly detection, causality, or automatic behavior changes.
 
 Reports:
 

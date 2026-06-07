@@ -1120,13 +1120,24 @@ fn detect_baseline_patterns(
         .transaction()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     let evidence_items = load_evidence_items_for_baseline(&mut transaction)?;
+    let outcomes = load_outcomes_for_baseline(&mut transaction)?;
     let mut existing_keys = load_existing_detector_keys(&mut transaction)?;
-    let candidates = baseline_pattern_candidates(&evidence_items, payload.recurrence_threshold);
+    let candidates =
+        baseline_pattern_candidates(&evidence_items, &outcomes, payload.recurrence_threshold);
     let mut responses = Vec::new();
     for candidate in candidates {
         if existing_keys.contains(&candidate.detector_key) {
             continue;
         }
+        let mut metadata_json = candidate.metadata_json;
+        metadata_json["generated_by"] = Value::String("DIFF-240".to_string());
+        metadata_json["detector"] = Value::String("baseline_local_v2".to_string());
+        metadata_json["detector_key"] = Value::String(candidate.detector_key.clone());
+        metadata_json["review_status"] = Value::String("candidate".to_string());
+        metadata_json["support_count"] =
+            Value::Number(serde_json::Number::from(candidate.support_count));
+        metadata_json["evidence_count"] =
+            Value::Number(serde_json::Number::from(candidate.evidence_ids.len() as i64));
         let pattern_payload = PatternCreatePayload {
             pattern_type: candidate.pattern_type,
             summary: candidate.summary,
@@ -1134,11 +1145,7 @@ fn detect_baseline_patterns(
             confidence: Some(candidate.confidence),
             status: "candidate".to_string(),
             actor_id: payload.actor_id.clone(),
-            metadata_json: serde_json::json!({
-                "generated_by": "DIFF-069",
-                "detector": "baseline_local_v1",
-                "detector_key": candidate.detector_key
-            }),
+            metadata_json,
         };
         let response = insert_pattern_with_audit(&mut transaction, &pattern_payload)?;
         if let Some(detector_key) = pattern_payload
@@ -4187,12 +4194,23 @@ struct BaselineEvidenceItem {
 }
 
 #[derive(Debug, Clone)]
+struct BaselineOutcomeItem {
+    id: String,
+    target_type: String,
+    target_id: String,
+    outcome_status: String,
+    evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct BaselinePatternCandidate {
     pattern_type: String,
     summary: String,
     evidence_ids: Vec<String>,
     confidence: i32,
     detector_key: String,
+    support_count: i32,
+    metadata_json: Value,
 }
 
 fn load_evidence_items_for_baseline(
@@ -4210,6 +4228,28 @@ fn load_evidence_items_for_baseline(
                     evidence_type: row.get::<_, String>(1),
                     statement: row.get::<_, String>(2),
                     source_id: row.get::<_, Option<String>>(3),
+                })
+                .collect()
+        })
+        .map_err(|error| GatewayError::Database(error.to_string()))
+}
+
+fn load_outcomes_for_baseline(
+    transaction: &mut postgres::Transaction<'_>,
+) -> Result<Vec<BaselineOutcomeItem>, GatewayError> {
+    transaction
+        .query(
+            "SELECT id, target_type, target_id, outcome_status, evidence_ids FROM outcomes ORDER BY created_at DESC",
+            &[],
+        )
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| BaselineOutcomeItem {
+                    id: row.get::<_, String>(0),
+                    target_type: row.get::<_, String>(1),
+                    target_id: row.get::<_, String>(2),
+                    outcome_status: row.get::<_, String>(3),
+                    evidence_ids: string_values_from_json_array(&row.get::<_, Value>(4)),
                 })
                 .collect()
         })
@@ -4364,6 +4404,7 @@ fn dispatch_task_name(work_item: &WorkItemDispatchRecord) -> Result<String, Gate
 
 fn baseline_pattern_candidates(
     evidence_items: &[BaselineEvidenceItem],
+    outcomes: &[BaselineOutcomeItem],
     recurrence_threshold: i32,
 ) -> Vec<BaselinePatternCandidate> {
     if evidence_items.is_empty() {
@@ -4374,12 +4415,19 @@ fn baseline_pattern_candidates(
             evidence_ids: Vec::new(),
             confidence: 100,
             detector_key: "missing_information_gap:no_evidence".to_string(),
+            support_count: 0,
+            metadata_json: serde_json::json!({
+                "unverified_note": "No evidence exists; this is an intake gap, not a real-world absence claim.",
+                "linked_source_ids": [],
+                "linked_outcome_ids": []
+            }),
         }];
     }
 
     let mut candidates = Vec::new();
     let mut by_type: HashMap<String, Vec<&BaselineEvidenceItem>> = HashMap::new();
     let mut by_statement: HashMap<String, Vec<&BaselineEvidenceItem>> = HashMap::new();
+    let mut by_config_key: HashMap<String, Vec<&BaselineEvidenceItem>> = HashMap::new();
     for item in evidence_items {
         by_type
             .entry(item.evidence_type.clone())
@@ -4389,6 +4437,9 @@ fn baseline_pattern_candidates(
             .entry(normalize_statement(&item.statement))
             .or_default()
             .push(item);
+        if let Some(config_key) = config_drift_key(&item.statement) {
+            by_config_key.entry(config_key).or_default().push(item);
+        }
     }
 
     let mut type_keys = by_type.keys().cloned().collect::<Vec<_>>();
@@ -4406,6 +4457,14 @@ fn baseline_pattern_candidates(
                 evidence_ids: items.iter().take(10).map(|item| item.id.clone()).collect(),
                 confidence: std::cmp::min(90, 50 + items.len() as i32 * 5),
                 detector_key: format!("recurrence:evidence_type:{evidence_type}"),
+                support_count: items.len() as i32,
+                metadata_json: serde_json::json!({
+                    "category": "recurrence",
+                    "support_basis": "evidence_type_count",
+                    "evidence_type": evidence_type,
+                    "linked_source_ids": source_ids_for_items(items),
+                    "unverified_note": "Repeated evidence type is a baseline signal and still needs review."
+                }),
             });
         }
     }
@@ -4419,15 +4478,99 @@ fn baseline_pattern_candidates(
             .filter_map(|item| item.source_id.as_deref())
             .collect::<HashSet<_>>();
         if source_ids.len() >= 2 {
+            let pattern_type = if conflict_signal(items) {
+                "cross_source_conflict"
+            } else {
+                "cross_source_agreement"
+            };
             candidates.push(BaselinePatternCandidate {
-                pattern_type: "cross_source_conflict".to_string(),
-                summary: "Multiple sources contain the same normalized evidence statement; review whether they agree, duplicate, or conflict.".to_string(),
+                pattern_type: pattern_type.to_string(),
+                summary: if pattern_type == "cross_source_conflict" {
+                    "Multiple sources contain related conflict-language around the same normalized evidence statement; review disagreement before relying on it.".to_string()
+                } else {
+                    "Multiple sources contain the same normalized evidence statement; review whether this is agreement or duplicate evidence.".to_string()
+                },
                 evidence_ids: items.iter().take(10).map(|item| item.id.clone()).collect(),
-                confidence: 60,
-                detector_key: format!("cross_source_statement:{normalized_statement}"),
+                confidence: if pattern_type == "cross_source_conflict" { 55 } else { 65 },
+                detector_key: format!("{pattern_type}:{normalized_statement}"),
+                support_count: source_ids.len() as i32,
+                metadata_json: serde_json::json!({
+                    "category": pattern_type,
+                    "support_basis": "normalized_statement_seen_across_sources",
+                    "linked_source_ids": source_ids_for_items(items),
+                    "unverified_note": "Cross-source signal is baseline matching only; source quality and context still require review."
+                }),
             });
         }
     }
+
+    let mut config_keys = by_config_key.keys().cloned().collect::<Vec<_>>();
+    config_keys.sort();
+    for config_key in config_keys {
+        let items = &by_config_key[&config_key];
+        let distinct_statements = items
+            .iter()
+            .map(|item| normalize_statement(&item.statement))
+            .collect::<HashSet<_>>();
+        if distinct_statements.len() >= 2 {
+            candidates.push(BaselinePatternCandidate {
+                pattern_type: "configuration_drift".to_string(),
+                summary: format!(
+                    "Configuration-like evidence for `{}` changed or disagrees across {} records.",
+                    config_key,
+                    items.len()
+                ),
+                evidence_ids: items.iter().take(10).map(|item| item.id.clone()).collect(),
+                confidence: 55,
+                detector_key: format!("configuration_drift:{config_key}"),
+                support_count: items.len() as i32,
+                metadata_json: serde_json::json!({
+                    "category": "configuration_drift",
+                    "support_basis": "configuration_keyword_group",
+                    "config_key": config_key,
+                    "linked_source_ids": source_ids_for_items(items),
+                    "unverified_note": "Configuration drift is keyword and grouping based; it is not a full config parser."
+                }),
+            });
+        }
+    }
+
+    let anomaly_items = evidence_items
+        .iter()
+        .filter(|item| anomaly_signal(&item.statement))
+        .take(10)
+        .collect::<Vec<_>>();
+    if !anomaly_items.is_empty() {
+        candidates.push(BaselinePatternCandidate {
+            pattern_type: "anomaly_signal".to_string(),
+            summary: format!(
+                "{} evidence item(s) contain anomaly or unexpected-state language.",
+                anomaly_items.len()
+            ),
+            evidence_ids: anomaly_items
+                .iter()
+                .map(|item| item.id.clone())
+                .collect(),
+            confidence: 50,
+            detector_key: format!(
+                "anomaly_signal:{}",
+                anomaly_items
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(":")
+            ),
+            support_count: anomaly_items.len() as i32,
+            metadata_json: serde_json::json!({
+                "category": "anomaly_signal",
+                "support_basis": "anomaly_keyword_match",
+                "linked_source_ids": source_ids_for_items(&anomaly_items),
+                "unverified_note": "Anomaly signal is keyword based and not statistical anomaly detection."
+            }),
+        });
+    }
+
+    add_outcome_pattern_candidates(&mut candidates, outcomes);
 
     candidates
 }
@@ -4441,6 +4584,135 @@ fn normalize_statement(value: &str) -> String {
         .chars()
         .take(240)
         .collect()
+}
+
+fn source_ids_for_items(items: &[&BaselineEvidenceItem]) -> Vec<String> {
+    let mut source_ids = items
+        .iter()
+        .filter_map(|item| item.source_id.clone())
+        .collect::<Vec<_>>();
+    source_ids.sort();
+    source_ids.dedup();
+    source_ids
+}
+
+fn conflict_signal(items: &[&BaselineEvidenceItem]) -> bool {
+    items.iter().any(|item| {
+        let value = item.statement.to_ascii_lowercase();
+        [
+            "conflict",
+            "contradict",
+            "disagree",
+            "mismatch",
+            "inconsistent",
+            "wrong",
+            "failed",
+        ]
+        .iter()
+        .any(|token| value.contains(token))
+    })
+}
+
+fn config_drift_key(statement: &str) -> Option<String> {
+    let normalized = normalize_statement(statement);
+    let config_terms = [
+        "config",
+        "configuration",
+        "setting",
+        "version",
+        "env ",
+        "feature flag",
+        "threshold",
+    ];
+    if !config_terms.iter().any(|term| normalized.contains(term)) {
+        return None;
+    }
+    normalized
+        .split([':', '=', '-'])
+        .next()
+        .map(str::trim)
+        .filter(|value| value.len() >= 3)
+        .map(|value| value.chars().take(80).collect())
+}
+
+fn anomaly_signal(statement: &str) -> bool {
+    let normalized = statement.to_ascii_lowercase();
+    [
+        "anomaly",
+        "unexpected",
+        "outlier",
+        "spike",
+        "regression",
+        "unusual",
+        "sudden",
+        "abnormal",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+}
+
+fn add_outcome_pattern_candidates(
+    candidates: &mut Vec<BaselinePatternCandidate>,
+    outcomes: &[BaselineOutcomeItem],
+) {
+    let mut by_status: HashMap<String, Vec<&BaselineOutcomeItem>> = HashMap::new();
+    for outcome in outcomes {
+        by_status
+            .entry(outcome.outcome_status.clone())
+            .or_default()
+            .push(outcome);
+    }
+    for (status, pattern_type, summary) in [
+        (
+            "wrong",
+            "failed_advice_recurrence",
+            "Repeated wrong outcomes are recorded; review failed advice or weak method recurrence.",
+        ),
+        (
+            "not_useful",
+            "failed_advice_recurrence",
+            "Repeated not-useful outcomes are recorded; review failed advice or weak method recurrence.",
+        ),
+        (
+            "correct",
+            "successful_method_recurrence",
+            "Repeated correct outcomes are recorded; review whether a successful method is recurring.",
+        ),
+        (
+            "useful",
+            "successful_method_recurrence",
+            "Repeated useful outcomes are recorded; review whether a successful method is recurring.",
+        ),
+    ] {
+        let Some(items) = by_status.get(status) else {
+            continue;
+        };
+        if items.len() < 2 {
+            continue;
+        }
+        let mut evidence_ids = items
+            .iter()
+            .flat_map(|item| item.evidence_ids.iter().cloned())
+            .collect::<Vec<_>>();
+        evidence_ids.sort();
+        evidence_ids.dedup();
+        candidates.push(BaselinePatternCandidate {
+            pattern_type: pattern_type.to_string(),
+            summary: summary.to_string(),
+            evidence_ids: evidence_ids.into_iter().take(10).collect(),
+            confidence: 60,
+            detector_key: format!("outcome_status:{status}:{pattern_type}"),
+            support_count: items.len() as i32,
+            metadata_json: serde_json::json!({
+                "category": pattern_type,
+                "support_basis": "outcome_status_count",
+                "outcome_status": status,
+                "linked_outcome_ids": items.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+                "linked_target_ids": items.iter().map(|item| format!("{}:{}", item.target_type, item.target_id)).collect::<Vec<_>>(),
+                "unverified_note": "Outcome recurrence is count based; it does not auto-change behavior or prove causality."
+            }),
+        });
+    }
 }
 
 fn create_source(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -13207,15 +13479,91 @@ mod tests {
                 source_id: Some("s2".to_string()),
             },
         ];
-        let candidates = baseline_pattern_candidates(&evidence, 2);
+        let candidates = baseline_pattern_candidates(&evidence, &[], 2);
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].pattern_type, "recurrence");
         assert_eq!(candidates[0].evidence_ids, vec!["e1", "e2"]);
-        assert_eq!(candidates[1].pattern_type, "cross_source_conflict");
+        assert_eq!(candidates[1].pattern_type, "cross_source_agreement");
         assert_eq!(
             candidates[1].detector_key,
-            "cross_source_statement:same signal"
+            "cross_source_agreement:same signal"
         );
+    }
+
+    #[test]
+    fn expanded_baseline_pattern_candidates_include_drift_anomaly_and_outcomes() {
+        let evidence = vec![
+            BaselineEvidenceItem {
+                id: "e1".to_string(),
+                evidence_type: "config".to_string(),
+                statement: "version: 1.0".to_string(),
+                source_id: Some("s1".to_string()),
+            },
+            BaselineEvidenceItem {
+                id: "e2".to_string(),
+                evidence_type: "config".to_string(),
+                statement: "version: 1.1 unexpected spike".to_string(),
+                source_id: Some("s2".to_string()),
+            },
+            BaselineEvidenceItem {
+                id: "e3".to_string(),
+                evidence_type: "note".to_string(),
+                statement: "Router setting mismatch conflict".to_string(),
+                source_id: Some("s3".to_string()),
+            },
+            BaselineEvidenceItem {
+                id: "e4".to_string(),
+                evidence_type: "note".to_string(),
+                statement: "router setting mismatch conflict".to_string(),
+                source_id: Some("s4".to_string()),
+            },
+        ];
+        let outcomes = vec![
+            BaselineOutcomeItem {
+                id: "o1".to_string(),
+                target_type: "recommendation".to_string(),
+                target_id: "r1".to_string(),
+                outcome_status: "wrong".to_string(),
+                evidence_ids: vec!["e1".to_string()],
+            },
+            BaselineOutcomeItem {
+                id: "o2".to_string(),
+                target_type: "recommendation".to_string(),
+                target_id: "r2".to_string(),
+                outcome_status: "wrong".to_string(),
+                evidence_ids: vec!["e2".to_string()],
+            },
+            BaselineOutcomeItem {
+                id: "o3".to_string(),
+                target_type: "prediction".to_string(),
+                target_id: "p1".to_string(),
+                outcome_status: "correct".to_string(),
+                evidence_ids: vec!["e3".to_string()],
+            },
+            BaselineOutcomeItem {
+                id: "o4".to_string(),
+                target_type: "prediction".to_string(),
+                target_id: "p2".to_string(),
+                outcome_status: "correct".to_string(),
+                evidence_ids: vec!["e4".to_string()],
+            },
+        ];
+        let candidates = baseline_pattern_candidates(&evidence, &outcomes, 2);
+        let types = candidates
+            .iter()
+            .map(|candidate| candidate.pattern_type.as_str())
+            .collect::<HashSet<_>>();
+        assert!(types.contains("configuration_drift"));
+        assert!(types.contains("anomaly_signal"));
+        assert!(types.contains("cross_source_conflict"));
+        assert!(types.contains("failed_advice_recurrence"));
+        assert!(types.contains("successful_method_recurrence"));
+        assert!(candidates.iter().all(|candidate| {
+            candidate
+                .metadata_json
+                .get("unverified_note")
+                .is_some_and(Value::is_string)
+        }));
     }
 
     #[test]
