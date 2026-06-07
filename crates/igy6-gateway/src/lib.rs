@@ -2138,8 +2138,6 @@ fn full_access_collection_response(body: &str, database_url: Option<&str>) -> Ga
 }
 
 fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
-    {
-    // brace balance fix for edit
     // UI-driven payload (everything controllable from web UI, no cmdline needed):
     // { "requested_by_actor_id": "...", "password": "...", "totp_code": "optional",
     //   "scope": ["url1", "/local/path", "everything"], "max_depth": 3,
@@ -2365,7 +2363,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         collected_artifacts.push(art_id.clone()); web_count += 1;
                         let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
                         let ev_id = generated_record_id("evidence");
-                        let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &current_url, "pdf", &extracted, &meta] );
+                        let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &current_url, &"pdf".to_string(), &extracted, &meta] );
                         evidence_created.push(ev_id.clone());
                         if let Some(claim) = simple_mine_claim_from_text(&extracted, &current_url) {
                             graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
@@ -2395,7 +2393,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 if kind.kind == "image" {
                                     if let Ok(img) = image::load_from_memory(&final_bytes) {
                                         let mut buf = Vec::new();
-                                        let _ = img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageOutputFormat::Png);
+                                        let _ = img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png);
                                         final_bytes = buf;
                                     }
                                 }
@@ -2432,114 +2430,6 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
             }
         }
     }
-    summary["web_scraped"] = serde_json::json!(web_count);
-    summary["media_from_deep_scrape"] = serde_json::json!(media_from_web);
-    summary["crawled_pages"] = serde_json::json!(crawled_urls.len());
-    summary["deep_crawl_depth"] = serde_json::json!(max_depth);
-    summary["safe_mode"] = serde_json::json!(safe_mode);
-                    if let Ok(resp) = ureq::get(s).timeout(std::time::Duration::from_secs(20)).call() {
-                        // Deep PDF support for direct PDF URLs in web targets (grok)
-                        let is_pdf_url = s.to_lowercase().ends_with(".pdf");
-                        let content_type = resp.header("Content-Type").unwrap_or("").to_lowercase();
-                        let is_pdf_content = content_type.contains("pdf") || is_pdf_url;
-
-                        if is_pdf_content {
-                            // Fetch as raw bytes for PDF deep extraction
-                            let mut pdf_bytes = Vec::new();
-                            {
-                                let mut rdr = resp.into_reader();
-                                let _ = std::io::Read::read_to_end(&mut rdr, &mut pdf_bytes);
-                            }
-                            if !pdf_bytes.is_empty() {
-                                let kind = detect_content_kind(&pdf_bytes, Some(s));
-                                let store = ArtifactStore::new(artifact_data_root()).unwrap();
-                                if let Ok(stored) = store.write_bytes(&pdf_bytes) {
-                                    let art_id = generated_record_id("artifact");
-                                    let meta = serde_json::json!({
-                                        "scraped_url": s,
-                                        "full_access_web": true,
-                                        "deep_scrape": true,
-                                        "mime": kind.mime,
-                                        "kind": kind.kind
-                                    });
-                                    let _ = tx.execute(
-                                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                                        &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime.to_string(), &(stored.size_bytes as i64), &meta]
-                                    );
-                                    collected_artifacts.push(art_id.clone());
-                                    web_count += 1;
-
-                                    // Real deep PDF text extraction + evidence
-                                    let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_else(|| format!("[PDF from web {} - {} bytes]", s, pdf_bytes.len()));
-                                    let ev_id = generated_record_id("evidence");
-                                    let _ = tx.execute(
-                                        "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                                        &[&ev_id, &art_id, &s, &"pdf".to_string(), &extracted, &meta]
-                                    );
-                                    evidence_created.push(ev_id.clone());
-
-                                    if let Some(claim) = simple_mine_claim_from_text(&extracted, s) {
-                                        graph_candidates.push(serde_json::json!({
-                                            "type": "web_pdf_claim",
-                                            "text": claim,
-                                            "source_artifact": art_id,
-                                            "from_full_access": true
-                                        }));
-                                    }
-                                }
-                            }
-                            continue;  // handled as PDF
-                        }
-
-                        // Normal HTML/text page handling
-                        if let Ok(body) = resp.into_string() {
-                            let data = body.as_bytes();
-                            let store = ArtifactStore::new(artifact_data_root()).unwrap();
-                            if let Ok(stored) = store.write_bytes(data) {
-                                let art_id = generated_record_id("artifact");
-                                let _ = tx.execute(
-                                    "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                                    &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"scraped_url": s, "full_access_web": true, "deep_scrape": true})]
-                                );
-                                collected_artifacts.push(art_id.clone());
-                                web_count += 1;
-
-                                // Aggressive link/claim mining
-                                for cap in extract_simple_links_and_claims(&body, s) {
-                                    graph_candidates.push(cap);
-                                }
-
-                                // Deep thorough media: extract srcs for img/video and fetch original/full res from source
-                                let media_srcs = extract_img_and_video_srcs(&body, s);
-                                for msrc in media_srcs {
-                                    if let Ok(mresp) = ureq::get(&msrc).timeout(std::time::Duration::from_secs(30)).call() {
-                                        let mut mbytes = Vec::new();
-                                        {
-                                            let mut rdr = mresp.into_reader();
-                                            let _ = std::io::Read::read_to_end(&mut rdr, &mut mbytes);
-                                        }
-                                        if !mbytes.is_empty() {
-                                            let kind = detect_content_kind(&mbytes, None);
-                                            if kind.kind == "image" || kind.kind == "video" {
-                                                if let Ok(mstored) = store.write_bytes(&mbytes) {
-                                                    let mart_id = generated_record_id("artifact");
-                                                    let mmeta = serde_json::json!({
-                                                        "full_res_from_source": true,
-                                                        "original_url": msrc,
-                                                        "parent_page": s,
-                                                        "mime": kind.mime,
-                                                        "kind": kind.kind,
-                                                        "deep_scraped": true
-                                                    });
-                                                    let _ = tx.execute(
-                                                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                                                        &[&mart_id, &mstored.content_hash, &mstored.storage_path, &kind.mime, &(mstored.size_bytes as i64), &mmeta]
-                                                    );
-                                                    collected_artifacts.push(mart_id.clone());
-                                                    media_from_web += 1;
-
-                                                    // evidence stub
-    // (old inner web code cleaned)
     summary["web_scraped"] = serde_json::json!(web_count);
     summary["media_from_deep_scrape"] = serde_json::json!(media_from_web);
     summary["crawled_pages"] = serde_json::json!(crawled_urls.len());
@@ -15552,3 +15442,4 @@ mod tests {
         value["chunk_size"] = serde_json::json!(1000);
         value.to_string()
     }
+}

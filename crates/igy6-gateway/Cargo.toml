@@ -21,5 +21,8 @@ walkdir = "2"
 infer = "0.15"
 ureq = "2.9"  # simple blocking HTTP for web scraping / URL collection
 base64 = "0.21"  # for serving artifact content as base64 for UI media viewer (grok branch)
-totp-rs = { version = "5", default-features = false, features = ["gen_secret", "otpauth", "sha1"] }  # for optional TOTP authenticator support (grok branch, off by default)
+totp-rs = { version = "5", default-features = false, features = ["gen_secret", "otpauth"] }  # for optional TOTP authenticator support (grok branch, off by default)
+scraper = "0.18"  # for deep HTML parsing and link/asset extraction in web collector
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }  # for stripping exif/metadata from images for non-traceability and full res storage
+rand = "0.8"  # for UA rotation and jittered delays in anonymous deep collection (grok branch)
 # For potential future media deep extract (pdf etc) we can add more later; keep light for now

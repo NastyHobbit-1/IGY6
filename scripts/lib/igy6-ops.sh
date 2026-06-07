@@ -31,6 +31,37 @@ igy6_warn() {
 
 igy6_require_repo_files() {
   [[ -f "${IGY6_COMPOSE_FILE}" ]] || igy6_die "Missing Compose file: ${IGY6_COMPOSE_FILE}"
+
+  if [[ ! -f "${IGY6_ENV_FILE}" ]]; then
+    igy6_info "No .env found — performing first-run bootstrap (grok branch)..."
+    cp -n "${IGY6_REPO_ROOT}/.env.example" "${IGY6_ENV_FILE}" || igy6_die "Failed to copy .env.example"
+
+    # Grok-branch friendly defaults: absolute data dir under home (avoids docker bind issues),
+    # single-user protected mode with the branch password "ThatDog123", dynamic-UI friendly ports.
+    DATA_DIR="${HOME}/IGY6_Data"
+    mkdir -p "${DATA_DIR}" || true
+
+    # Make IGY6_DATA_ROOT absolute and point to a persistent user location
+    sed -i "s|^IGY6_DATA_ROOT=.*|IGY6_DATA_ROOT=${DATA_DIR}|" "${IGY6_ENV_FILE}" || true
+
+    # Ensure the grok branch single-user password-protected experience
+    sed -i 's/^SINGLE_USER_MODE=.*/SINGLE_USER_MODE=true/' "${IGY6_ENV_FILE}" || true
+
+    # Helpful note for the user (visible in .env)
+    if ! grep -q "GROK BRANCH NOTE" "${IGY6_ENV_FILE}"; then
+      {
+        echo ""
+        echo "# GROK BRANCH NOTE (auto-added on first run)"
+        echo "# Default program password is ThatDog123 (change in UI User & Security after first unlock)."
+        echo "# All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI."
+        echo "# Data lives under ${DATA_DIR} (including full-res images/videos from safe sources only)."
+      } >> "${IGY6_ENV_FILE}"
+    fi
+
+    igy6_info "Created ${IGY6_ENV_FILE} and ${DATA_DIR}."
+    igy6_info "You can edit .env if you want custom ports/creds. Re-run scripts/run.sh to continue."
+  fi
+
   [[ -f "${IGY6_ENV_FILE}" ]] || igy6_die "Missing .env file: ${IGY6_ENV_FILE}. Create it with: cp .env.example .env"
 }
 

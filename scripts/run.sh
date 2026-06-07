@@ -18,10 +18,11 @@ Options:
   --help  Show this help.
 
 Safety:
-  - Does not modify .env.
+  - On first run (missing .env), will automatically create .env from .env.example + create IGY6_Data under $HOME with grok-branch defaults (absolute path, SINGLE_USER_MODE, helpful comments).
   - Does not delete volumes or images.
-  - Does not create .env automatically.
+  - Does not overwrite an existing .env.
   - Prints Docker Compose errors directly.
+  - After bootstrap, all deep collection, Media Library, password change ("ThatDog123"), TOTP linking, etc. is done from the web UI (no further cmdline needed).
 EOF
 }
 
