@@ -98,6 +98,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/experiments"),
     ("GET", "/experiments/{experiment_run_id}"),
     ("POST", "/experiments"),
+    ("POST", "/experiments/propose-from-improvement"),
     ("POST", "/experiments/{experiment_run_id}/status"),
     ("GET", "/feedback"),
     ("GET", "/feedback/{feedback_id}"),
@@ -363,6 +364,9 @@ pub fn handle_gateway_request_with_db(
             evidence_item_create_response(&request.body, database_url)
         }
         ("POST", "/experiments") => experiment_create_response(&request.body, database_url),
+        ("POST", "/experiments/propose-from-improvement") => {
+            experiment_proposal_response(&request.body, database_url)
+        }
         ("POST", "/feedback") => feedback_create_response(&request.body, database_url),
         ("POST", "/improvements") => improvement_create_response(&request.body, database_url),
         ("POST", "/memory/graph/lineage/sync") => {
@@ -897,6 +901,13 @@ fn evidence_item_create_response(body: &str, database_url: Option<&str>) -> Gate
 
 fn experiment_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_experiment(body, database_url))
+}
+
+fn experiment_proposal_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(create_experiment_proposal_from_improvement(
+        body,
+        database_url,
+    ))
 }
 
 fn improvement_create_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -5526,6 +5537,110 @@ fn create_experiment(body: &str, database_url: Option<&str>) -> Result<String, G
     Ok(response_body)
 }
 
+fn create_experiment_proposal_from_improvement(
+    body: &str,
+    database_url: Option<&str>,
+) -> Result<String, GatewayError> {
+    let payload = parse_experiment_proposal(body)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+    let postgres_url = postgres_client_url(database_url);
+    let mut client = Client::connect(&postgres_url, NoTls)
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let mut transaction = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let improvement_exists = transaction
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM improvement_items WHERE id = $1)",
+            &[&payload.improvement_item_id],
+        )
+        .map(|row| row.get::<_, bool>(0))
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    if !improvement_exists {
+        return Err(GatewayError::Validation(
+            "Improvement item not found".to_string(),
+        ));
+    }
+
+    let experiment_id = generated_record_id("experiment");
+    let metrics_json = serde_json::json!({
+        "success_criteria": payload.success_criteria,
+        "result_comparison_plan": payload.result_comparison_plan,
+        "result_comparison_status": "not_run"
+    });
+    let artifacts_json = serde_json::json!({
+        "expected_artifacts": [],
+        "artifact_collection_status": "not_run"
+    });
+    let metadata_json = serde_json::json!({
+        "created_from": "self_improvement_experiment_workflow_mvp",
+        "workflow_stage": "experiment_proposal",
+        "proposal_scope": payload.proposal_scope,
+        "dry_run": {
+            "status": "recorded",
+            "summary": payload.dry_run_summary,
+            "runtime_started": false,
+            "external_services_called": false
+        },
+        "review_status": "proposal",
+        "accepted_method": {
+            "approval_required": true,
+            "approval_id": null,
+            "method_changed": false,
+            "status": "not_accepted"
+        },
+        "execution_model": "proposal_metadata_only",
+        "autonomous_self_modification": false,
+        "autonomous_method_change": false,
+        "experiment_execution_started": false
+    });
+    let linked_improvement_item_id = Some(payload.improvement_item_id.clone());
+    transaction
+        .execute(
+            "INSERT INTO experiment_runs (id, improvement_item_id, status, mlflow_run_id, optuna_study_name, metrics_json, artifacts_json, metadata_json) VALUES ($1, $2, 'planned', NULL, NULL, $3::jsonb, $4::jsonb, $5::jsonb)",
+            &[
+                &experiment_id,
+                &linked_improvement_item_id,
+                &metrics_json,
+                &artifacts_json,
+                &metadata_json,
+            ],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let improvement_metadata_patch = serde_json::json!({
+        "latest_experiment_proposal_id": experiment_id,
+        "latest_experiment_proposal_status": "planned",
+        "experiment_proposal_requires_approval_for_accepted_method": true
+    });
+    transaction
+        .execute(
+            "UPDATE improvement_items SET metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2",
+            &[&improvement_metadata_patch, &payload.improvement_item_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let details_json = serde_json::json!({
+        "improvement_item_id": payload.improvement_item_id,
+        "status": "planned",
+        "workflow_stage": "experiment_proposal",
+        "dry_run_recorded": true,
+        "approval_required_for_accepted_method": true,
+        "experiment_execution_started": false
+    });
+    transaction
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'experiment_run.proposed', 'planned', 'experiment_run', $2, NULL, $3::jsonb)",
+            &[&payload.actor_id, &experiment_id, &details_json],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    let response_body = experiment_response_json(&mut transaction, &experiment_id)?;
+    transaction
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(response_body)
+}
+
 fn update_experiment_status(
     experiment_run_id: &str,
     body: &str,
@@ -5533,6 +5648,11 @@ fn update_experiment_status(
 ) -> Result<String, GatewayError> {
     let experiment_run_id = validate_route_id(experiment_run_id, "experiment_run_id")?;
     let payload = parse_experiment_status(body)?;
+    let acceptance_approval_id = if payload.status == "accepted" {
+        Some(experiment_acceptance_approval_id(&payload.metadata_json)?.to_string())
+    } else {
+        None
+    };
     let database_url = database_url
         .filter(|value| !value.trim().is_empty())
         .ok_or(GatewayError::MissingDatabaseUrl)?;
@@ -5550,6 +5670,9 @@ fn update_experiment_status(
         .map_err(|error| GatewayError::Database(error.to_string()))?
         .ok_or_else(|| GatewayError::NotFound("Experiment run not found".to_string()))?;
     let previous_status: String = row.get(0);
+    if let Some(approval_id) = acceptance_approval_id.as_deref() {
+        require_experiment_acceptance_approval(&mut transaction, approval_id)?;
+    }
     transaction
         .execute(
             "UPDATE experiment_runs SET status = $1, metrics_json = CASE WHEN $2 THEN $3::jsonb ELSE metrics_json END, artifacts_json = CASE WHEN $4 THEN $5::jsonb ELSE artifacts_json END, metadata_json = CASE WHEN $6 THEN $7::jsonb ELSE metadata_json END, updated_at = now() WHERE id = $8",
@@ -5583,6 +5706,46 @@ fn update_experiment_status(
         .commit()
         .map_err(|error| GatewayError::Database(error.to_string()))?;
     Ok(response_body)
+}
+
+fn experiment_acceptance_approval_id(metadata_json: &Value) -> Result<&str, GatewayError> {
+    metadata_json
+        .get("accepted_method")
+        .and_then(|value| value.get("approval_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            GatewayError::Forbidden(
+                "Accepted experiment method requires accepted_method.approval_id.".to_string(),
+            )
+        })
+}
+
+fn require_experiment_acceptance_approval(
+    transaction: &mut postgres::Transaction<'_>,
+    approval_id: &str,
+) -> Result<(), GatewayError> {
+    let row = transaction
+        .query_opt(
+            "SELECT status, request_type FROM approvals WHERE id = $1",
+            &[&approval_id],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?
+        .ok_or_else(|| GatewayError::NotFound("Approval not found".to_string()))?;
+    let status: String = row.get(0);
+    let request_type: String = row.get(1);
+    if status != "approved" {
+        return Err(GatewayError::Forbidden(
+            "Experiment acceptance approval is not approved".to_string(),
+        ));
+    }
+    if request_type != "experiment_acceptance" {
+        return Err(GatewayError::Conflict(
+            "Approval is not for experiment acceptance".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn create_improvement(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -6361,6 +6524,15 @@ struct ExperimentCreatePayload {
     actor_id: String,
 }
 
+struct ExperimentProposalPayload {
+    improvement_item_id: String,
+    proposal_scope: String,
+    success_criteria: Vec<String>,
+    dry_run_summary: String,
+    result_comparison_plan: String,
+    actor_id: String,
+}
+
 struct ExperimentStatusPayload {
     status: String,
     metrics_json: Value,
@@ -7123,6 +7295,29 @@ fn parse_experiment_create(body: &str) -> Result<ExperimentCreatePayload, Gatewa
         metrics_json: optional_object_field(&object, "metrics_json")?,
         artifacts_json: optional_object_field(&object, "artifacts_json")?,
         metadata_json: optional_object_field(&object, "metadata_json")?,
+        actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
+    })
+}
+
+fn parse_experiment_proposal(body: &str) -> Result<ExperimentProposalPayload, GatewayError> {
+    let object = parse_json_object(body, "Experiment proposal request body")?;
+    let success_criteria =
+        optional_bounded_string_array_field(&object, "success_criteria", 8, 500)?;
+    if success_criteria.is_empty() {
+        return Err(GatewayError::Validation(
+            "success_criteria must include at least one reviewable criterion.".to_string(),
+        ));
+    }
+    Ok(ExperimentProposalPayload {
+        improvement_item_id: required_string_field(&object, "improvement_item_id", 36)?,
+        proposal_scope: required_text_field_with_max(&object, "proposal_scope", 2000)?,
+        success_criteria,
+        dry_run_summary: required_text_field_with_max(&object, "dry_run_summary", 2000)?,
+        result_comparison_plan: required_text_field_with_max(
+            &object,
+            "result_comparison_plan",
+            2000,
+        )?,
         actor_id: optional_string_field_with_max(&object, "actor_id", "local-owner", 128)?,
     })
 }
@@ -11168,7 +11363,14 @@ fn is_report_status(value: &str) -> bool {
 fn is_experiment_status(value: &str) -> bool {
     matches!(
         value,
-        "planned" | "running" | "completed" | "failed" | "abandoned"
+        "planned"
+            | "running"
+            | "completed"
+            | "failed"
+            | "abandoned"
+            | "accepted"
+            | "rejected"
+            | "deferred"
     )
 }
 
@@ -13248,6 +13450,10 @@ mod tests {
                 r#"{"status":"planned","metrics_json":{"score":1}}"#,
             ),
             (
+                "/experiments/propose-from-improvement",
+                r#"{"improvement_item_id":"improvement-1","proposal_scope":"Compare retrieval prompts offline.","success_criteria":["Fewer missing evidence notes"],"dry_run_summary":"Would compare saved records only.","result_comparison_plan":"Manual before/after review."}"#,
+            ),
+            (
                 "/experiments/experiment-1/status",
                 r#"{"status":"running","metrics_json":{"started":true}}"#,
             ),
@@ -13276,6 +13482,14 @@ mod tests {
             (
                 "/experiments",
                 r#"{"improvement_item_id":"improvement-1","actor_id":""}"#,
+            ),
+            (
+                "/experiments/propose-from-improvement",
+                r#"{"improvement_item_id":"improvement-1","proposal_scope":"x","success_criteria":[],"dry_run_summary":"x","result_comparison_plan":"x"}"#,
+            ),
+            (
+                "/experiments/propose-from-improvement",
+                r#"{"improvement_item_id":"","proposal_scope":"x","success_criteria":["x"],"dry_run_summary":"x","result_comparison_plan":"x"}"#,
             ),
             ("/experiments/experiment-1/status", "{}"),
             (
@@ -13309,6 +13523,23 @@ mod tests {
             assert_eq!(response.status_code, 422, "{path} {body}");
             assert!(!response.proxied_to_fallback, "{path} {body}");
         }
+    }
+
+    #[test]
+    fn experiment_acceptance_requires_approval_without_fallback() {
+        let response = handle_gateway_request_with_db(
+            &request(
+                "POST",
+                "/experiments/experiment-1/status",
+                r#"{"status":"accepted","metadata_json":{"accepted_method":{"approval_required":true}}}"#,
+            ),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 403);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("approval_id"));
     }
 
     #[test]
@@ -14138,6 +14369,7 @@ mod tests {
             ("GET", "/experiments"),
             ("GET", "/experiments/{experiment_run_id}"),
             ("POST", "/experiments"),
+            ("POST", "/experiments/propose-from-improvement"),
             ("POST", "/experiments/{experiment_run_id}/status"),
             ("POST", "/collection-runs/manual-upload"),
             ("GET", "/improvements"),

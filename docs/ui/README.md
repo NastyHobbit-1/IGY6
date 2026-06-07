@@ -442,6 +442,20 @@ Outcome Learning Summary:
 - Does not change future reasoning behavior automatically, promote methods, run
   experiments, or claim autonomous self-improvement.
 
+Improvement / Experiment Workflow:
+
+- Lists persisted improvement items and experiment records.
+- Records controlled experiment proposals through
+  `POST /experiments/propose-from-improvement`.
+- Proposal records include linked improvement item, proposal scope, dry-run
+  summary, success criteria, result comparison plan, review status, and
+  accepted-method metadata.
+- Accepted experiment methods are approval-gated in the Rust gateway; accepted
+  status requires an approved `experiment_acceptance` approval record.
+- Proposal creation does not start experiment execution, call MLflow, create an
+  Optuna study, trigger Phoenix traces, self-edit code, or change runtime
+  methods.
+
 Prediction / Recommendation Creation:
 
 - Creates reviewable prediction or recommendation records through the existing

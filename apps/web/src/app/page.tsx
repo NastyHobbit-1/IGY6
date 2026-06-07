@@ -7611,6 +7611,7 @@ function ImprovementExperimentReview({
   const apiBaseUrl = root.getAttribute("data-api-base-url");
   const result = root.querySelector("[data-experiment-proposal-result]");
   const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const lines = (name) => value(name).split("\\n").map((item) => item.trim()).filter(Boolean);
   const show = (state, message, payload) => {
     if (!result) return;
     result.innerHTML = "";
@@ -7655,22 +7656,15 @@ function ImprovementExperimentReview({
       return;
     }
     try {
-      const payload = await postJson("/experiments", {
+      const payload = await postJson("/experiments/propose-from-improvement", {
         improvement_item_id: improvementId,
-        status: "planned",
-        metrics_json: {
-          proposed_success_metric: value("experiment_success_metric") || "manual review required"
-        },
-        artifacts_json: {},
-        metadata_json: {
-          created_from: "improvement_experiment_review",
-          proposal_scope: value("experiment_scope") || "review only",
-          execution_model: "not_started",
-          autonomous_method_change: false
-        },
+        proposal_scope: value("experiment_scope"),
+        success_criteria: lines("experiment_success_criteria"),
+        dry_run_summary: value("experiment_dry_run_summary"),
+        result_comparison_plan: value("experiment_result_comparison_plan"),
         actor_id: "local-owner"
       });
-      show("Experiment proposal recorded", "IGY6 created planned experiment metadata only. No runner, MLflow/Optuna execution, or production method change ran.", payload);
+      show("Experiment proposal recorded", "IGY6 created controlled proposal and dry-run metadata only. No runner, MLflow/Optuna execution, or production method change ran.", payload);
     } catch (error) {
       show("Experiment proposal failed", String(error));
     }
@@ -7686,7 +7680,7 @@ function ImprovementExperimentReview({
     >
       <div className="guidedManualNotice">
         <strong>Improvement and experiment review</strong>
-        <span>Review proposed improvements and planned experiment metadata. This is controlled review only; no autonomous method changes, MLflow/Optuna run, or Phoenix trace workflow is triggered here.</span>
+        <span>Review proposed improvements and planned experiment metadata. Accepted methods require approval; no autonomous method changes, MLflow/Optuna run, or Phoenix trace workflow is triggered here.</span>
       </div>
       {[improvements.error, experiments.error].filter(Boolean).length > 0 ? (
         <p className="errorText">Some improvement or experiment endpoints returned errors.</p>
@@ -7743,15 +7737,23 @@ function ImprovementExperimentReview({
         </label>
         <label>
           <span>Review scope</span>
-          <textarea name="experiment_scope" rows={2} placeholder="Describe the bounded comparison or review question. No runner starts from this form." />
+          <textarea name="experiment_scope" rows={2} required placeholder="Describe the bounded comparison or review question. No runner starts from this form." />
         </label>
         <label>
-          <span>Success metric</span>
-          <input name="experiment_success_metric" placeholder="Example: fewer incomplete evidence answers after manual review" />
+          <span>Success criteria</span>
+          <textarea name="experiment_success_criteria" rows={3} required placeholder="One criterion per line, for example: fewer incomplete evidence answers after manual review" />
+        </label>
+        <label>
+          <span>Dry-run summary</span>
+          <textarea name="experiment_dry_run_summary" rows={2} required placeholder="What would be checked before execution, and what remains not run?" />
+        </label>
+        <label>
+          <span>Result comparison plan</span>
+          <textarea name="experiment_result_comparison_plan" rows={2} required placeholder="How results would be compared after an approved run." />
         </label>
         <div className="guidedManualActions">
-          <button type="submit" disabled={recentImprovements.length === 0}>Record planned experiment metadata</button>
-          <span>{recentImprovements.length > 0 ? "Creates a planned experiment record only." : "Create or receive an improvement item before proposing an experiment record."}</span>
+          <button type="submit" disabled={recentImprovements.length === 0}>Record proposal / dry-run metadata</button>
+          <span>{recentImprovements.length > 0 ? "Creates a planned experiment proposal only; accepted methods remain approval-gated." : "Create or receive an improvement item before proposing an experiment record."}</span>
         </div>
       </form>
       <div className="guidedManualResult" data-experiment-proposal-result>
