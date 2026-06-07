@@ -1997,6 +1997,13 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let mut tx = client.transaction()
         .map_err(|e| GatewayError::Database(e.to_string()))?;
 
+    // Ensure a full-access source exists for tying into real pipeline (grok branch)
+    let full_source_id = "full-access-grok";
+    let _ = tx.execute(
+        "INSERT INTO sources (id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8::jsonb) ON CONFLICT (id) DO NOTHING",
+        &[&full_source_id, &"Grok Full Access Collector", &"full_access", &"local-system-and-reachable", &requested_by, &"internal", &"trusted", &serde_json::json!({"grok_branch": true, "full_access": true})]
+    );
+
     let collection_run_id = generated_record_id("collection");
     let mut collected_artifacts: Vec<String> = vec![];
     let mut evidence_created: Vec<String> = vec![];
@@ -2005,7 +2012,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         "mode": "full_access_grok",
         "requested_by": requested_by,
         "started_at": format!("{:?}", std::time::SystemTime::now()),
-        "access_note": "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only."
+        "access_note": "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
     });
 
     // 1. Local filesystem - unbounded recursive (anything accessible)
@@ -2160,6 +2167,27 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     summary["total_artifacts"] = serde_json::json!(collected_artifacts.len());
     summary["total_evidence"] = serde_json::json!(evidence_created.len());
 
+    // Tie into real worker pipeline (grok full access - not scaffolded)
+    let work_item_id = generated_record_id("work");
+    let work_payload = serde_json::json!({
+        "collection_run_id": collection_run_id,
+        "source_id": full_source_id,
+        "mode": "full_access_grok",
+        "artifact_count": collected_artifacts.len(),
+        "evidence_count": evidence_created.len(),
+        "grok_full_access": true,
+        "graph_candidates": graph_candidates.len()
+    });
+    let _ = tx.execute(
+        "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'collection_normalization', 'queued', $2, $3::jsonb, NULL)",
+        &[&work_item_id, &requested_by, &work_payload]
+    );
+    let _ = tx.execute(
+        "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'queued', 'work_item', $2, $3, $4::jsonb)",
+        &[&requested_by, &work_item_id, &collection_run_id, &serde_json::json!({"full_access": true})]
+    );
+    summary["normalization_work_item_queued"] = serde_json::json!(work_item_id);
+
     // Record the big collection run
     tx.execute(
         "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'completed', false, $3, $4::jsonb, NULL)",
@@ -2179,6 +2207,12 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     ).map(|r| r.get::<_, String>(0)).unwrap_or_else(|_| summary.to_string());
 
     tx.commit().ok();
+
+    // Tie the collected evidence/artifacts into the real graph (Neo4j via existing pipeline)
+    // This makes graph candidates and new sources/artifacts/docs real in the relationship memory, not just Postgres.
+    let _ = ensure_graph_schema();
+    // sync will pick up the new artifacts, documents, evidence created above
+    let _ = sync_graph_lineage(Some(database_url));  // pass the url we had (grok full access tying to real graph)
 
     Ok(response_body)
 }
