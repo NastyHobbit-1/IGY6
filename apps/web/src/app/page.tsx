@@ -372,6 +372,14 @@ type MediaImportType = {
   safeNext: string;
 };
 
+type LocalProjectDiagnosticsMode = {
+  key: string;
+  label: string;
+  scope: string;
+  collect: string;
+  excluded: string;
+};
+
 type TermHelpContent = {
   title: string;
   explanation: string;
@@ -994,6 +1002,23 @@ const MEDIA_IMPORT_TYPES: MediaImportType[] = [
   }
 ];
 
+const LOCAL_PROJECT_DIAGNOSTICS_MODES: LocalProjectDiagnosticsMode[] = [
+  {
+    key: "local_project_manifest",
+    label: "Local project manifest",
+    scope: "Explicit user-selected project path label plus pasted manifest or file list.",
+    collect: "Reviewed manifest text, include/exclude rules, and safe project notes through Guided Upload after approval.",
+    excluded: "Arbitrary filesystem crawl, .env, SSH keys, credentials, node_modules/vendor caches, build artifacts, and private absolute path dumps."
+  },
+  {
+    key: "pc_diagnostics_export",
+    label: "PC diagnostics export",
+    scope: "Authorized pasted diagnostic export or selected diagnostic file label.",
+    collect: "Reviewed diagnostic text and safe metadata through Guided Upload after redaction.",
+    excluded: "Live system probing, shell commands, browser profiles, tokens, cookies, credentials, private keys, and hidden account data."
+  }
+];
+
 function ConnectorContractStatusPanel() {
   return (
     <section className="panelInset" id="connector-contracts" data-connector-contract-status>
@@ -1280,6 +1305,165 @@ function MediaImportMvp() {
         <span>Select a media type and preview support status, size bounds, and safe next steps.</span>
       </div>
       <script type="application/json" data-media-import-types-json dangerouslySetInnerHTML={{ __html: mediaTypesJson }} />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
+function LocalProjectPcDiagnosticsHardeningPanel() {
+  const modesJson = JSON.stringify(LOCAL_PROJECT_DIAGNOSTICS_MODES).replace(/</g, "\\u003c");
+  const script = `
+(() => {
+  const root = document.querySelector("[data-local-project-pc-diagnostics]");
+  if (!root) return;
+  const modes = JSON.parse(root.querySelector("[data-local-project-pc-modes-json]")?.textContent || "[]");
+  const form = root.querySelector("[data-local-project-pc-preview-form]");
+  const modeSelect = root.querySelector("[name='lp_mode']");
+  const modeStatus = root.querySelector("[data-local-project-pc-mode-status]");
+  const result = root.querySelector("[data-local-project-pc-result]");
+  const value = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const selectedMode = () => modes.find((item) => item.key === modeSelect?.value) || modes[0];
+  const redactPath = (input) => {
+    if (!input) return "not provided";
+    const normalized = input.replace(/\\\\/g, "/");
+    const parts = normalized.split("/").filter(Boolean);
+    const tail = parts.slice(-2).join("/");
+    return tail ? "[redacted]/" + tail : "[redacted path provided]";
+  };
+  const countList = (input) => input.split(/\\r?\\n|,/).map((item) => item.trim()).filter(Boolean).length;
+  const hasSecretSignal = (input) => /(\\.env|id_rsa|private key|password|passwd|secret|token|cookie|authorization|api[_ -]?key|credential|ssh)/i.test(input);
+  const render = (payload) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = payload.title;
+    const body = document.createElement("span");
+    body.textContent = payload.message;
+    result.append(title, body);
+    const details = document.createElement("dl");
+    payload.details.forEach((detail) => {
+      const term = document.createElement("dt");
+      term.textContent = detail.label;
+      const description = document.createElement("dd");
+      description.textContent = detail.value;
+      details.append(term, description);
+    });
+    result.append(details);
+    const list = document.createElement("ul");
+    payload.next.forEach((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      list.appendChild(item);
+    });
+    result.append(list);
+  };
+  const updateStatus = () => {
+    const mode = selectedMode();
+    if (!modeStatus || !mode) return;
+    modeStatus.textContent = mode.label + ": " + mode.scope + " Excludes: " + mode.excluded;
+  };
+  modeSelect?.addEventListener("change", updateStatus);
+  updateStatus();
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const mode = selectedMode();
+    const scope = value("lp_scope");
+    const includeRules = value("lp_include");
+    const excludeRules = value("lp_exclude");
+    const pasted = value("lp_text");
+    const maxFiles = Number(value("lp_max_files") || 0);
+    const maxBytes = Number(value("lp_max_bytes") || 0);
+    if (!scope || !pasted) {
+      render({
+        title: "Dry-run incomplete",
+        message: "Enter explicit scope and paste an authorized manifest or diagnostics export before previewing.",
+        details: [
+          { label: "filesystem reads", value: "none" },
+          { label: "system commands", value: "none" },
+          { label: "collection", value: "not started" }
+        ],
+        next: ["Use a user-selected path label or diagnostic export only.", "Do not paste .env, SSH keys, credentials, tokens, cookies, or private account data."]
+      });
+      return;
+    }
+    const secretSignal = hasSecretSignal(scope + "\\n" + includeRules + "\\n" + excludeRules + "\\n" + pasted);
+    render({
+      title: "Local project / diagnostics dry-run preview",
+      message: "No filesystem read, live probing, command execution, or collection was performed.",
+      details: [
+        { label: "mode", value: mode.label },
+        { label: "scope label", value: redactPath(scope) },
+        { label: "include entries", value: String(countList(includeRules)) },
+        { label: "exclude entries", value: String(countList(excludeRules)) },
+        { label: "file count limit", value: maxFiles > 0 ? String(Math.min(maxFiles, 500)) + " preview cap" : "not set; future collector must enforce a cap" },
+        { label: "byte limit", value: maxBytes > 0 ? String(Math.min(maxBytes, 10 * 1024 * 1024)) + " byte preview cap" : "not set; future collector must enforce a cap" },
+        { label: "pasted text", value: pasted.length + " characters; content not echoed here" },
+        { label: "secret signal", value: secretSignal ? "potential secret/path signal detected; redact before import" : "no obvious secret keyword detected" },
+        { label: "would collect", value: mode.collect },
+        { label: "will not collect", value: mode.excluded }
+      ],
+      next: [
+        "Use Guided Upload for reviewed UTF-8 manifest or diagnostics text after redaction.",
+        "Future automated local_project collection must require explicit selected scope, dry-run preview, file/size caps, secret exclusions, and audit records.",
+        "Do not use this flow for arbitrary filesystem crawling or live diagnostics commands."
+      ]
+    });
+  });
+})();
+`;
+
+  return (
+    <section className="guidedManualText" id="local-project-pc-diagnostics" data-local-project-pc-diagnostics>
+      <div className="guidedManualNotice">
+        <strong>Local project and PC diagnostics hardening.</strong>
+        <span>Dry-run preview for explicit project manifests or authorized diagnostics exports only. It does not read files, crawl folders, or run system commands.</span>
+      </div>
+      <form className="guidedManualForm" data-local-project-pc-preview-form>
+        <label>
+          <span>Mode</span>
+          <select name="lp_mode" defaultValue="local_project_manifest">
+            {LOCAL_PROJECT_DIAGNOSTICS_MODES.map((mode) => (
+              <option key={mode.key} value={mode.key}>{mode.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="actionHint" data-local-project-pc-mode-status />
+        <label>
+          <span>Explicit scope or selected path label</span>
+          <input name="lp_scope" placeholder="D:/Projects/example-app or diagnostics-export-2026-06-07.txt" />
+        </label>
+        <label>
+          <span>Include rules or diagnostic sections</span>
+          <input name="lp_include" placeholder="src/**/*.rs, package.json, hardware summary" />
+        </label>
+        <label>
+          <span>Exclude rules</span>
+          <input name="lp_exclude" placeholder=".env, secrets, keys, node_modules, target, browser profiles" />
+        </label>
+        <div className="guidedManualNewSource">
+          <label>
+            <span>Max files preview cap</span>
+            <input name="lp_max_files" type="number" min="1" max="500" defaultValue="100" />
+          </label>
+          <label>
+            <span>Max bytes preview cap</span>
+            <input name="lp_max_bytes" type="number" min="1024" max="10485760" defaultValue="1048576" />
+          </label>
+        </div>
+        <label>
+          <span>Authorized manifest or diagnostics text</span>
+          <textarea name="lp_text" rows={7} placeholder="Paste reviewed project manifest, file list, or diagnostic export text. Do not paste secrets, credentials, .env, SSH keys, cookies, tokens, or private account data." />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit">Preview scoped import</button>
+          <span>No filesystem crawl, live probing, command execution, or collection starts here.</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-local-project-pc-result>
+        <strong>Ready</strong>
+        <span>Enter explicit scope, include/exclude posture, and authorized text to preview safe import boundaries.</span>
+      </div>
+      <script type="application/json" data-local-project-pc-modes-json dangerouslySetInnerHTML={{ __html: modesJson }} />
       <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
@@ -8206,6 +8390,7 @@ export default async function Home() {
             <UserObservationIngestion sources={sources} approvals={approvals} />
             <BrowserWebRouterCollectorMvp />
             <MediaImportMvp />
+            <LocalProjectPcDiagnosticsHardeningPanel />
             <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
             <div className="stack">
               {recentRuns.map((run) => (

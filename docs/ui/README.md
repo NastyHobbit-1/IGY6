@@ -224,6 +224,20 @@ PDF / Image / Audio / Video Import Foundation:
 - To collect reviewed text now, paste the extracted text into Guided Upload as
   UTF-8 text after removing secrets and private path details.
 
+Local Project / PC Diagnostics Hardening:
+
+- Provides a scoped dry-run preview for local project manifests and authorized
+  PC diagnostics exports.
+- Requires explicit scope or selected path label, include/exclude posture,
+  preview file/byte caps, and pasted authorized manifest or diagnostics text.
+- Redacts the scope label in the preview result and does not echo pasted
+  diagnostics/project text back to the page.
+- Does not read files, crawl folders, run diagnostics commands, probe the
+  system, collect browser profiles, or import credentials, `.env`, SSH keys,
+  cookies, tokens, or private account data.
+- Future automated `local_project` or diagnostics collection must keep explicit
+  scope, dry-run preview, file/size caps, secret exclusions, and audit records.
+
 ### Buttons And Actions
 
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
@@ -240,6 +254,9 @@ PDF / Image / Audio / Video Import Foundation:
 - `Preview media import status` summarizes media type, file metadata, size
   posture, extraction status, and safe next steps. It does not upload or parse
   the file.
+- `Preview scoped import` summarizes local project or PC diagnostics scope,
+  include/exclude posture, caps, secret-signal warning, and safe next steps. It
+  does not read paths, run commands, or collect artifacts.
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
