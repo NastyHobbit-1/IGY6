@@ -354,6 +354,15 @@ type SourceConnectorStatus = {
   cleanupAudit: string;
 };
 
+type BrowserWebRouterImportType = {
+  key: string;
+  label: string;
+  scopePrompt: string;
+  collected: string;
+  excluded: string;
+  sensitivity: string;
+};
+
 type TermHelpContent = {
   title: string;
   explanation: string;
@@ -914,6 +923,33 @@ const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
   }
 ];
 
+const BROWSER_WEB_ROUTER_IMPORT_TYPES: BrowserWebRouterImportType[] = [
+  {
+    key: "browser_page_text",
+    label: "Browser page text export",
+    scopePrompt: "Page title, local export label, or URL copied by the user",
+    collected: "User-pasted visible page text and safe labels only.",
+    excluded: "Browser profiles, cookies, tokens, sessions, local storage, downloads, autofill data, and account data.",
+    sensitivity: "Treat as sensitive until the page text has been reviewed."
+  },
+  {
+    key: "web_page_text",
+    label: "Web page text",
+    scopePrompt: "Single user-provided URL or page label for pasted text",
+    collected: "Manually pasted text from the selected page.",
+    excluded: "Hidden fetches, crawling, login-only content, private accounts, and external requests from this UI.",
+    sensitivity: "Public pages can still include sensitive notes or private copied context."
+  },
+  {
+    key: "router_status_export",
+    label: "Router status/export text",
+    scopePrompt: "Router export label, page name, or diagnostic section",
+    collected: "User-pasted read-only router status or diagnostic text.",
+    excluded: "Router writes, config changes, network scans, credentials, Wi-Fi passwords, tokens, and login automation.",
+    sensitivity: "Network names, device names, IPs, and topology are sensitive by default."
+  }
+];
+
 function ConnectorContractStatusPanel() {
   return (
     <section className="panelInset" id="connector-contracts" data-connector-contract-status>
@@ -943,6 +979,138 @@ function ConnectorContractStatusPanel() {
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function BrowserWebRouterCollectorMvp() {
+  const importTypesJson = JSON.stringify(BROWSER_WEB_ROUTER_IMPORT_TYPES).replace(/</g, "\\u003c");
+  const script = `
+(() => {
+  const root = document.querySelector("[data-browser-web-router-mvp]");
+  if (!root) return;
+  const importTypes = JSON.parse(root.querySelector("[data-browser-web-router-types-json]")?.textContent || "[]");
+  const form = root.querySelector("[data-browser-web-router-preview-form]");
+  const result = root.querySelector("[data-browser-web-router-result]");
+  const typeSelect = root.querySelector("[name='bwr_type']");
+  const scopeInput = root.querySelector("[name='bwr_scope']");
+  const textInput = root.querySelector("[name='bwr_text']");
+  const statusText = root.querySelector("[data-browser-web-router-type-status]");
+  const fieldValue = (name) => root.querySelector("[name='" + name + "']")?.value?.trim() || "";
+  const selectedType = () => importTypes.find((item) => item.key === typeSelect?.value) || importTypes[0];
+  const writeStatus = () => {
+    const type = selectedType();
+    if (!statusText || !type) return;
+    statusText.textContent = type.label + " is dry-run/manual-preview only. " + type.excluded;
+  };
+  const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
+  const renderResult = (payload) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = payload.title;
+    const body = document.createElement("span");
+    body.textContent = payload.message;
+    result.append(title, body);
+    const details = document.createElement("dl");
+    payload.details.forEach((detail) => {
+      const term = document.createElement("dt");
+      term.textContent = detail.label;
+      const description = document.createElement("dd");
+      description.textContent = detail.value;
+      details.append(term, description);
+    });
+    result.append(details);
+    const list = document.createElement("ul");
+    payload.next.forEach((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      list.appendChild(item);
+    });
+    result.append(list);
+  };
+  typeSelect?.addEventListener("change", writeStatus);
+  writeStatus();
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const type = selectedType();
+    const scope = fieldValue("bwr_scope");
+    const text = fieldValue("bwr_text");
+    if (!scope || !text) {
+      renderResult({
+        title: "Dry-run incomplete",
+        message: "Enter an explicit scope and paste authorized text before previewing.",
+        details: [
+          { label: "collection", value: "not started" },
+          { label: "external requests", value: "none" },
+          { label: "router writes", value: "none" }
+        ],
+        next: ["Add a scope label and text excerpt.", "Remove credentials, cookies, tokens, and private account data before any import."]
+      });
+      return;
+    }
+    const lineCount = text.split(/\\r?\\n/).filter((line) => line.trim()).length;
+    const sensitive = looksSensitive(text);
+    renderResult({
+      title: "Dry-run preview only",
+      message: "No collection ran. This preview uses only fields entered in this form and makes no external request.",
+      details: [
+        { label: "scope entered", value: scope },
+        { label: "source posture", value: type.label + " · read-only manual import" },
+        { label: "would collect", value: type.collected },
+        { label: "will not collect", value: type.excluded },
+        { label: "approval", value: "required before sensitive collection; use source permissions and local approvals" },
+        { label: "sensitivity", value: sensitive ? "sensitive terms detected; redact before import" : type.sensitivity },
+        { label: "text size", value: text.length + " characters across " + lineCount + " non-empty line(s)" },
+        { label: "audit posture", value: "future collection must create source, permission, approval when required, collection run, artifact, and work records" }
+      ],
+      next: [
+        "For DIFF-236, this is the product dry-run surface only.",
+        "To collect safe text now, create or select a manual_upload source in Guided Upload and paste the redacted text there.",
+        "Do not paste cookies, tokens, credentials, private account data, browser profile data, or router secrets."
+      ]
+    });
+    if (scopeInput) scopeInput.setAttribute("data-last-previewed", "true");
+    if (textInput) textInput.setAttribute("data-last-previewed", "true");
+  });
+})();
+`;
+
+  return (
+    <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp>
+      <div className="guidedManualNotice">
+        <strong>Browser, web, and router import dry-run MVP.</strong>
+        <span>Manual text preview only. This does not fetch pages, read browser profiles, collect cookies/tokens, log into accounts, scan networks, or write router configuration.</span>
+      </div>
+      <form className="guidedManualForm" data-browser-web-router-preview-form>
+        <label>
+          <span>Import type</span>
+          <select name="bwr_type" defaultValue="browser_page_text">
+            {BROWSER_WEB_ROUTER_IMPORT_TYPES.map((type) => (
+              <option key={type.key} value={type.key}>{type.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="actionHint" data-browser-web-router-type-status />
+        <label>
+          <span>Explicit scope</span>
+          <input name="bwr_scope" placeholder={BROWSER_WEB_ROUTER_IMPORT_TYPES[0].scopePrompt} />
+        </label>
+        <label>
+          <span>Authorized pasted text</span>
+          <textarea name="bwr_text" rows={7} placeholder="Paste redacted visible page text, web text, or read-only router status/export text. Do not paste cookies, tokens, credentials, or router secrets." />
+        </label>
+        <div className="guidedManualActions">
+          <button type="submit">Preview dry-run only</button>
+          <span>Collection is not started from this surface. Use Guided Upload only after review/redaction.</span>
+        </div>
+      </form>
+      <div className="guidedManualResult" data-browser-web-router-result>
+        <strong>Ready</strong>
+        <span>Choose a type, enter explicit scope, paste authorized text, and preview what would be collected or excluded.</span>
+      </div>
+      <script type="application/json" data-browser-web-router-types-json dangerouslySetInnerHTML={{ __html: importTypesJson }} />
+      <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
 }
@@ -7866,6 +8034,7 @@ export default async function Home() {
             </ol>
             <ConversationHistoryImport sources={sources} approvals={approvals} />
             <UserObservationIngestion sources={sources} approvals={approvals} />
+            <BrowserWebRouterCollectorMvp />
             <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
             <div className="stack">
               {recentRuns.map((run) => (

@@ -197,6 +197,19 @@ User Observation Ingestion:
 - Related IDs or labels are stored as plain text in this MVP; they are not
   validated links unless a later DIFF adds that behavior.
 
+Browser / Web / Router Import Dry-Run:
+
+- Provides a normal-user preview surface for browser page text exports, web
+  page text, and router status/export text.
+- Accepts explicit user-entered scope plus manually pasted authorized text.
+- Reports what would be collected, what is excluded, approval posture,
+  sensitivity warnings, approximate text size, and audit expectations.
+- Does not start collection from this panel. To collect safe reviewed text now,
+  use Guided Upload with a `manual_upload` source after redaction.
+- Does not fetch pages, crawl sites, read browser profiles, collect cookies,
+  tokens, credentials, browser local storage, private account data, router
+  secrets, or perform router writes.
+
 ### Buttons And Actions
 
 - `Submit manual text` sends pasted UTF-8 text through the existing manual
@@ -207,6 +220,9 @@ User Observation Ingestion:
   source.
 - `Record observation` sends owner-entered UTF-8 observation text through the
   same local text pipeline under a `user_observation` source.
+- `Preview dry-run only` for browser/web/router text uses only the fields
+  entered in the page to summarize scope, exclusions, sensitivity, and audit
+  posture. It does not call the API or collect artifacts.
 - `Save source review` records a trust/sensitivity review update for an
   existing source and keeps linked evidence counts visible.
 - Approval-required source permissions stop in a pending state and tell you to
