@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, "..");
+const apiDir = join(appDir, "src/app/api");
 const page = readFileSync(join(appDir, "src/app/page.tsx"), "utf8");
 const styles = readFileSync(join(appDir, "src/app/globals.css"), "utf8");
 
@@ -41,9 +42,38 @@ includesAll("chat-first shell", page, [
   "data-chat-send",
   "data-chat-chip",
   "UnifiedChatHub",
+  "OnboardingJourney",
+  "journeyStrip",
   "chatFirstShell",
   "Ask a question or request an action..."
 ]);
+
+includesAll("browser api proxies", page, [
+  "/api/user/status",
+  "/api/user/change-password",
+  "/api/artifacts",
+  "/api/collection-runs/full-access",
+  "/api/chat/evidence-answer"
+]);
+
+const requiredApiRoutes = [
+  "user/status/route.ts",
+  "user/change-password/route.ts",
+  "user/generate-totp/route.ts",
+  "user/confirm-totp/route.ts",
+  "artifacts/route.ts",
+  "artifacts/[artifact_id]/content/route.ts",
+  "collection-runs/full-access/route.ts",
+  "chat/evidence-answer/route.ts",
+  "chat/retrieval-preview/route.ts",
+  "settings/env/route.ts",
+  "settings/env/verify/route.ts",
+  "settings/env/apply/route.ts",
+];
+
+for (const route of requiredApiRoutes) {
+  check(`api route file: ${route}`, existsSync(join(apiDir, route)));
+}
 
 includesAll("workflow section anchors", page, [
   'id="home"',
@@ -208,7 +238,9 @@ includesAll("supporting styles", styles, [
   ".chatComposer",
   ".chatQuickChips",
   ".chatEnginePanel",
-  ".chatFirstShell"
+  ".chatFirstShell",
+  ".journeyStrip",
+  ".journeyCard"
 ]);
 
 if (failures.length > 0) {

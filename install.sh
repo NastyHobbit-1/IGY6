@@ -43,6 +43,17 @@ chmod +x "$INSTALL_DIR/igy6"
 
 echo "Installed igy6 to $INSTALL_DIR/igy6"
 
+# Persist repo location for global installs (parity with install.ps1)
+for rc_file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+  if [ -f "$rc_file" ]; then
+    if ! grep -q 'export IGY6_REPO=' "$rc_file" 2>/dev/null; then
+      echo "export IGY6_REPO=\"$REPO_ROOT\"" >> "$rc_file"
+      echo "Set IGY6_REPO in $rc_file"
+    fi
+  fi
+done
+export IGY6_REPO="$REPO_ROOT"
+
 # Update shell PATH (idempotent)
 for rc_file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile"; do
   if [ -f "$rc_file" ]; then
@@ -69,3 +80,10 @@ echo "Note: Keep this repo directory ($REPO_ROOT) - the binary auto-finds it."
 echo "Docker must be running."
 echo "First run will bootstrap .env with password 'ThatDog123' etc."
 echo "igy6 auto-picks WEB_PORT/APP_PORT if 3000/8000 are busy and verifies the IGY6 UI before opening the browser."
+echo ""
+echo "Optional local LLM (Ollama):"
+echo "  scripts/ollama-local-setup.sh --check"
+echo "  scripts/ollama-local-setup.sh --install --yes   # Linux only"
+echo "If Ollama is already running, igy6 start auto-enables LLM_PROVIDER=ollama."
+echo ""
+echo "Full working guide: docs/WORKING.md"

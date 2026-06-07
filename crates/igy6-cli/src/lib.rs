@@ -456,6 +456,80 @@ fn find_free_local_port(start: u16) -> Option<u16> {
     (start..start.saturating_add(MAX_PORT_TRIES)).find(|port| is_local_port_free(*port))
 }
 
+fn ollama_api_reachable() -> bool {
+    TcpStream::connect_timeout(
+        &"127.0.0.1:11434"
+            .parse()
+            .expect("ollama address should parse"),
+        Duration::from_secs(2),
+    )
+    .is_ok()
+}
+
+fn detect_ollama_model() -> Option<String> {
+    if !command_available("ollama") {
+        return None;
+    }
+    let output = Command::new("ollama")
+        .arg("list")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines().skip(1) {
+        let name = line.split_whitespace().next()?.trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+fn set_env_kv(content: &str, key: &str, value: &str) -> String {
+    let pattern = format!("{key}=");
+    if content.lines().any(|line| line.starts_with(&pattern)) {
+        content
+            .lines()
+            .map(|line| {
+                if line.starts_with(&pattern) {
+                    format!("{key}={value}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + if content.ends_with('\n') { "\n" } else { "" }
+    } else {
+        format!("{content}\n{key}={value}\n")
+    }
+}
+
+/// If Ollama is running locally and LLM is still disabled, enable it with the first installed model.
+fn ensure_ollama_env(env_file: &Path) -> Result<(), CliError> {
+    if !env_file.is_file() || !ollama_api_reachable() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(env_file)
+        .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env for Ollama: {e}")))?;
+    if content.contains("LLM_PROVIDER=ollama") {
+        return Ok(());
+    }
+    let model = detect_ollama_model().unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
+    let mut updated = set_env_kv(&content, "LLM_PROVIDER", "ollama");
+    updated = set_env_kv(&updated, "OLLAMA_BASE_URL", "http://host.docker.internal:11434");
+    updated = set_env_kv(&updated, "OLLAMA_MODEL", &model);
+    fs::write(env_file, updated)
+        .map_err(|e| CliError::ProcessLaunch(format!("Failed to write Ollama .env settings: {e}")))?;
+    println!(
+        "Ollama detected at 127.0.0.1:11434 — enabled local LLM (OLLAMA_MODEL={model})."
+    );
+    println!("Task routing uses configs/local-llm-routing.json inside the repo.");
+    Ok(())
+}
+
 fn ensure_runtime_ports(repo_root: &Path, env_file: &Path) -> Result<RuntimePorts, CliError> {
     let mut content = fs::read_to_string(env_file)
         .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env: {e}")))?;
@@ -692,6 +766,8 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
             println!("Created .env with grok defaults (password: ThatDog123, data dir: {})", data_dir);
         }
     }
+
+    ensure_ollama_env(&env_file)?;
 
     let ports = ensure_runtime_ports(repo_root, &env_file)?;
 

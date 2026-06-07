@@ -9333,11 +9333,16 @@ fn is_settings_bool(value: &str) -> bool {
 }
 
 fn settings_storage_path_safe(value: &str) -> bool {
-    let path = Path::new(value);
-    path.is_absolute()
-        && !path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Container paths in .env are POSIX-style even when the gateway runs on Windows hosts.
+    let normalized = trimmed.replace('\\', "/");
+    let posix_absolute = normalized.starts_with('/');
+    let path = Path::new(trimmed);
+    let absolute = path.is_absolute() || posix_absolute;
+    absolute && !normalized.split('/').any(|part| part == "..")
 }
 
 fn settings_env_paths_are_safe(env_path: &Path, backup_dir: &Path) -> bool {

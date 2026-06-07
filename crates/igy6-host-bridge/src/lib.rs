@@ -69,7 +69,9 @@ pub fn allowed_action(action_name: &str) -> Option<&'static ActionSpec> {
 pub fn fixed_argv(repo_root: &Path, action_name: &str) -> Option<Vec<String>> {
     let spec = allowed_action(action_name)?;
     let script = repo_root.join(spec.script);
-    let mut argv = vec![script.to_string_lossy().to_string()];
+    // Shell scripts always use POSIX paths, even when the bridge runs on Windows hosts.
+    let script_path = script.to_string_lossy().replace('\\', "/");
+    let mut argv = vec![script_path];
     argv.extend(spec.args.iter().map(|arg| (*arg).to_string()));
     Some(argv)
 }

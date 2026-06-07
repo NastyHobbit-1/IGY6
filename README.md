@@ -1,6 +1,8 @@
 # IGY6 (grok branch)
 
-**Operating guide for the running program on the grok branch only.** This document (and all other docs in the tree) now focuses exclusively on setup, how to run and use the program, and its features. No build, compile, development, or cargo/npm instructions.
+**Operating guide for the running program on the grok branch only.**
+
+**Quick path:** `install.ps1` or `install.sh` → `igy6 start` → use the printed URL. Full flow tree, verification matrix, and developer instructions: **[docs/WORKING.md](docs/WORKING.md)**.
 
 On this branch the program is a local-only evidence + aggressive collection workspace. It can deeply and thoroughly collect from any target it can reach (local files/directories, web URLs/pages, system state, WiFi, etc.), stores **everything only inside itself** (no content exfil), preserves full provenance, and provides an easy Image & Video Library for viewing collected media at full/original resolution directly from the source.
 
