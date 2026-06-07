@@ -19,6 +19,37 @@ Default password: "ThatDog123". The program is password-protected. Optional TOTP
 4. Open the printed URL in your browser.
 5. Unlock with the current password ("ThatDog123" by default). If you have linked TOTP, also provide a current code from your authenticator app when performing protected actions.
 
+## The Compiled `igy6` Executable (Recommended for Daily Use)
+
+For the easiest experience, use the compiled `igy6` binary instead of calling `scripts/run.sh` directly:
+
+- It starts the full stack detached.
+- Waits for the UI to be ready.
+- Automatically opens your browser to the local UI URL.
+- Handles first-run .env bootstrap (grok defaults, password, data dir, telemetry off).
+- Cross-platform (Linux, macOS, Windows with Docker Desktop).
+
+### Easy Install
+
+From the Grok6 root:
+
+- Linux/macOS: `./install.sh`
+- Windows (PowerShell): `.\install.ps1`
+
+Then (restart shell if needed):
+
+```bash
+igy6
+# or
+igy6 start
+```
+
+Other commands: `igy6 stop`, `igy6 health`, `igy6 --help`, `igy6 run` (for foreground logs if desired).
+
+The binary finds the repo root automatically (or respects `IGY6_REPO` env if installed globally).
+
+Stop with `igy6 stop` or the scripts.
+
 Stop with Ctrl+C or the stop/restart scripts in `scripts/`.
 
 **Dynamic URL**: The start logic (web dynamic starter + support in operator scripts) detects port conflicts and switches to a free one, always telling you the usable local address. No manual port editing required.
