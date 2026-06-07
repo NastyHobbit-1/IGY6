@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,8 @@ ROUTE_CHECKS: tuple[tuple[str, str], ...] = (
     ("graph_schema", "/memory/graph/schema"),
 )
 TOOLS = ("git", "node", "npm", "cargo", "rustc", "python3", "docker")
+SENSITIVE_RE = re.compile(r"(secret|token|password|cookie|credential|private[_-]?key|api[_-]?key)", re.IGNORECASE)
+PRIVATE_PATH_RE = re.compile(r"(^|[\s\"'=])((/home|/Users|/mnt|/var|/tmp)/[A-Za-z0-9_.@+/-]+|[A-Za-z]:\\[^\\]+)")
 
 
 def utc_now() -> str:
@@ -183,6 +186,26 @@ def build_bundle(api_base_url: str, timeout: float) -> dict[str, Any]:
     }
 
 
+def safety_findings(value: Any, path: str = "$") -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            item_path = f"{path}.{key_text}"
+            if SENSITIVE_RE.search(key_text):
+                findings.append(f"sensitive-shaped key at {item_path}")
+            findings.extend(safety_findings(item, item_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            findings.extend(safety_findings(item, f"{path}[{index}]"))
+    elif isinstance(value, str):
+        if not path.startswith("$.exclusions") and SENSITIVE_RE.search(value):
+            findings.append(f"sensitive-shaped value at {path}")
+        if PRIVATE_PATH_RE.search(value):
+            findings.append(f"private path value at {path}")
+    return findings
+
+
 def write_bundle(bundle: dict[str, Any], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / f"igy6-diagnostics-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -210,6 +233,7 @@ def print_summary(bundle: dict[str, Any], target: Path | None) -> None:
         except ValueError:
             display = target
         print(f"wrote: {display}")
+    print("safety_validation: passed")
 
 
 def main() -> int:
@@ -221,6 +245,15 @@ def main() -> int:
     args = parser.parse_args()
 
     bundle = build_bundle(args.api_base_url, args.timeout)
+    unsafe_findings = safety_findings(bundle)
+    if unsafe_findings:
+        print("IGY6 Diagnostics Bundle MVP")
+        print(f"schema_version: {bundle['schema_version']}")
+        print("safety_validation: failed")
+        print("unsafe_findings:")
+        for finding in unsafe_findings:
+            print(f"  {finding}")
+        return 1
     target = None if args.dry_run else write_bundle(bundle, args.output_dir)
     print_summary(bundle, target)
     return 0

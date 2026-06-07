@@ -46,7 +46,7 @@ SUPPORTED_CLASSES = {
 }
 SECRET_KEY_RE = re.compile(r"(secret|token|password|cookie|credential|private_key|api_key)", re.IGNORECASE)
 CONTENT_KEY_RE = re.compile(r"(content|body|text)", re.IGNORECASE)
-RAW_PATH_RE = re.compile(r"(^|[\s\"'=])((/[A-Za-z0-9_.-]+){2,}|[A-Za-z]:\\[^\\]+)")
+PRIVATE_PATH_RE = re.compile(r"(^|[\s\"'=])((/home|/Users|/mnt|/var|/tmp)/[A-Za-z0-9_.@+/-]+|[A-Za-z]:\\[^\\]+)")
 
 
 def latest_bundle() -> Path:
@@ -107,12 +107,12 @@ def walk(value: Any, path: str = "$") -> list[tuple[str, str, Any]]:
     elif isinstance(value, str):
         if SECRET_KEY_RE.search(value) and value != "[excluded]":
             findings.append(("secret_value_hint", path, value))
-        if RAW_PATH_RE.search(value) and not value.startswith("/api/"):
+        if PRIVATE_PATH_RE.search(value):
             findings.append(("raw_path_hint", path, value))
     return findings
 
 
-def validate(bundle: dict[str, Any]) -> tuple[list[str], list[str], dict[str, int], list[str]]:
+def validate(bundle: dict[str, Any]) -> tuple[list[str], list[str], list[str], dict[str, int], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     missing = [field for field in EXPECTED_TOP_LEVEL_FIELDS if field not in bundle]
@@ -159,15 +159,20 @@ def validate(bundle: dict[str, Any]) -> tuple[list[str], list[str], dict[str, in
         preview = scalar(value)
         unsafe_findings.append(f"{finding_type} at {path}: {preview}")
     if unsafe_findings:
-        warnings.extend(unsafe_findings)
+        warnings.append("unsafe bundle content hints found; pass --strict-safety to fail closed")
 
-    return errors, warnings, record_counts, unsupported_classes
+    return errors, warnings, unsafe_findings, record_counts, unsupported_classes
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate an IGY6 backup export bundle without restoring it.")
     parser.add_argument("--bundle", type=Path, help="Path to a DIFF-229 backup export bundle.")
     parser.add_argument("--latest", action="store_true", help="Use the newest bundle in .igy6-local/exports.")
+    parser.add_argument(
+        "--strict-safety",
+        action="store_true",
+        help="Exit nonzero when secret/content/private-path hints are present.",
+    )
     args = parser.parse_args()
 
     if args.bundle and args.latest:
@@ -176,7 +181,7 @@ def main() -> int:
     bundle_path = bundle_path.expanduser().resolve()
 
     bundle = load_bundle(bundle_path)
-    errors, warnings, counts, unsupported_classes = validate(bundle)
+    errors, warnings, unsafe_findings, counts, unsupported_classes = validate(bundle)
 
     try:
         display_path = bundle_path.relative_to(REPO_ROOT)
@@ -204,10 +209,19 @@ def main() -> int:
         print("warnings:")
         for warning in warnings:
             print(f"  {warning}")
+    if unsafe_findings:
+        print("unsafe_findings:")
+        for finding in unsafe_findings:
+            print(f"  {finding}")
+    print(f"strict_safety: {'true' if args.strict_safety else 'false'}")
     if errors:
         print("errors:")
         for error in errors:
             print(f"  {error}")
+        return 1
+    if args.strict_safety and unsafe_findings:
+        print("errors:")
+        print("  strict safety failed because unsafe bundle content hints were found")
         return 1
     return 0
 

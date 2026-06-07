@@ -626,6 +626,17 @@ Safety, Approvals, And Policy:
 - Metadata-only local export and restore dry-run validation exist as lifecycle
   scripts. They are not complete service backups or destructive restore
   workflows.
+- Backup export now validates the sanitized bundle before writing and fails
+  closed if secret-shaped values, non-excluded content fields, or private path
+  hints remain.
+- Restore dry-run supports strict safety mode for release readiness checks. It
+  still validates only; it does not write restored records or mutate runtime
+  services.
+- Diagnostics bundle creation performs a self-redaction check before writing.
+  It records route and repo posture summaries only.
+- Release readiness is documented in
+  `docs/runtime/RELEASE_READINESS_CHECKLIST.md`; promotion remains deferred
+  until explicit owner instruction.
 - Lifecycle audit treats secrets and `.env` as excluded from product exports.
   Raw artifacts are sensitive and are excluded from the metadata export MVP;
   future owner-selected backup/export flows need explicit warnings.

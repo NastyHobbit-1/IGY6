@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -62,6 +63,8 @@ DROP_KEY_PARTS = (
     "api_key",
 )
 PATH_KEY_PARTS = ("path", "location", "url", "uri")
+SECRET_VALUE_RE = re.compile(r"(secret|token|password|cookie|credential|private[_-]?key|api[_-]?key)", re.IGNORECASE)
+PRIVATE_PATH_RE = re.compile(r"(^|[\s\"'=])((/home|/Users|/mnt|/var|/tmp)/[A-Za-z0-9_.@+/-]+|[A-Za-z]:\\[^\\]+)")
 
 
 def scalar(value: Any) -> bool:
@@ -133,6 +136,28 @@ def sanitize(value: Any, key: str = "") -> Any:
     if isinstance(value, dict):
         return {str(item_key): sanitize(item_value, str(item_key)) for item_key, item_value in value.items()}
     return str(value)[:MAX_STRING_LENGTH]
+
+
+def safety_findings(value: Any, path: str = "$") -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            item_path = f"{path}.{key_text}"
+            if should_drop_key(key_text) and item != "[excluded]":
+                findings.append(f"unsafe non-excluded sensitive/content key at {item_path}")
+            if should_redact_path_key(key_text) and isinstance(item, str) and item != "[redacted-local-reference]":
+                findings.append(f"unsafe non-redacted reference key at {item_path}")
+            findings.extend(safety_findings(item, item_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            findings.extend(safety_findings(item, f"{path}[{index}]"))
+    elif isinstance(value, str):
+        if SECRET_VALUE_RE.search(value) and value != "[excluded]":
+            findings.append(f"unsafe secret-shaped value at {path}")
+        if PRIVATE_PATH_RE.search(value) and value != "[redacted-local-reference]":
+            findings.append(f"unsafe private path value at {path}")
+    return findings
 
 
 def records_from_payload(payload: Any) -> list[Any]:
@@ -216,6 +241,7 @@ def main() -> int:
     args = parser.parse_args()
 
     bundle, warnings = build_bundle(args.api_base_url, args.timeout)
+    unsafe_findings = safety_findings(bundle)
     counts = bundle["export"]["record_counts"]
     included = sum(1 for value in bundle["classes"].values() if value.get("status") == "included")
     unavailable = len(bundle["classes"]) - included
@@ -228,9 +254,16 @@ def main() -> int:
     print("record_counts:")
     for class_name in sorted(counts):
         print(f"  {class_name}: {counts[class_name]}")
+    if unsafe_findings:
+        print("unsafe_findings:")
+        for finding in unsafe_findings:
+            print(f"  {finding}")
+        print("safety_validation: failed")
+        return 1
 
     if args.dry_run:
         print("dry_run: true")
+        print("safety_validation: passed")
         return 0 if not warnings else 2
 
     target = write_bundle(bundle, args.output_dir)
@@ -239,6 +272,7 @@ def main() -> int:
     except ValueError:
         display = target
     print(f"wrote: {display}")
+    print("safety_validation: passed")
     if warnings:
         print("warnings:")
         for warning in warnings:

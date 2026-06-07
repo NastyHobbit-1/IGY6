@@ -8,6 +8,7 @@ PAGE_FILE="${REPO_ROOT}/apps/web/src/app/page.tsx"
 usage() {
   cat <<'EOF'
 Usage: scripts/normal-user-product-smoke.sh --check
+       scripts/normal-user-product-smoke.sh --release-readiness-check
        scripts/normal-user-product-smoke.sh --owner-commands
        scripts/normal-user-product-smoke.sh --help
 
@@ -19,6 +20,10 @@ Modes:
 
   --owner-commands
     Print the owner-run WSL commands for live synthetic product-path smoke.
+
+  --release-readiness-check
+    Codex-safe check for lifecycle scripts and release-readiness documentation.
+    It does not run Docker, restore data, delete data, or read runtime records.
 
 Safety:
   - Synthetic data only.
@@ -82,12 +87,47 @@ Do not use private runtime data for this smoke.
 EOF
 }
 
+release_readiness_check() {
+  local failures=0
+  check_markers || failures=$((failures + 1))
+
+  for path in \
+    "scripts/backup-export-mvp.sh" \
+    "scripts/restore-dry-run-mvp.sh" \
+    "scripts/diagnostics-bundle-mvp.sh" \
+    "docs/runtime/NORMAL_USER_PRODUCT_SMOKE.md" \
+    "docs/runtime/RELEASE_READINESS_CHECKLIST.md"; do
+    if [[ -f "${REPO_ROOT}/${path}" ]]; then
+      printf 'PASS release-readiness file present: %s\n' "${path}"
+    else
+      printf 'FAIL release-readiness file missing: %s\n' "${path}" >&2
+      failures=$((failures + 1))
+    fi
+  done
+
+  if grep -Fq "Promotion remains deferred" "${REPO_ROOT}/docs/runtime/RELEASE_READINESS_CHECKLIST.md" 2>/dev/null; then
+    printf 'PASS promotion deferral marker present\n'
+  else
+    printf 'FAIL promotion deferral marker missing\n' >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ "${failures}" -gt 0 ]]; then
+    printf 'FAIL release-readiness check found %s failure(s)\n' "${failures}" >&2
+    return 1
+  fi
+  printf 'PASS release-readiness check passed\n'
+}
+
 case "${1:-}" in
   --check)
     check_markers
     ;;
   --owner-commands)
     print_owner_commands
+    ;;
+  --release-readiness-check)
+    release_readiness_check
     ;;
   --help|-h|"")
     usage

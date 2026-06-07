@@ -1,0 +1,33 @@
+{
+  "classes": {
+    "sources": {
+      "records": [
+        {
+          "id": 1,
+          "source_type": "manual_upload",
+          "token": "synthetic-token-for-strict-safety-test"
+        }
+      ],
+      "status": "included"
+    }
+  },
+  "created_at_utc": "2026-06-07T00:00:00Z",
+  "export": {
+    "endpoint_paths": {
+      "sources": "/sources"
+    },
+    "included_classes": [
+      "sources"
+    ],
+    "mode": "metadata_only",
+    "record_counts": {
+      "sources": 1
+    }
+  },
+  "repo": {
+    "branch": "dev",
+    "head": "synthetic"
+  },
+  "schema_version": "igy6.backup_export.v1",
+  "warnings": []
+}
