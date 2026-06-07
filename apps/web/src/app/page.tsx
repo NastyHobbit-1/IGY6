@@ -431,7 +431,7 @@ type TermHelpContent = {
 const TERM_HELP: Record<string, TermHelpContent> = {
   source: {
     title: "Source",
-    explanation: "A Source is a registered place IGY6 may collect or review data from. Current source types include manual_upload for manually added UTF-8 text, local_project for scoped files under a container-visible folder, user_observation for notes, conversation_history for imported conversation records, and planned or disabled connector-backed types such as browser_export, web_public, local_pc_diagnostics, router_network, and media_import.",
+    explanation: "A Source is a registered place IGY6 may collect or review data from. On the grok branch many more source types are now active for registration, dry-run preview, permissioned collection, artifact storage, and evidence item creation: browser_export, media_file, wifi_signal, stream_capture, plus the previous ones (manual_upload, conversation_history, user_observation, local_project, web_*, router_network, local_pc_diagnostics). Some deep extraction (full OCR/vision/audio for media, rich browser history parsing) remains collector-specific or deferred, but the provenance, artifact, collection_run, and basic evidence paths are real.",
     manage: "Manage sources in Data & Knowledge; raw route controls are in Advanced.",
     purpose: "Sources define what evidence IGY6 is allowed to use before collection, normalization, search, reports, or review.",
     warning: "A registered source does not grant broad PC or account access; permissions and approvals still apply."
@@ -1109,7 +1109,7 @@ function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " is dry-run/manual-preview only. " + type.excluded;
+    statusText.textContent = type.label + " — grok branch: dry-run + collection + artifact + evidence flow now accept this type (user-provided exports/files only; see collector contract). " + type.excluded;
   };
   const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
   const renderResult = (payload) => {

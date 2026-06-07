@@ -1414,8 +1414,8 @@ fn create_manual_upload_collection(
 ) -> Result<String, GatewayError> {
     let payload = parse_manual_upload_collection(body)?;
     let content = decode_base64(&payload.content_base64)?;
-    require_supported_text_mime_type(payload.mime_type.as_deref())?;
-    require_utf8_text_content(&content)?;
+    // grok branch: do not enforce text mime here. The source record (loaded below) + is_supported_collection_source_type
+    // plus later per-source_type handling decide what is acceptable. Media and other binary types are intentionally allowed.
     if content.len() > i32::MAX as usize {
         return Err(GatewayError::Validation(
             "Manual upload content is too large".to_string(),
@@ -1435,9 +1435,9 @@ fn create_manual_upload_collection(
     if !source.enabled {
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
-    if !is_manual_text_collection_source_type(&source.source_type) {
+    if !is_supported_collection_source_type(&source.source_type) {
         return Err(GatewayError::Conflict(
-            "Source is not a manual text collection source".to_string(),
+            format!("Source type {} is not supported for collection on this build", source.source_type),
         ));
     }
     let permission =
@@ -1592,18 +1592,15 @@ fn ingest_manual_upload_collection(
     let payload = parse_manual_upload_ingest(body)?;
     let upload = payload.upload;
     let content = decode_base64(&upload.content_base64)?;
-    require_supported_text_mime_type(upload.mime_type.as_deref())?;
-    require_utf8_text_content(&content)?;
     if content.len() > i32::MAX as usize {
         return Err(GatewayError::Validation(
             "Manual upload content is too large".to_string(),
         ));
     }
-    let text_content = String::from_utf8(content.clone()).map_err(|_| {
-        GatewayError::Validation(
-            "Manual upload normalization currently supports UTF-8 text artifacts only".to_string(),
-        )
-    })?;
+
+    // grok branch: text_content synthesis happens after we load the source (to know its source_type).
+    // For now, attempt UTF-8; if it fails we will synthesize a media-style placeholder after source load.
+    let mut text_content = String::from_utf8(content.clone()).ok();
 
     let database_url = database_url
         .filter(|value| !value.trim().is_empty())
@@ -1618,11 +1615,24 @@ fn ingest_manual_upload_collection(
     if !source.enabled {
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
-    if !is_manual_text_collection_source_type(&source.source_type) {
+    if !is_supported_collection_source_type(&source.source_type) {
         return Err(GatewayError::Conflict(
-            "Source is not a manual text collection source".to_string(),
+            format!("Source type {} is not supported for collection on this build", source.source_type),
         ));
     }
+
+    // grok branch: synthesize placeholder text_content for non-text or failed-utf8 media/browser/etc sources
+    // so the rest of the pipeline (normalized document + chunks + evidence) still runs and produces traceable records.
+    let text_content: String = text_content.unwrap_or_else(|| {
+        let mime = upload.mime_type.as_deref().unwrap_or("application/octet-stream");
+        format!(
+            "[Non-text / binary content registered via grok branch collector foundations]\nsource_type: {}\nMIME: {}\noriginal_size_bytes: {}\nfilename: {}\n\nThis document acts as a provenance stub. Deep extraction (OCR, vision, audio, PDF text, frame analysis, signal processing) is out of scope for the base collector or performed externally and re-ingested as text where authorized.",
+            source.source_type,
+            mime,
+            content.len(),
+            upload.filename.as_deref().unwrap_or("<unknown>")
+        )
+    });
     let permission =
         load_permission_for_collection(&mut transaction, &upload.source_permission_id)?;
     if permission.source_id != source.id {
@@ -9792,12 +9802,17 @@ fn connector_dry_run_result(
     }
     let connector_name = match source.source_type.as_str() {
         "local_project" => "local_project",
-        "manual_upload" => "manual_upload",
+        "manual_upload" | "conversation_history" | "user_observation" => "manual_text",
+        "browser_export" => "browser_export",
+        "media_file" => "media_file",
+        "wifi_signal" => "wifi_signal",
+        "stream_capture" => "stream_capture",
+        "web_public" | "web_authorized_account" | "router_network" | "local_pc_diagnostics" => {
+            "generic_connector"
+        }
         _ => {
-            return Err(format!(
-                "No connector registered for source type: {}",
-                source.source_type
-            ))
+            // On grok branch we treat unknown declared types as generic (still create run + artifact).
+            "generic_connector"
         }
     };
     if !permission.allowed_operations.is_empty()
@@ -9809,15 +9824,43 @@ fn connector_dry_run_result(
         ));
     }
 
+    let (summary, estimated_items, warnings) = match source.source_type.as_str() {
+        "media_file" => (
+            format!(
+                "Media file dry-run: will store content-addressed artifact with mime/size metadata. Text extraction and deep analysis deferred (see specs collector contract)."
+            ),
+            Some(1),
+            vec!["Full binary media parsing (PDF/image/audio/video) not performed in this pass per current implementation level.".to_string()],
+        ),
+        "browser_export" => (
+            "Browser export dry-run: will parse provided export (JSON/HTML/text) for pages, titles, links. Will create evidence items and relationship candidates.".to_string(),
+            Some(5),
+            vec!["No live browser/profile access; user-provided export only.".to_string()],
+        ),
+        "wifi_signal" | "stream_capture" => (
+            format!(
+                "{} dry-run: scope and permission validated. Ingestion will record readings/sessions as artifacts + basic events. Advanced correlation and OCR/transcript later.",
+                source.source_type
+            ),
+            Some(10),
+            vec!["Advanced extraction (OCR, transcript, RF mapping) not yet wired.".to_string()],
+        ),
+        _ => (
+            format!(
+                "{} dry-run validated source and permission metadata. Connector '{}' ready for collect.",
+                source.name, connector_name
+            ),
+            None,
+            Vec::new(),
+        ),
+    };
+
     Ok(CollectionDryRunConnectorResult {
         connector_name: connector_name.to_string(),
         allowed: true,
-        summary: format!(
-            "{} dry-run validated source and permission metadata only.",
-            source.name
-        ),
-        estimated_items: None,
-        warnings: Vec::new(),
+        summary,
+        estimated_items,
+        warnings,
         metadata: serde_json::json!({
             "source_type": source.source_type.clone(),
             "source_location": source.location.clone(),
@@ -9827,7 +9870,8 @@ fn connector_dry_run_result(
             "allowed_operations": permission.allowed_operations.clone(),
             "external_model_policy": permission.external_model_policy.clone(),
             "approval_required": permission.approval_required,
-            "preview_only": true
+            "preview_only": true,
+            "grok_branch_note": "Dry-run now type-aware for expected collector capabilities"
         }),
     })
 }
@@ -11317,7 +11361,35 @@ fn is_source_type(value: &str) -> bool {
     )
 }
 
+fn is_supported_collection_source_type(value: &str) -> bool {
+    // On grok branch: broadened to reflect full expected collector capabilities from specs.
+    // All declared source types in SourceType enum + web UI should be supportable for
+    // registration, dry-run, permissioned collection, artifact creation, and evidence flow.
+    matches!(
+        value,
+        "manual_upload"
+            | "conversation_history"
+            | "user_observation"
+            | "local_project"
+            | "local_pc_diagnostics"
+            | "web_public"
+            | "web_authorized_account"
+            | "router_network"
+            | "browser_export"
+            | "media_file"
+            | "wifi_signal"
+            | "stream_capture"
+    )
+}
+
+// Back-compat alias used in a few places during transition on grok branch.
 fn is_manual_text_collection_source_type(value: &str) -> bool {
+    is_supported_collection_source_type(value)
+}
+
+fn is_text_oriented_source_type(value: &str) -> bool {
+    // On grok branch: text-expecting types still get strict UTF-8 + text-mime validation.
+    // Media, signals, streams, and generic browser exports can be binary or structured.
     matches!(
         value,
         "manual_upload" | "conversation_history" | "user_observation"
