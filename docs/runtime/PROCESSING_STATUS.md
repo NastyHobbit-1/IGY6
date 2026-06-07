@@ -141,10 +141,10 @@ API logs:
 docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api
 ```
 
-Redis logs:
+Worker logs:
 
 ```bash
-docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 redis
+docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 worker
 ```
 
 Optional local Ollama check:

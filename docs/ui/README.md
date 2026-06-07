@@ -6,13 +6,18 @@ The program is password protected (default "ThatDog123"). Optional TOTP authenti
 
 ## Start & Open
 
+Recommended:
+
 ```bash
-scripts/run.sh
+igy6 start
 ```
 
-Note the clear usable local URL it prints (e.g. http://127.0.0.1:3000 or 3001 etc.). Open that in your browser and unlock with the current password (and TOTP code if you have enabled authenticator for protected features).
+Or `scripts/run.sh` for foreground logs. Note the usable local URL printed by
+`igy6` or read `WEB_BASE_URL` from `.env` (default `http://127.0.0.1:3000`; auto-
+switches to 3001, 3002, … when busy). The page title must be **IGY6 Local
+Evidence Workspace**.
 
-Stop with the matching stop/restart scripts.
+Stop with `igy6 stop` or the matching stop/restart scripts.
 
 ## Main Areas (Easy to Use on This Branch)
 
@@ -787,11 +792,7 @@ Advanced diagnostics:
    scripts/status.sh
    ```
 
-3. Open:
-
-   ```text
-   http://127.0.0.1:3000
-   ```
+3. Open the URL from `WEB_BASE_URL` in `.env` (or printed by `igy6 start`).
 
 4. On Home, check readiness.
 
@@ -864,7 +865,7 @@ UI does not open:
 
 - Run `scripts/status.sh`.
 - Make sure the `web` service is running.
-- Open `http://127.0.0.1:3000`.
+- Open `WEB_BASE_URL` from `.env` (not a hardcoded port if another app uses 3000).
 
 System is not ready:
 

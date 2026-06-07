@@ -9,14 +9,21 @@ docker compose -f infra/docker-compose.yml --env-file .env up --build
 
 ## Health
 
+Read ports from `.env` (`APP_PORT`, `WEB_PORT`) or use defaults 8000/3000:
+
 ```bash
-curl http://127.0.0.1:8000/health/live
-curl http://127.0.0.1:8000/health/ready
+curl http://127.0.0.1:${APP_PORT:-8000}/health/live
+curl http://127.0.0.1:${APP_PORT:-8000}/health/ready
 ```
 
-The Rust gateway readiness endpoint reports gateway status and current fallback
-posture. Service-specific readiness should be checked through Docker Compose
-health and logs.
+The Rust gateway readiness endpoint reports gateway status (`primary_gateway: rust`).
+Service-specific readiness should be checked through Docker Compose health and logs.
+
+Or use the CLI:
+
+```bash
+igy6 health
+```
 
 ## Worker
 

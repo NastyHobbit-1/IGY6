@@ -98,8 +98,8 @@ GET /experiments/{experiment_run_id}
 
 `/health/live` confirms the API process is running.
 
-`/health/ready` checks PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix
-reachability.
+`/health/ready` reports Rust gateway readiness (`primary_gateway: rust`). For
+dependency reachability, use Docker Compose health checks and service logs.
 
 Source registry endpoints record authorized source metadata and permissions.
 Creating sources or permissions writes audit events. These endpoints do not run
@@ -117,8 +117,8 @@ execute worker jobs.
 within the local allowlist and records an audit event with previous and new
 status. It does not dispatch workers or execute queued work.
 
-`POST /work-items/{work_item_id}/dispatch` sends a queued, allowlisted work
-item to an existing Celery task and records dispatch metadata plus an audit
+`POST /work-items/{work_item_id}/dispatch` marks a queued, allowlisted work
+item for the Rust worker daemon and records dispatch metadata plus an audit
 event. Supported work types are `collection_normalization`,
 `document_chunking`, and `chunk_vector_upsert`. The route does not create new
 work items, bypass worker validation, approve work, or execute unsupported task
@@ -172,8 +172,8 @@ does not render report content, write artifacts, or create exports.
 `POST /reports/{report_id}/work-item` creates a queued `report_generation`
 work item marker for an existing report and records an audit event. The work
 item payload is marked scaffold-only and non-executing. The route does not
-render report content, write artifacts, create exports, dispatch workers, or
-call Celery.
+render report content, write artifacts, create exports, or execute worker jobs
+directly.
 
 `POST /reports/{report_id}/render` creates a deterministic Markdown report from
 existing local metadata records, stores it in the content-addressed artifact
@@ -237,7 +237,7 @@ exports.
 Collection-run endpoints support dry-run planning and approved non-dry-run
 collection routes. Non-dry-run collection can create raw artifacts and a durable
 normalization work item marker. Collection routes do not normalize content,
-dispatch Celery jobs from the API, or execute worker jobs.
+execute worker jobs directly from the API.
 
 The `POST /collection-runs/dry-run` route runs connector-backed dry-run
 validation for a source and permission pair, then records the preview result.
@@ -251,7 +251,7 @@ registered `manual_upload` source, stores it in the local content-addressed
 artifact store, creates a completed collection-run record, records raw artifact
 metadata, records a queued `collection_normalization` work item with the raw
 artifact ID, and emits audit events. It does not normalize content, generate
-chunks/evidence, dispatch Celery work from the API, or execute worker jobs. The
+chunks/evidence, or execute worker jobs directly from the API. The
 collection summary exposes `normalization_work_item_id`. The route requires
 the source permission to explicitly allow collection or read. When the
 permission has `approval_required: true`, the request must include an approved
@@ -265,14 +265,14 @@ count and size limits, stores collected bytes in the local content-addressed
 artifact store, records raw artifact metadata, records a queued
 `collection_normalization` work item with collected raw artifact IDs, and emits
 audit events. It does not normalize content, generate chunks/evidence, dispatch
-Celery work from the API, or execute worker jobs. The collection summary
+worker jobs directly from the API. The collection summary
 exposes `normalization_work_item_id`. The route requires the source permission
 to explicitly allow collection or read. When the permission has
 `approval_required: true`, the request must include an approved approval ID
 whose optional payload metadata matches the source, permission, and
 `local_project_collection` operation.
 
-The worker exposes `collection.normalize_collection_run` for queued
+The Rust worker daemon handles queued
 `collection_normalization` work items. It validates the work item, collection
 run, and raw artifact IDs, reads only referenced artifact bytes, decodes UTF-8
 text, creates normalized document rows, skips already-normalized raw artifacts,
@@ -281,17 +281,17 @@ new documents were created, and emits completion or failure audit events. It
 does not dispatch the chained work item automatically, upsert vector or graph
 memory, generate reports, call external models, or trigger self-improvement.
 
-The worker also exposes `evidence.generate_document_chunks` for existing
+The Rust worker also handles `document_chunking` for existing
 normalized documents. It deterministically splits document text into fixed-size
 chunks, creates one evidence item per chunk, skips already-chunked documents,
 optionally updates a supplied `document_chunking` work item, creates a queued
 `chunk_vector_upsert` work item when new chunks were created, and emits
-completion or failure audit events. This worker task is manually invokable or
-queue-targeted only; the API dispatch bridge can dispatch the queued work item
-when requested. It does not embed chunks itself, write Qdrant or Neo4j records,
+completion or failure audit events. Work is claimed from PostgreSQL by the Rust
+worker daemon; the API dispatch route can mark a queued item ready for claim. It
+does not write Qdrant or Neo4j records during chunking,
 call external models, generate reports, or trigger self-improvement.
 
-The worker exposes `memory.vector.upsert_chunks` for worker-backed chunk vector
+The Rust worker handles `chunk_vector_upsert` for worker-backed chunk vector
 upserts. It selects chunks whose `embedding_status` is not `completed`, embeds
 chunk text with the deterministic local hash embedding helper, ensures the
 configured Qdrant chunk collection exists, upserts Qdrant points with

@@ -13,11 +13,12 @@ The UI is deliberately simple and tabbed. On this branch the main areas are:
 
 ## Basic Operating Flow (Setup + Daily Use)
 
-1. Start the program:
+1. Start the program (recommended):
    ```bash
-   scripts/run.sh
+   igy6 start
    ```
-   Note the clear local URL it prints (it dynamically switches ports if the preferred one is in use and tells you the exact address to open).
+   Or `scripts/run.sh` for foreground logs. Both pick free ports when 3000/8000 are
+   busy and print the exact `WEB_BASE_URL` to open.
 
 2. Open the URL in your browser. Use the password gate (default "ThatDog123"). If you have enabled TOTP, also supply a current code from your authenticator app for protected actions (deep collector, etc.).
 
@@ -227,9 +228,9 @@ scripts/runtime-smoke.sh --check
 ```
 
 The runtime smoke check validates Docker Compose config, expected running
-services, `http://127.0.0.1:8000/health/live`,
-`http://127.0.0.1:8000/health/ready`, and `http://127.0.0.1:3000`. It prints
-clear PASS/FAIL lines and does not start or stop services in default check mode.
+services, and HTTP checks against `APP_PORT` / `WEB_PORT` from `.env` (defaults
+8000 and 3000). It prints clear PASS/FAIL lines and does not start or stop
+services in default check mode.
 
 Start explicitly:
 
@@ -269,8 +270,11 @@ Troubleshooting:
 
 - Empty `ps` output means the stack is probably not running for the selected
   Compose project/env file.
-- `127.0.0.1:3000` refused usually means the web container is stopped, still
-  starting, or failed during Next.js startup.
+- Web UI connection refused usually means the web container is stopped, still
+  starting, or failed during Next.js startup. Check `WEB_PORT` in `.env` — it may
+  be 3001, 3002, etc. if 3000 was busy. Wrong app (e.g. Open WebUI) on a port
+  means another service took that port before IGY6 started; run `igy6 start` again
+  or stop the conflicting container.
 - Phoenix `GET / 200 OK` log lines are normal local health/readiness probes.
 - For API logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api`
 - For web logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web`

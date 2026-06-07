@@ -6,7 +6,7 @@ Status: current-state roadmap and gap audit for `dev`.
 
 ## 1. Current Repo And Runtime Summary
 
-IGY6 currently presents as a local-first evidence and decision-support workspace, not a generic chatbot or simple RAG demo. The active application runtime is Rust API gateway, Rust worker daemon, Next.js web UI, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix. The legacy Python/FastAPI API and Python/Celery worker are archived under `archive/legacy-python/` and are not active runtime services. Base Docker Compose builds `api` from `crates/igy6-gateway/Dockerfile`, builds `worker` from `crates/igy6-worker/Dockerfile`, runs the Rust worker with `igy6-worker --daemon`, and defines no `legacy-api`, Python/Celery worker, or Celery beat service.
+IGY6 currently presents as a local-first evidence and decision-support workspace, not a generic chatbot or simple RAG demo. The active application runtime is Rust API gateway, Rust worker daemon, Next.js web UI, PostgreSQL, Qdrant, Neo4j, MLflow, and Phoenix. The legacy Python/FastAPI API and Python/Celery worker are archived under `archive/legacy-python/` and are not active runtime services. Base Docker Compose builds `api` from `crates/igy6-gateway/Dockerfile`, builds `worker` from `crates/igy6-worker/Dockerfile`, runs the Rust worker with `igy6-worker --daemon`, and defines no `legacy-api`, Python/Celery worker, or Celery beat service.
 
 The strongest implemented product path is UTF-8 text-oriented ingestion and processing. The current path can register sources and permissions, create collection/dry-run/upload records, store content-addressed artifacts, normalize UTF-8 text, chunk documents, create evidence items, upsert deterministic local hash vectors to Qdrant, inspect local records, ask over retrieved evidence, build deterministic evidence answer packets, optionally call a local Ollama provider when configured, record approvals, feedback, outcomes, reports, audit events, improvement metadata, and experiment metadata.
 
@@ -19,7 +19,7 @@ The normal UI is a tabbed dashboard with Home, Add Data, Work, Results, Settings
 The practical current workflow is:
 
 1. Start the local stack outside this DIFF with `scripts/run.sh`.
-2. Open the web UI at `http://127.0.0.1:3000`.
+2. Open the web UI at `WEB_BASE_URL` from `.env` (default `http://127.0.0.1:3000`).
 3. Check Home readiness.
 4. Register a source and permission, usually `manual_upload` or `local_project`.
 5. Create approval when required by the source permission.
@@ -34,7 +34,7 @@ This workflow is real but still uneven: several normal-user actions are describe
 ## 3. Completed Capability List
 
 - Rust-only application runtime posture is complete: Rust gateway API and Rust worker daemon are active; legacy Python/FastAPI and Python/Celery are archived/inactive.
-- Docker Compose local runtime defines PostgreSQL, Redis, Qdrant, Neo4j, MLflow, Phoenix, Rust API, Rust worker, and web UI with localhost-bound ports.
+- Docker Compose local runtime defines PostgreSQL, Qdrant, Neo4j, MLflow, Phoenix, Rust API, Rust worker, and web UI with localhost-bound ports.
 - Route parity and fallback removal are complete for the former FastAPI surface according to the manifest and Rust gateway route registry.
 - Non-destructive runtime validation scripts exist for post-cutover smoke, fresh-clone startup checks, and lifecycle command-shape checks.
 - Source records and source permission records can be created and read.

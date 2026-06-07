@@ -10,9 +10,9 @@ Default password: "ThatDog123". The program is password-protected. Optional TOTP
 
 1. Docker + docker compose recommended for the full stack (or use the supporting scripts for direct runs if your environment is prepared).
 2. Have a `.env` (copy `.env.example` and set `IGY6_DATA_ROOT` to a writable host directory — this is where everything local lives: DBs, full-res media artifacts, evidence, graph, etc.).
-3. Start it:
+3. Start it (recommended: `igy6 start`; or `scripts/run.sh` for foreground logs):
    ```bash
-   scripts/run.sh
+   igy6 start
    ```
    - Starts the complete local stack (gateway, worker, web UI, Postgres, Neo4j, Qdrant, etc.).
    - The `igy6` CLI and scripts automatically pick **clear unused local ports** when 3000/8000 are busy (`WEB_PORT` / `APP_PORT` in `.env`) and print the exact `http://127.0.0.1:PORT` to open.
@@ -246,18 +246,23 @@ A typical local workflow:
 
 ## Quickstart
 
-From the repository root:
+From the repository root (recommended):
+
+```bash
+cp .env.example .env   # first run only; edit IGY6_DATA_ROOT if needed
+./install.sh           # or .\install.ps1 on Windows — builds igy6 CLI
+igy6 start             # starts stack, picks free ports, opens browser
+```
+
+Or use scripts directly:
 
 ```bash
 cp .env.example .env
 scripts/run.sh
 ```
 
-Open the web UI:
-
-```text
-http://127.0.0.1:3000
-```
+Open the web UI at the URL printed by `igy6` or read `WEB_BASE_URL` from `.env`
+(default `http://127.0.0.1:3000`; auto-switches to 3001, 3002, … if busy).
 
 Check status:
 
@@ -342,11 +347,16 @@ cargo test --workspace
 
 ## Local URLs
 
-| Area | URL |
+Default ports (overridden in `.env` when busy — check `WEB_BASE_URL` and `API_BASE_URL`):
+
+| Area | Default URL |
 | --- | --- |
-| Web UI | `http://127.0.0.1:3000` |
-| Rust API gateway | `http://127.0.0.1:8000` |
+| Web UI | `http://127.0.0.1:3000` (`WEB_PORT`) |
+| Rust API gateway | `http://127.0.0.1:8000` (`APP_PORT`) |
+| API live | `http://127.0.0.1:8000/health/live` |
 | API readiness | `http://127.0.0.1:8000/health/ready` |
+
+After `igy6 start`, the CLI prints the actual URLs in use. The page title should be **IGY6 Local Evidence Workspace** (not Open WebUI or another app on port 3000).
 
 ## Troubleshooting
 

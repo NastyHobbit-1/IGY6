@@ -43,7 +43,7 @@ Then follow `docs/runtime/NORMAL_USER_PRODUCT_SMOKE.md` with synthetic data.
 - Backup export is metadata-only and must pass safety validation before a local
   export file is written.
 - Restore is dry-run validation only and must not write to PostgreSQL, artifact
-  storage, Qdrant, Neo4j, Redis, MLflow, Phoenix, or runtime data roots.
+  storage, Qdrant, Neo4j, MLflow, Phoenix, or runtime data roots.
 - Restore dry-run strict safety mode must reject bundles with secret-shaped
   fields, raw content fields, or private path hints.
 - Diagnostics bundles must pass self-redaction checks before writing.
