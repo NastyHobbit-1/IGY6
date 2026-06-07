@@ -4,6 +4,7 @@ use std::process::Command;  // for system snapshots (ps, nmcli, ip, etc.) on gro
 use walkdir::WalkDir;
 use ureq;  // for web scraping / URL collection
 use igy6_artifacts::detect_content_kind;
+use base64::Engine;  // for content base64 in media library (grok)
 use std::env;
 use std::fmt;
 use std::fs;
@@ -2221,7 +2222,8 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 for msrc in media_srcs {
                                     if let Ok(mresp) = ureq::get(&msrc).timeout(std::time::Duration::from_secs(30)).call() {
                                         let mut mbytes = Vec::new();
-                                        if let Ok(mut rdr) = mresp.into_reader() {
+                                        {
+                                            let mut rdr = mresp.into_reader();
                                             let _ = std::io::Read::read_to_end(&mut rdr, &mut mbytes);
                                         }
                                         if !mbytes.is_empty() {
@@ -2400,7 +2402,8 @@ fn extract_img_and_video_srcs(html: &str, base_url: &str) -> Vec<String> {
                             format!("https:{}", raw)
                         } else if raw.starts_with("/") {
                             // naive base
-                            if let Some(host_end) = base_url.find('/', 8) {
+                            let host_end = base_url[8..].find('/').map(|i| i + 8).unwrap_or(base_url.len());
+                            if host_end > 8 {
                                 format!("{}{}", &base_url[..host_end], raw)
                             } else {
                                 format!("{}{}", base_url, raw)
