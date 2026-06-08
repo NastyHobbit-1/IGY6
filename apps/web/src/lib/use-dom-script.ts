@@ -11,15 +11,17 @@ export function useDomScript(script: string): void {
     if (!script.trim()) {
       return;
     }
-    const scriptEl = document.createElement("script");
-    scriptEl.textContent = script;
-    document.body.appendChild(scriptEl);
+    const run = () => {
+      const scriptEl = document.createElement("script");
+      scriptEl.textContent = script;
+      document.body.appendChild(scriptEl);
+      return scriptEl;
+    };
+    const scriptEl = run();
     return () => {
       scriptEl.remove();
     };
-    // Wire once per component mount; IIFE guards prevent duplicate listeners.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [script]);
 }
 
 export function ClientScript({ script }: { script: string }): null {

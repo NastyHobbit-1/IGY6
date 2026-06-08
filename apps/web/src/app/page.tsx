@@ -1,5 +1,3 @@
-'use client';
-
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 type HealthResponse = {
@@ -1118,7 +1116,7 @@ function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " — GROK FULL ACCESS (password "ThatDog123", deep scrape full res media, Media Library view, polished easy UI, real tied pipelines, local only secure): actively scrapes/reads anything reachable and stores ONLY locally. No exfil. " + type.excluded;
+    statusText.textContent = type.label + " — GROK FULL ACCESS (password ThatDog123, deep scrape full res media, Media Library view, polished easy UI, real tied pipelines, local only secure): actively scrapes/reads anything reachable and stores ONLY locally. No exfil. " + type.excluded;
   };
 
   // Grok full power: make the form actually trigger full access collection
@@ -1218,6 +1216,63 @@ function BrowserWebRouterCollectorMvp() {
 })();
 `;
 
+  const grokToolsScript = `
+(() => {
+  const root = document.querySelector("[data-grok-tools]");
+  if (!root || root.getAttribute("data-grok-tools-wired") === "true") return;
+  root.setAttribute("data-grok-tools-wired", "true");
+
+  root.querySelector("[data-grok-auth-status]")?.addEventListener("click", async () => {
+    alert("Status: " + JSON.stringify(await (await fetch("/api/user/status")).json()));
+  });
+
+  root.querySelector("[data-grok-open-media]")?.addEventListener("click", () => {
+    window.grokLoadMedia = async () => {
+      const c = document.createElement("div");
+      c.innerHTML = "Loading media lib...";
+      document.body.appendChild(c);
+      try {
+        const r = await fetch("/api/artifacts");
+        let as = await r.json();
+        if (!Array.isArray(as)) as = [];
+        const ms = as.filter((a) => String(a.mime_type || "").toLowerCase().match(/^(image|video)/));
+        c.innerHTML = ms.map((a) =>
+          "<div style='border:1px solid #0f0;margin:2px;padding:2px;cursor:pointer' data-grok-media-id='" + a.id + "' data-grok-media-mime='" + (a.mime_type || "") + "'>" + (a.mime_type || "") + " " + a.id + "</div>"
+        ).join("") || "No media yet (run deep scan).";
+        c.querySelectorAll("[data-grok-media-id]").forEach((node) => {
+          node.addEventListener("click", () => {
+            window.grokViewMedia(node.getAttribute("data-grok-media-id"), node.getAttribute("data-grok-media-mime"));
+          });
+        });
+      } catch (e) {
+        c.innerHTML = "Err " + e;
+      }
+    };
+    window.grokLoadMedia();
+  });
+
+  root.querySelector("[data-grok-deep-scan]")?.addEventListener("click", () => {
+    const p = prompt("Password?");
+    if (p !== "ThatDog123") {
+      alert("Wrong pass");
+      return;
+    }
+    fetch("/api/collection-runs/full-access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requested_by_actor_id: "ui", password: "ThatDog123", scope: "everything" })
+    })
+      .then((r) => r.json())
+      .then(() => alert("Deep scan started. Refresh lib for full res images/videos from sources."));
+  });
+
+  document.querySelector("[data-grok-media-viewer]")?.addEventListener("click", () => {
+    const el = document.getElementById("grok-media-viewer");
+    if (el) el.style.display = "none";
+  });
+})();
+`;
+
   return (
     <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp>
       <div className="guidedManualNotice">
@@ -1226,19 +1281,17 @@ function BrowserWebRouterCollectorMvp() {
       </div>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
         {/* Added by grok: password protected deep full res media library + polished controls */}
-        <div style={{margin:'4px 0',padding:'4px',border:'1px solid lime',fontSize:'0.8em'}}>
-          <strong>Media Library (images/videos collected - full/orig res viewer)
-        <div style={{marginTop:'0.5rem',padding:'0.5rem',border:'1px solid #0af',background:'#001122',color:'white',fontSize:'0.85em'}}>
-          <b>User & Security</b> (change password, optional TOTP authenticator - OFF by default, link any app)<br/>
-          Cur pass: <input id="curp" type="password" style={{width:90}}/> New: <input id="newp" type="password" style={{width:90}}/>
-          <button onClick={async()=>{const c=(document.getElementById('curp') as HTMLInputElement)?.value||'';const n=(document.getElementById('newp') as HTMLInputElement)?.value||''; const b:any={current_password:c,new_password:n}; const st=await(await fetch('/api/user/status')).json(); if(st.totp_enabled){const cd=prompt('TOTP code?');if(cd)b.totp_code=cd;} const r=await fetch('/api/user/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); alert(await r.text());}}>Change Pass</button><br/>
-          <button onClick={async()=>{const c=prompt('Cur pass for TOTP link:');if(!c)return; const g=await fetch('/api/user/generate-totp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c})}); const j=await g.json(); if(j.secret){prompt('Secret for any authenticator app (manual or QR from otpauth_url):', j.secret + '\n' + (j.otpauth_url||'')); const cd=prompt('Code from app to confirm link:'); if(cd){const cf=await fetch('/api/user/confirm-totp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:c,totp_code:cd})}); alert(await cf.text());}} else alert(JSON.stringify(j)); }}>Generate/Link Authenticator (TOTP)</button>
-          <button onClick={async()=>{alert('Status: ' + JSON.stringify(await (await fetch('/api/user/status')).json()));}}>Auth Status</button>
-        </div></strong><br/>
-          <button type="button" onClick={() => { (window as any).grokLoadMedia = async () => { const c=document.createElement('div'); c.innerHTML='Loading media lib...'; document.body.appendChild(c); try{ const r=await fetch('/api/artifacts'); let as=await r.json(); if(!Array.isArray(as))as=[]; const ms=as.filter((a:any)=>String(a.mime_type||'').toLowerCase().match(/^(image|video)/)); c.innerHTML=ms.map((a:any)=>`<div style="border:1px solid #0f0;margin:2px;padding:2px;cursor:pointer" onclick="window.grokViewMedia('${a.id}','${a.mime_type||''}')">${a.mime_type} ${a.id}</div>`).join('') || 'No media yet (run deep scan).'; }catch(e){c.innerHTML='Err '+e;} }; (window as any).grokLoadMedia(); }}>Open Media Library</button>
-          <button type="button" onClick={() => { const p=prompt('Password?'); if(p==='ThatDog123'){ fetch('/api/collection-runs/full-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requested_by_actor_id:'ui',password:'ThatDog123',scope:'everything'})}).then(r=>r.json()).then(j=>alert('Deep scan started. Refresh lib for full res images/videos from sources.')); } else alert('Wrong pass'); }}>Deep Thorough Scan (full res media + complete info)</button>
+        <div style={{margin:'4px 0',padding:'4px',border:'1px solid lime',fontSize:'0.8em'}} data-grok-tools>
+          <strong>Media Library (images/videos collected - full/orig res viewer)</strong>
+          <div style={{marginTop:'0.5rem',padding:'0.5rem',border:'1px solid #0af',background:'#001122',color:'white',fontSize:'0.85em'}}>
+            <b>User &amp; Security</b> (use Settings → User &amp; Security for password/TOTP)<br/>
+            <span>Quick auth status:</span>
+            <button type="button" data-grok-auth-status>Auth Status</button>
+          </div>
+          <button type="button" data-grok-open-media>Open Media Library</button>
+          <button type="button" data-grok-deep-scan>Deep Thorough Scan (full res media + complete info)</button>
         </div>
-        <div id="grok-media-viewer" style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}} onClick={() => { const el = document.getElementById('grok-media-viewer'); if (el) el.style.display = 'none'; }}></div>
+        <div id="grok-media-viewer" data-grok-media-viewer style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}}></div>
         <ClientScript script={`window.grokViewMedia = window.grokViewMedia || async function(id, mime) {
             const v = document.getElementById('grok-media-viewer'); if(!v) return;
             v.style.display='block'; v.innerHTML = 'Loading full res...';
@@ -1252,6 +1305,7 @@ function BrowserWebRouterCollectorMvp() {
               }
             } catch(e) { v.innerHTML = 'Error loading: '+e; }
           };`} />
+        <ClientScript script={grokToolsScript} />
         <label>
           <span>Import type</span>
           <select name="bwr_type" defaultValue="browser_page_text">
@@ -1982,8 +2036,62 @@ function SettingsHubNav() {
 }
 
 function UserSecurityPanel() {
+  const script = `
+(() => {
+  const root = document.querySelector("[data-user-security]");
+  if (!root || root.getAttribute("data-user-security-wired") === "true") return;
+  root.setAttribute("data-user-security-wired", "true");
+
+  root.querySelector("[data-user-change-password]")?.addEventListener("click", async () => {
+    const current = document.getElementById("igy6-cur-password")?.value ?? "";
+    const next = document.getElementById("igy6-new-password")?.value ?? "";
+    const body = { current_password: current, new_password: next };
+    const status = await (await fetch("/api/user/status")).json();
+    if (status.totp_enabled) {
+      const code = prompt("TOTP code?");
+      if (code) body.totp_code = code;
+    }
+    const response = await fetch("/api/user/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    alert(await response.text());
+  });
+
+  root.querySelector("[data-user-link-totp]")?.addEventListener("click", async () => {
+    const current = prompt("Current password to link TOTP:");
+    if (!current) return;
+    const response = await fetch("/api/user/generate-totp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: current })
+    });
+    const payload = await response.json();
+    if (!payload.secret) {
+      alert(JSON.stringify(payload));
+      return;
+    }
+    prompt("Add this secret to your authenticator app:", payload.secret + "\\n" + (payload.otpauth_url ?? ""));
+    const code = prompt("Enter the 6-digit code from your app:");
+    if (!code) return;
+    const confirm = await fetch("/api/user/confirm-totp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: current, totp_code: code })
+    });
+    alert(await confirm.text());
+  });
+
+  root.querySelector("[data-user-auth-status]")?.addEventListener("click", async () => {
+    const status = await (await fetch("/api/user/status")).json();
+    alert(JSON.stringify(status, null, 2));
+  });
+})();
+`;
+
   return (
-    <section className="panel settingsPanel tabContent" id="user-security" data-tab-panel="settings">
+    <section className="panel settingsPanel tabContent" id="user-security" data-tab-panel="settings" data-user-security>
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Settings</p>
@@ -2004,65 +2112,17 @@ function UserSecurityPanel() {
           <span>New password</span>
           <input id="igy6-new-password" type="password" autoComplete="new-password" />
         </label>
-        <button
-          type="button"
-          onClick={async () => {
-            const current = (document.getElementById("igy6-cur-password") as HTMLInputElement | null)?.value ?? "";
-            const next = (document.getElementById("igy6-new-password") as HTMLInputElement | null)?.value ?? "";
-            const body: Record<string, string> = { current_password: current, new_password: next };
-            const status = await (await fetch("/api/user/status")).json();
-            if (status.totp_enabled) {
-              const code = prompt("TOTP code?");
-              if (code) body.totp_code = code;
-            }
-            const response = await fetch("/api/user/change-password", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body)
-            });
-            alert(await response.text());
-          }}
-        >
+        <button type="button" data-user-change-password>
           Change password
         </button>
-        <button
-          type="button"
-          onClick={async () => {
-            const current = prompt("Current password to link TOTP:");
-            if (!current) return;
-            const response = await fetch("/api/user/generate-totp", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ current_password: current })
-            });
-            const payload = await response.json();
-            if (!payload.secret) {
-              alert(JSON.stringify(payload));
-              return;
-            }
-            prompt("Add this secret to your authenticator app:", `${payload.secret}\n${payload.otpauth_url ?? ""}`);
-            const code = prompt("Enter the 6-digit code from your app:");
-            if (!code) return;
-            const confirm = await fetch("/api/user/confirm-totp", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ current_password: current, totp_code: code })
-            });
-            alert(await confirm.text());
-          }}
-        >
+        <button type="button" data-user-link-totp>
           Link authenticator (TOTP)
         </button>
-        <button
-          type="button"
-          onClick={async () => {
-            const status = await (await fetch("/api/user/status")).json();
-            alert(JSON.stringify(status, null, 2));
-          }}
-        >
+        <button type="button" data-user-auth-status>
           Auth status
         </button>
       </div>
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -2518,7 +2578,7 @@ function UnifiedChatHub({
           "Evidence",
           evidence.hitCount > 0
             ? "Found " + evidence.hitCount + " local evidence hit(s). Review citations below, then save the answer if you want history."
-            : "No matching local evidence yet. Say \"add data\" to upload, or \"check processing\" to see pipeline status."
+            : "No matching local evidence yet. Say 'add data' to upload, or 'check processing' to see pipeline status."
         );
         if (evidence.hitCount > 0 && saveAnswer) {
           addAction("Save answer record", () => saveAnswer.click());
@@ -2538,7 +2598,7 @@ function UnifiedChatHub({
         appendMessage(
           "assistant",
           "Next step",
-          "Try asking over evidence, requesting project health, or say \"add data\", \"check processing\", or \"open settings\"."
+          "Try asking over evidence, requesting project health, or say 'add data', 'check processing', or 'open settings'."
         );
         addAction("Show project health", () => handleSend("Show project health."));
         addAction("Add data", () => switchTab("tab-add-data"));

@@ -100,7 +100,7 @@ includesAll("settings hub navigation", page, [
   "UserSecurityPanel",
   "data-settings-wired",
   "Configuration",
-  "User & Security",
+  "User &amp; Security",
   "Safety & Audit"
 ]);
 
