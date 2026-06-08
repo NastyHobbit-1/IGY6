@@ -115,6 +115,11 @@ type ClaimRecord = {
 type VectorCollectionStatus = {
   collection_name: string;
   exists: boolean;
+  detail?: {
+    tcp_reachable?: boolean;
+    collection_existence_verified?: boolean;
+    note?: string;
+  };
 };
 
 type GraphSchemaStatus = {
@@ -1740,6 +1745,8 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
 (() => {
   const root = document.querySelector("[data-settings-env]");
   if (!root) return;
+  if (root.getAttribute("data-settings-wired") === "true") return;
+  root.setAttribute("data-settings-wired", "true");
 
   const verifyButton = root.querySelector("[data-settings-verify]");
   const saveButton = root.querySelector("[data-settings-save]");
@@ -1843,6 +1850,8 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
   });
 })();
 `;
+
+  useDomScript(script);
 
   return (
     <section className="panel settingsPanel tabContent" id="settings" data-settings-env data-tab-panel="settings">
@@ -1962,7 +1971,102 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
         <pre data-settings-warnings>Warnings appear here.</pre>
         <pre data-settings-backup>Backup path appears after save.</pre>
       </section>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+    </section>
+  );
+}
+
+function SettingsHubNav() {
+  return (
+    <nav className="settingsHubNav workflowTabs" aria-label="Settings sections" data-tab-panel="settings">
+      <a href="#settings">Configuration</a>
+      <a href="#user-security">User &amp; Security</a>
+      <a href="#safety-audit">Safety &amp; Audit</a>
+    </nav>
+  );
+}
+
+function UserSecurityPanel() {
+  return (
+    <section className="panel settingsPanel tabContent" id="user-security" data-tab-panel="settings">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Settings</p>
+          <h2>User &amp; Security</h2>
+        </div>
+        <StatusPill state="password-protected" />
+      </div>
+      <div className="guidedManualNotice">
+        <strong>Local program password and optional TOTP.</strong>
+        <span>Default password is <code>ThatDog123</code> until you change it. TOTP stays off until you link an authenticator app.</span>
+      </div>
+      <div className="settingsActions userSecurityActions">
+        <label>
+          <span>Current password</span>
+          <input id="igy6-cur-password" type="password" autoComplete="current-password" />
+        </label>
+        <label>
+          <span>New password</span>
+          <input id="igy6-new-password" type="password" autoComplete="new-password" />
+        </label>
+        <button
+          type="button"
+          onClick={async () => {
+            const current = (document.getElementById("igy6-cur-password") as HTMLInputElement | null)?.value ?? "";
+            const next = (document.getElementById("igy6-new-password") as HTMLInputElement | null)?.value ?? "";
+            const body: Record<string, string> = { current_password: current, new_password: next };
+            const status = await (await fetch("/api/user/status")).json();
+            if (status.totp_enabled) {
+              const code = prompt("TOTP code?");
+              if (code) body.totp_code = code;
+            }
+            const response = await fetch("/api/user/change-password", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            });
+            alert(await response.text());
+          }}
+        >
+          Change password
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            const current = prompt("Current password to link TOTP:");
+            if (!current) return;
+            const response = await fetch("/api/user/generate-totp", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ current_password: current })
+            });
+            const payload = await response.json();
+            if (!payload.secret) {
+              alert(JSON.stringify(payload));
+              return;
+            }
+            prompt("Add this secret to your authenticator app:", `${payload.secret}\n${payload.otpauth_url ?? ""}`);
+            const code = prompt("Enter the 6-digit code from your app:");
+            if (!code) return;
+            const confirm = await fetch("/api/user/confirm-totp", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ current_password: current, totp_code: code })
+            });
+            alert(await confirm.text());
+          }}
+        >
+          Link authenticator (TOTP)
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            const status = await (await fetch("/api/user/status")).json();
+            alert(JSON.stringify(status, null, 2));
+          }}
+        >
+          Auth status
+        </button>
+      </div>
     </section>
   );
 }
@@ -6380,6 +6484,33 @@ function LifecycleAuditStatusPanel({
   graphSchema: ApiResult<GraphSchemaStatus>;
 }) {
   const envHas = (key: string) => envSettings.data.settings.find((setting) => setting.key === key)?.has_value ?? false;
+  const lifecycleLoadErrors = [
+    { label: "sources", error: sources.error },
+    { label: "artifacts", error: artifacts.error },
+    { label: "documents", error: documents.error },
+    { label: "chunks", error: chunks.error },
+    { label: "evidence items", error: evidenceItems.error },
+    { label: "evidence answers", error: evidenceAnswers.error },
+    { label: "reports", error: reports.error },
+    { label: "settings env", error: envSettings.error },
+    { label: "vector store", error: vectorCollection.error },
+    { label: "graph schema", error: graphSchema.error }
+  ].filter((item) => item.error);
+  const qdrantReachable = vectorCollection.data.detail?.tcp_reachable === true;
+  const qdrantState = vectorCollection.data.exists
+    ? "collection-visible"
+    : qdrantReachable
+      ? "reachable-unverified"
+      : vectorCollection.error
+        ? "unreachable"
+        : "not-visible";
+  const graphProbe = graphSchema.data.constraints[0];
+  const graphReachable = graphProbe?.tcp_reachable === true;
+  const graphState = graphReachable
+    ? "reachable-read-only"
+    : graphSchema.data.constraints.length > 0
+      ? "schema-visible"
+      : "schema-not-visible";
   const dataClasses = [
     { label: "sources", count: sources.data.length, backup: "metadata export MVP", export: "metadata", restore: "dry-run validation only", deletion: "future explicit DIFF" },
     { label: "permissions/approvals", count: approvals.data.length, backup: "metadata export MVP", export: "audit metadata", restore: "dry-run validation only", deletion: "restricted" },
@@ -6397,8 +6528,22 @@ function LifecycleAuditStatusPanel({
     { label: "ARTIFACT_STORE_PATH", state: envHas("ARTIFACT_STORE_PATH") ? "configured" : "not reported", detail: "Raw/generated artifact storage; raw inclusion needs owner selection." },
     { label: "EXPORT_STORE_PATH", state: envHas("EXPORT_STORE_PATH") ? "configured" : "not reported", detail: "Reserved local export path; current report export uses markdown artifacts." },
     { label: "ENV_BACKUP_DIR", state: envHas("ENV_BACKUP_DIR") ? "configured" : "not reported", detail: ".env backup location for settings writes; .env is excluded from product exports." },
-    { label: "Qdrant", state: vectorCollection.data.exists ? "collection-visible" : "not visible", detail: "Vector store needs its own future backup/restore plan." },
-    { label: "Neo4j", state: graphSchema.data.constraints.length > 0 ? "schema-visible" : "schema-not-visible", detail: "Graph store needs its own future backup/restore plan." }
+    {
+      label: "Qdrant",
+      state: qdrantState,
+      detail: vectorCollection.data.exists
+        ? `Collection ${vectorCollection.data.collection_name} is visible.`
+        : qdrantReachable
+          ? `${vectorCollection.data.collection_name} is reachable; collection is created on first embedding run.`
+          : "Vector store is not reachable from the API container."
+    },
+    {
+      label: "Neo4j",
+      state: graphState,
+      detail: graphReachable
+        ? "Bolt endpoint is reachable; full constraint inventory is read-only in this build."
+        : "Graph store reachability could not be confirmed."
+    }
   ];
 
   return (
@@ -6414,14 +6559,19 @@ function LifecycleAuditStatusPanel({
         <strong>Audit only.</strong>
         <span>This panel maps data classes and lifecycle boundaries. It does not delete, restore, create full backup archives, dump runtime data, print secrets, or modify `.env`.</span>
       </div>
-      {[sources.error, artifacts.error, documents.error, chunks.error, evidenceItems.error, evidenceAnswers.error, reports.error, envSettings.error, vectorCollection.error, graphSchema.error].filter(Boolean).length > 0 ? (
-        <p className="errorText">Some lifecycle inputs could not be loaded; audit counts may be incomplete.</p>
+      {lifecycleLoadErrors.length > 0 ? (
+        <div className="settingsWarnings">
+          <strong>Some lifecycle inputs could not be loaded; audit counts may be incomplete.</strong>
+          {lifecycleLoadErrors.map((item) => (
+            <span key={item.label}>{item.label}: {item.error}</span>
+          ))}
+        </div>
       ) : null}
       <section className="metrics compact" aria-label="Lifecycle store status">
         <article><span>Data root</span><strong>{envHas("IGY6_DATA_ROOT") ? "Set" : "Unknown"}</strong></article>
         <article><span>Artifacts</span><strong>{artifacts.data.length}</strong></article>
         <article><span>Reports</span><strong>{reports.data.filter((report) => report.artifact_path).length}</strong></article>
-        <article><span>Vector store</span><strong>{vectorCollection.data.exists ? "Visible" : "Unknown"}</strong></article>
+        <article><span>Vector store</span><strong>{vectorCollection.data.exists ? "Visible" : qdrantReachable ? "Reachable" : "Unknown"}</strong></article>
         <article><span>Graph schema</span><strong>{graphSchema.data.constraints.length}</strong></article>
       </section>
       <section className="quad">
@@ -9408,6 +9558,10 @@ export default async function Home() {
             </details>
           </section>
 
+          <SettingsHubNav />
+          <SettingsPanel envSettings={envSettings} />
+          <UserSecurityPanel />
+
           <section className="panel workflowSection tabContent" id="safety-audit" data-tab-panel="settings">
             <div className="panelHeader">
               <div>
@@ -9587,7 +9741,6 @@ export default async function Home() {
             </details>
           </section>
 
-          <SettingsPanel envSettings={envSettings} />
         </section>
       </section>
 

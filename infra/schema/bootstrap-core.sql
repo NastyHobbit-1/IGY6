@@ -11,6 +11,18 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS source_permissions (
+  id varchar(36) PRIMARY KEY,
+  source_id varchar(36) NOT NULL REFERENCES sources(id),
+  scope_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  allowed_operations jsonb NOT NULL DEFAULT '[]'::jsonb,
+  external_model_policy varchar(64) NOT NULL DEFAULT 'blocked',
+  approval_required boolean NOT NULL DEFAULT true,
+  created_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_source_permissions_source_id ON source_permissions (source_id);
 CREATE TABLE IF NOT EXISTS collection_runs (
   id varchar(36) PRIMARY KEY,
   source_id varchar(36) REFERENCES sources(id),
@@ -219,3 +231,42 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_task_plans (
+  id varchar(36) PRIMARY KEY,
+  user_request_summary text NOT NULL,
+  intent_category varchar(64) NOT NULL,
+  status varchar(64) NOT NULL,
+  proposed_steps jsonb NOT NULL DEFAULT '[]'::jsonb,
+  required_evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  approval_required boolean NOT NULL DEFAULT false,
+  supported_state varchar(64) NOT NULL,
+  next_safe_action text NOT NULL,
+  requested_by_actor_id varchar(128) NOT NULL DEFAULT 'local-owner',
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_task_plans_created_at ON agent_task_plans (created_at DESC);
+CREATE TABLE IF NOT EXISTS evidence_answer_records (
+  id varchar(36) PRIMARY KEY,
+  user_question text NOT NULL,
+  answer_status varchar(64) NOT NULL,
+  answer_text text,
+  facts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  assumptions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  inferences jsonb NOT NULL DEFAULT '[]'::jsonb,
+  uncertainty jsonb NOT NULL DEFAULT '[]'::jsonb,
+  missing_information jsonb NOT NULL DEFAULT '[]'::jsonb,
+  evidence_item_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  source_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  safe_labels jsonb NOT NULL DEFAULT '[]'::jsonb,
+  retrieval_mode varchar(64) NOT NULL DEFAULT 'not_recorded',
+  retrieval_count integer NOT NULL DEFAULT 0,
+  local_model_status text,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_answer_records_created_at ON evidence_answer_records (created_at DESC);

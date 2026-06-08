@@ -597,6 +597,32 @@ a {
   gap: 8px;
 }
 
+.settingsHubNav {
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+
+.userSecurityActions {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
+.userSecurityActions label {
+  display: grid;
+  gap: 6px;
+}
+
+.userSecurityActions input {
+  min-height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  background: rgba(8, 13, 22, 0.92);
+  color: #e6edf7;
+  padding: 8px 10px;
+}
+
 .chatFollowUpActions button {
   min-height: 34px;
   border: 1px solid rgba(52, 211, 153, 0.28);

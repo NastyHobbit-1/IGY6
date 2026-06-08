@@ -90,7 +90,18 @@ includesAll("workflow section anchors", page, [
   'id="work-processing"',
   'id="reports"',
   'id="safety-audit"',
-  'id="settings"'
+  'id="settings"',
+  'id="user-security"'
+]);
+
+includesAll("settings hub navigation", page, [
+  "SettingsHubNav",
+  "settingsHubNav",
+  "UserSecurityPanel",
+  "data-settings-wired",
+  "Configuration",
+  "User & Security",
+  "Safety & Audit"
 ]);
 
 includesAll("tab panel mapping", page, [
