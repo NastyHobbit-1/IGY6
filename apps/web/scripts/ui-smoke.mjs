@@ -46,7 +46,7 @@ includesAll("chat-first shell", page, [
   "OnboardingJourney",
   "journeyStrip",
   "chatFirstShell",
-  "useDomScript",
+  "ClientScript",
   "Ask a question or request an action..."
 ]);
 

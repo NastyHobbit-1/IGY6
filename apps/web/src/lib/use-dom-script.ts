@@ -1,8 +1,10 @@
+"use client";
+
 import { useEffect } from "react";
 
 /**
  * React does not execute <script dangerouslySetInnerHTML> tags.
- * Append a real script element so browser-run IIFEs can wire DOM listeners.
+ * Append real script elements so browser-run IIFEs can wire DOM listeners.
  */
 export function useDomScript(script: string): void {
   useEffect(() => {
@@ -18,4 +20,37 @@ export function useDomScript(script: string): void {
     // Wire once per component mount; IIFE guards prevent duplicate listeners.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+}
+
+export function ClientScript({ script }: { script: string }): null {
+  useDomScript(script);
+  return null;
+}
+
+/** Injects JSON blobs that other panel scripts read via querySelector(...).textContent */
+export function DomJsonScript({
+  marker,
+  json,
+}: {
+  marker: string;
+  json: string;
+}): null {
+  useEffect(() => {
+    if (!json) {
+      return;
+    }
+    const selector = `script[type="application/json"][${marker}]`;
+    if (document.querySelector(selector)) {
+      return;
+    }
+    const el = document.createElement("script");
+    el.type = "application/json";
+    el.setAttribute(marker, "true");
+    el.textContent = json;
+    document.body.appendChild(el);
+    return () => {
+      el.remove();
+    };
+  }, [marker, json]);
+  return null;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useDomScript } from "@/lib/use-dom-script";
+import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 type HealthResponse = {
   status: string;
@@ -1239,8 +1239,7 @@ function BrowserWebRouterCollectorMvp() {
           <button type="button" onClick={() => { const p=prompt('Password?'); if(p==='ThatDog123'){ fetch('/api/collection-runs/full-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requested_by_actor_id:'ui',password:'ThatDog123',scope:'everything'})}).then(r=>r.json()).then(j=>alert('Deep scan started. Refresh lib for full res images/videos from sources.')); } else alert('Wrong pass'); }}>Deep Thorough Scan (full res media + complete info)</button>
         </div>
         <div id="grok-media-viewer" style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}} onClick={() => { const el = document.getElementById('grok-media-viewer'); if (el) el.style.display = 'none'; }}></div>
-        <script dangerouslySetInnerHTML={{ __html: `
-          window.grokViewMedia = async function(id, mime) {
+        <ClientScript script={`window.grokViewMedia = window.grokViewMedia || async function(id, mime) {
             const v = document.getElementById('grok-media-viewer'); if(!v) return;
             v.style.display='block'; v.innerHTML = 'Loading full res...';
             try {
@@ -1252,9 +1251,7 @@ function BrowserWebRouterCollectorMvp() {
                 v.innerHTML = '<video src="'+pre+cj.base64_content+'" controls style="max-width:100%" /><br><small>Original res video.</small>';
               }
             } catch(e) { v.innerHTML = 'Error loading: '+e; }
-          };
-          console.log('%c[Grok UI polished] Password "ThatDog123" for deep/full access. Media lib + deep scrape for full res images/videos tied in and functioning.', 'color:lime');
-        ` }} />
+          };`} />
         <label>
           <span>Import type</span>
           <select name="bwr_type" defaultValue="browser_page_text">
@@ -1281,8 +1278,8 @@ function BrowserWebRouterCollectorMvp() {
         <strong>Ready</strong>
         <span>Choose a type, enter explicit scope, paste authorized text, and preview what would be collected or excluded.</span>
       </div>
-      <script type="application/json" data-browser-web-router-types-json dangerouslySetInnerHTML={{ __html: importTypesJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-browser-web-router-types-json" json={importTypesJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -1407,8 +1404,8 @@ function MediaImportMvp() {
         <strong>Ready</strong>
         <span>Select a media type and preview support status, size bounds, and safe next steps.</span>
       </div>
-      <script type="application/json" data-media-import-types-json dangerouslySetInnerHTML={{ __html: mediaTypesJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-media-import-types-json" json={mediaTypesJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -1566,8 +1563,8 @@ function LocalProjectPcDiagnosticsHardeningPanel() {
         <strong>Ready</strong>
         <span>Enter explicit scope, include/exclude posture, and authorized text to preview safe import boundaries.</span>
       </div>
-      <script type="application/json" data-local-project-pc-modes-json dangerouslySetInnerHTML={{ __html: modesJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-local-project-pc-modes-json" json={modesJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -1851,8 +1848,6 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
 })();
 `;
 
-  useDomScript(script);
-
   return (
     <section className="panel settingsPanel tabContent" id="settings" data-settings-env data-tab-panel="settings">
       <div className="panelHeader">
@@ -1971,6 +1966,7 @@ function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResp
         <pre data-settings-warnings>Warnings appear here.</pre>
         <pre data-settings-backup>Backup path appears after save.</pre>
       </section>
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -2573,8 +2569,6 @@ function UnifiedChatHub({
 })();
 `;
 
-  useDomScript(script);
-
   return (
     <section
       className="unifiedChatHub"
@@ -2633,6 +2627,7 @@ function UnifiedChatHub({
         <button type="button" data-chat-send>Send</button>
       </div>
       <div className="chatFollowUpActions" data-chat-actions hidden />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -2998,8 +2993,6 @@ function ChatRetrievalPreview() {
 })();
 `;
 
-  useDomScript(script);
-
   return (
     <section className="panel chatPreviewPanel chatEnginePanel">
       <div className="panelHeader">
@@ -3031,6 +3024,7 @@ function ChatRetrievalPreview() {
         <span data-retrieval-review-guidance> Evidence-backed only when hits are present; empty results mean insufficient evidence, not proof the information does not exist.</span>
       </div>
       <div className="stack previewResults" data-chat-preview-results />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -3969,9 +3963,9 @@ function AgentCommandPanel({
         <p className="routeHint">Routes used: /agent/intent, /agent/task-plans, /agent/task-plans/:id/evidence-summary, /agent/task-plans/:id/work-spec, /agent/task-plans/:id/work-item, /agent/actions/:action/execute, /approvals.</p>
       </details>
       </details>
-	      <script type="application/json" data-agent-capabilities-json dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }} />
-	      <script type="application/json" data-agent-approvals-json dangerouslySetInnerHTML={{ __html: JSON.stringify(approvals.data) }} />
-	      <script dangerouslySetInnerHTML={{ __html: script }} />
+	      <DomJsonScript marker="data-agent-capabilities-json" json={JSON.stringify(data)} />
+	      <DomJsonScript marker="data-agent-approvals-json" json={JSON.stringify(approvals.data)} />
+	      <ClientScript script={script} />
 	    </section>
   );
 }
@@ -4294,9 +4288,9 @@ function GuidedManualTextUpload({ sources, approvals }: { sources: ApiResult<Sou
         <summary>Advanced: guided route response details</summary>
         <pre data-guided-manual-debug />
       </details>
-      <script type="application/json" data-guided-manual-sources-json dangerouslySetInnerHTML={{ __html: manualSourcesJson }} />
-      <script type="application/json" data-guided-manual-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-guided-manual-sources-json" json={manualSourcesJson} />
+      <DomJsonScript marker="data-guided-manual-approvals-json" json={approvalsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -4659,9 +4653,9 @@ function ConversationHistoryImport({ sources, approvals }: { sources: ApiResult<
         <summary>Advanced: conversation import route response details</summary>
         <pre data-conversation-history-debug />
       </details>
-      <script type="application/json" data-conversation-history-sources-json dangerouslySetInnerHTML={{ __html: conversationSourcesJson }} />
-      <script type="application/json" data-conversation-history-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-conversation-history-sources-json" json={conversationSourcesJson} />
+      <DomJsonScript marker="data-conversation-history-approvals-json" json={approvalsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -5040,9 +5034,9 @@ function UserObservationIngestion({ sources, approvals }: { sources: ApiResult<S
         <summary>Advanced: observation ingestion route response details</summary>
         <pre data-user-observation-debug />
       </details>
-      <script type="application/json" data-user-observation-sources-json dangerouslySetInnerHTML={{ __html: observationSourcesJson }} />
-      <script type="application/json" data-user-observation-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-user-observation-sources-json" json={observationSourcesJson} />
+      <DomJsonScript marker="data-user-observation-approvals-json" json={approvalsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -5138,8 +5132,8 @@ function SourceCollectionApprovalReview({ approvals }: { approvals: ApiResult<Ap
         <pre>{JSON.stringify(collectionApprovals, null, 2)}</pre>
         <pre data-source-collection-approval-result>Decision results appear here.</pre>
       </details>
-      <script type="application/json" data-source-collection-approvals-json dangerouslySetInnerHTML={{ __html: approvalsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-source-collection-approvals-json" json={approvalsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -5334,8 +5328,8 @@ function SourceTrustSensitivityManagement({
         <strong>{sourceReviewRows.length > 0 ? "Ready for review" : "No source to review"}</strong>
         <span>{sourceReviewRows.length > 0 ? "Choose a source and save a real state update." : "Create a source first in Add Data."}</span>
       </div>
-      <script type="application/json" data-source-review-json dangerouslySetInnerHTML={{ __html: sourceReviewJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-source-review-json" json={sourceReviewJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -5661,8 +5655,8 @@ function EvidenceCorrectionSupersessionWorkflow({
         <strong>{evidenceRows.length > 0 ? "Ready for evidence review" : "No evidence to review"}</strong>
         <span>{evidenceRows.length > 0 ? "Choose an evidence item and save a real correction state." : "Add and process supported text before reviewing evidence correction state."}</span>
       </div>
-      <script type="application/json" data-evidence-correction-json dangerouslySetInnerHTML={{ __html: evidenceRowsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-evidence-correction-json" json={evidenceRowsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -6428,10 +6422,10 @@ function BasicReportWorkflow({
         <strong>{reports.data.length > 0 ? "Reports are available" : "No reports yet"}</strong>
         <span>{reports.data.length > 0 ? "Create a new metadata report or review recent reports below." : "Create a report after evidence exists, or keep using Ask over evidence."}</span>
       </div>
-      <script type="application/json" data-report-template-json dangerouslySetInnerHTML={{ __html: templateJson }} />
-      <script type="application/json" data-report-citation-evidence-json dangerouslySetInnerHTML={{ __html: citationEvidenceJson }} />
-      <script type="application/json" data-report-citation-answer-json dangerouslySetInnerHTML={{ __html: citationAnswerJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-report-template-json" json={templateJson} />
+      <DomJsonScript marker="data-report-citation-evidence-json" json={citationEvidenceJson} />
+      <DomJsonScript marker="data-report-citation-answer-json" json={citationAnswerJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -7000,7 +6994,7 @@ function EvidenceFeedbackWorkflow({
 	          <span>{improvements.data.length > 0 ? "Existing improvement records are listed in Method Review." : "Create a proposal only from a real review signal."}</span>
 	        </div>
 	      </section>
-	      <script dangerouslySetInnerHTML={{ __html: script }} />
+	      <ClientScript script={script} />
 	    </section>
   );
 }
@@ -7429,7 +7423,7 @@ function PredictionRecommendationCreator({
         <strong>{suggestedEvidenceIds.length > 0 ? "Ready for evidence-linked creation" : "Evidence required"}</strong>
         <span>Records are reviewable and outcome-trackable. Recommendations are not executed by this form.</span>
       </div>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -7717,7 +7711,7 @@ function PredictionRecommendationOutcomeReview({
         <strong>{records.length > 0 ? "Review controls ready" : "No review target yet"}</strong>
         <span>Improvement candidates are proposed metadata only; IGY6 does not auto-change methods or recommendations.</span>
       </div>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -8074,8 +8068,8 @@ function BaselinePatternExpansionPanel({
         <strong>{candidateOptions.length > 0 ? "Pattern candidates available" : "No persistable candidate selected"}</strong>
         <span>Unsupported states remain review-only; weak evidence is not hidden.</span>
       </div>
-      <script type="application/json" data-pattern-candidates-json dangerouslySetInnerHTML={{ __html: candidateOptionsJson }} />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <DomJsonScript marker="data-pattern-candidates-json" json={candidateOptionsJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -8391,7 +8385,7 @@ function ImprovementExperimentReview({
         <strong>{recentExperiments.length > 0 ? "Experiment metadata exists" : "No experiment proposal selected"}</strong>
         <span>{recentExperiments.length > 0 ? "Recent records are listed above for review." : "Use this only to record metadata for later review."}</span>
       </div>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -8731,7 +8725,7 @@ function MvpActionConsole() {
         </form>
       </section>
       <pre className="actionOutput" data-action-output>Action results appear here.</pre>
-      <script dangerouslySetInnerHTML={{ __html: script }} />
+      <ClientScript script={script} />
     </section>
   );
 }
