@@ -41,10 +41,12 @@ includesAll("chat-first shell", page, [
   "data-chat-input",
   "data-chat-send",
   "data-chat-chip",
+  "data-chat-wired",
   "UnifiedChatHub",
   "OnboardingJourney",
   "journeyStrip",
   "chatFirstShell",
+  "useDomScript",
   "Ask a question or request an action..."
 ]);
 

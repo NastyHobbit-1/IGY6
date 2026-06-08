@@ -1,5 +1,7 @@
 'use client';
 
+import { useDomScript } from "@/lib/use-dom-script";
+
 type HealthResponse = {
   status: string;
   checks?: Record<string, { status: string; detail?: string }>;
@@ -2199,6 +2201,8 @@ function UnifiedChatHub({
 (() => {
   const hub = document.querySelector("[data-unified-chat]");
   if (!hub) return;
+  if (hub.getAttribute("data-chat-wired") === "true") return;
+  hub.setAttribute("data-chat-wired", "true");
 
   const feed = hub.querySelector("[data-chat-feed]");
   const input = hub.querySelector("[data-chat-input]");
@@ -2465,6 +2469,8 @@ function UnifiedChatHub({
 })();
 `;
 
+  useDomScript(script);
+
   return (
     <section
       className="unifiedChatHub"
@@ -2523,7 +2529,6 @@ function UnifiedChatHub({
         <button type="button" data-chat-send>Send</button>
       </div>
       <div className="chatFollowUpActions" data-chat-actions hidden />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
 }
@@ -2547,6 +2552,8 @@ function ChatRetrievalPreview() {
   if (!form || !message || !limit || !status || !results || !apiBaseUrl) {
     return;
   }
+  if (form.getAttribute("data-preview-wired") === "true") return;
+  form.setAttribute("data-preview-wired", "true");
 
   const shortId = (value) => {
     if (!value || typeof value !== "string") return "unknown";
@@ -2887,6 +2894,8 @@ function ChatRetrievalPreview() {
 })();
 `;
 
+  useDomScript(script);
+
   return (
     <section className="panel chatPreviewPanel chatEnginePanel">
       <div className="panelHeader">
@@ -2918,7 +2927,6 @@ function ChatRetrievalPreview() {
         <span data-retrieval-review-guidance> Evidence-backed only when hits are present; empty results mean insufficient evidence, not proof the information does not exist.</span>
       </div>
       <div className="stack previewResults" data-chat-preview-results />
-      <script dangerouslySetInnerHTML={{ __html: script }} />
     </section>
   );
 }
