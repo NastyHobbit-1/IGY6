@@ -34,13 +34,17 @@ fn parse_arg_value(args: &[String], flag: &str) -> Option<String> {
 
 fn serve(bind_addr: &str, database_url: Option<&str>) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr)?;
+    let database_url = database_url.map(str::to_string);
     println!("igy6-gateway listening on http://{bind_addr}");
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                if let Err(error) = handle_stream(&mut stream, database_url) {
-                    eprintln!("request failed: {error}");
-                }
+                let database_url = database_url.clone();
+                std::thread::spawn(move || {
+                    if let Err(error) = handle_stream(&mut stream, database_url.as_deref()) {
+                        eprintln!("request failed: {error}");
+                    }
+                });
             }
             Err(error) => eprintln!("connection failed: {error}"),
         }

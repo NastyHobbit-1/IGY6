@@ -112,6 +112,7 @@ services:
       ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
       ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
       IGY6_DATA_ROOT: /workspace/storage
+      IGY6_HOST_BRIDGE_HOST: ${IGY6_HOST_BRIDGE_HOST:-host.docker.internal}
     ports:
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:

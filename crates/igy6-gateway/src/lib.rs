@@ -13,6 +13,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use igy6_agent_api::{
@@ -39,6 +40,8 @@ use igy6_vector_memory::{
 use postgres::{Client, NoTls};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+mod bypass_intel;
 
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:8000";
 pub const NO_FALLBACK_ORIGIN: &str = "";
@@ -372,6 +375,18 @@ pub fn handle_gateway_request_with_db(
         // On grok branch: full power access collector (user directive: ingest ANYTHING the process can reach, store ONLY locally, no outbound info leakage beyond necessary fetches for collection itself)
         ("POST", "/collection-runs/full-access") => {
             full_access_collection_response(&request.body, database_url)
+        }
+        ("POST", "/host-bridge/ensure-max-reach") => host_bridge_ensure_max_reach_response(),
+        ("GET", "/bypass-intel/status") => {
+            json_response(200, "OK", bypass_intel::bypass_intel_status_json(), false)
+        }
+        ("GET", "/bypass-intel/playbook") => {
+            let payload = std::fs::read_to_string(bypass_intel::bypass_intel_playbook_path())
+                .unwrap_or_else(|_| "{}".to_string());
+            json_response(200, "OK", payload, false)
+        }
+        ("POST", "/bypass-intel/harvest") => {
+            bypass_intel::bypass_intel_harvest_response(&request.body, database_url)
         }
         ("POST", "/collection-runs/full-local-scan") => {
             full_access_collection_response(&request.body, database_url)
@@ -902,7 +917,7 @@ fn approval_create_response(body: &str, database_url: Option<&str>) -> GatewayRe
     }
 }
 
-fn write_route_response(result: Result<String, GatewayError>) -> GatewayResponse {
+pub(crate) fn write_route_response(result: Result<String, GatewayError>) -> GatewayResponse {
     match result {
         Ok(response_body) => json_response(201, "Created", response_body, false),
         Err(GatewayError::Validation(message)) => json_response(
@@ -2106,12 +2121,12 @@ fn random_ua() -> &'static str {
     USER_AGENTS[idx]
 }
 
-fn is_forbidden(url: &str) -> bool {
+pub(crate) fn is_forbidden(url: &str) -> bool {
     let lower = url.to_lowercase();
     FORBIDDEN_DOMAINS.iter().any(|d| lower.contains(d))
 }
 
-fn jitter_delay() {
+pub(crate) fn jitter_delay() {
     // Human-like jitter to avoid bot detection / rate limits, still deep but polite.
     use std::thread;
     use std::time::Duration;
@@ -2123,7 +2138,7 @@ fn jitter_delay() {
 }
 
 // Simple header builder for anonymous requests (no tracking back to this PC).
-fn anon_headers() -> Vec<(String, String)> {
+pub(crate) fn anon_headers() -> Vec<(String, String)> {
     vec![
         ("User-Agent".to_string(), random_ua().to_string()),
         ("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".to_string()),
@@ -2142,6 +2157,774 @@ fn anon_agent() -> ureq::Agent {
         .timeout_connect(std::time::Duration::from_secs(10))
         .timeout_read(std::time::Duration::from_secs(30))
         .build()
+}
+
+fn bypass_auth_enabled(object: &serde_json::Value) -> bool {
+    object
+        .get("bypass_auth")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn optional_payload_string(object: &serde_json::Value, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn authorization_header_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("bearer ") || lower.starts_with("basic ") {
+        trimmed.to_string()
+    } else {
+        format!("Bearer {trimmed}")
+    }
+}
+
+// Authorized-session fetch: inject caller-provided cookie / bearer token for pages they already own.
+fn web_fetch_headers(object: &serde_json::Value) -> Vec<(String, String)> {
+    let bypass = bypass_auth_enabled(object);
+    let mut headers = if bypass {
+        vec![
+            ("User-Agent".to_string(), random_ua().to_string()),
+            (
+                "Accept".to_string(),
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                    .to_string(),
+            ),
+            ("Accept-Language".to_string(), "en-US,en;q=0.5".to_string()),
+            ("Accept-Encoding".to_string(), "gzip, deflate, br".to_string()),
+            ("Connection".to_string(), "keep-alive".to_string()),
+            ("Upgrade-Insecure-Requests".to_string(), "1".to_string()),
+        ]
+    } else {
+        anon_headers()
+    };
+
+    if bypass {
+        if let Some(cookie) = optional_payload_string(object, "cookie") {
+            headers.push(("Cookie".to_string(), cookie));
+        }
+        if let Some(authorization) = optional_payload_string(object, "authorization") {
+            headers.push((
+                "Authorization".to_string(),
+                authorization_header_value(&authorization),
+            ));
+        }
+        if let Some(referer) = optional_payload_string(object, "referer") {
+            headers.push(("Referer".to_string(), referer));
+        }
+    }
+
+    headers
+}
+
+fn bypass_fetch_has_credentials(object: &serde_json::Value) -> bool {
+    optional_payload_string(object, "cookie").is_some()
+        || optional_payload_string(object, "authorization").is_some()
+}
+
+fn auto_bypass_enabled(object: &serde_json::Value) -> bool {
+    object
+        .get("auto_bypass")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn max_reach_enabled(object: &serde_json::Value) -> bool {
+    object
+        .get("max_reach")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn login_wall_score(body: &str) -> u32 {
+    let lower = body.to_lowercase();
+    const INDICATORS: &[&str] = &[
+        "sign in",
+        "log in",
+        "login required",
+        "subscribe to read",
+        "subscription required",
+        "create an account",
+        "paywall",
+        "members only",
+        "register to continue",
+        "access denied",
+        "please log in",
+        "sign up to continue",
+        "you must be logged in",
+        "continue reading",
+        "unlock this article",
+    ];
+    INDICATORS
+        .iter()
+        .filter(|indicator| lower.contains(**indicator))
+        .count() as u32
+}
+
+fn auto_bypass_content_score(body: &str) -> i64 {
+    let len = body.len() as i64;
+    let wall_penalty = login_wall_score(body) as i64 * 8_000;
+    let structure_bonus = if body.contains("<article") || body.contains("<main") {
+        4_000
+    } else {
+        0
+    };
+    let paragraph_bonus = body.matches("<p").count() as i64 * 120;
+    len + structure_bonus + paragraph_bonus - wall_penalty
+}
+
+fn auto_bypass_url_variants(original_url: &str) -> Vec<(String, String)> {
+    let mut variants = vec![("direct".to_string(), original_url.to_string())];
+    if original_url.contains('?') {
+        variants.push(("amp_query".to_string(), format!("{original_url}&amp=1")));
+    } else {
+        variants.push(("amp_query".to_string(), format!("{original_url}?amp=1")));
+        variants.push((
+            "output_amp".to_string(),
+            format!("{original_url}?outputType=amp"),
+        ));
+    }
+    if !original_url.ends_with("/amp/") && !original_url.ends_with("/amp") {
+        let amp_path = if original_url.ends_with('/') {
+            format!("{original_url}amp/")
+        } else {
+            format!("{original_url}/amp/")
+        };
+        variants.push(("amp_path".to_string(), amp_path));
+    }
+    if let Some(rest) = original_url.strip_prefix("https://www.") {
+        variants.push(("mobile_www".to_string(), format!("https://m.{rest}")));
+    } else if let Some(rest) = original_url.strip_prefix("https://") {
+        if !rest.starts_with("m.") {
+            variants.push(("mobile_m".to_string(), format!("https://m.{rest}")));
+        }
+    }
+    variants
+}
+
+fn auto_bypass_header_strategies() -> Vec<(String, Vec<(String, String)>)> {
+    let accept = (
+        "Accept".to_string(),
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            .to_string(),
+    );
+    let accept_lang = ("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
+    let accept_enc = (
+        "Accept-Encoding".to_string(),
+        "gzip, deflate, br".to_string(),
+    );
+    let connection = ("Connection".to_string(), "keep-alive".to_string());
+    let upgrade = (
+        "Upgrade-Insecure-Requests".to_string(),
+        "1".to_string(),
+    );
+
+    let mut google_referer = anon_headers();
+    google_referer.push(("Referer".to_string(), "https://www.google.com/".to_string()));
+
+    let mut twitter_referer = anon_headers();
+    twitter_referer.push(("Referer".to_string(), "https://t.co/".to_string()));
+
+    vec![
+        ("browser".to_string(), anon_headers()),
+        ("google_referer".to_string(), google_referer),
+        ("twitter_referer".to_string(), twitter_referer),
+        (
+            "googlebot".to_string(),
+            vec![
+                (
+                    "User-Agent".to_string(),
+                    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+                        .to_string(),
+                ),
+                accept.clone(),
+                accept_lang.clone(),
+                accept_enc.clone(),
+                connection.clone(),
+                upgrade.clone(),
+            ],
+        ),
+        (
+            "bingbot".to_string(),
+            vec![
+                (
+                    "User-Agent".to_string(),
+                    "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)"
+                        .to_string(),
+                ),
+                accept.clone(),
+                accept_lang.clone(),
+                accept_enc.clone(),
+                connection.clone(),
+                upgrade.clone(),
+            ],
+        ),
+        (
+            "facebook_crawler".to_string(),
+            vec![
+                ("User-Agent".to_string(), "facebookexternalhit/1.1".to_string()),
+                accept.clone(),
+                accept_lang.clone(),
+                accept_enc.clone(),
+                connection.clone(),
+            ],
+        ),
+        (
+            "twitterbot".to_string(),
+            vec![
+                ("User-Agent".to_string(), "Twitterbot/1.0".to_string()),
+                accept,
+                accept_lang,
+                accept_enc,
+                connection,
+                upgrade,
+            ],
+        ),
+    ]
+}
+
+struct AutoBypassFetchResult {
+    strategy: String,
+    fetched_url: String,
+    content_type: String,
+    is_pdf: bool,
+    body: String,
+    pdf_bytes: Option<Vec<u8>>,
+}
+
+pub(crate) fn encode_url_query_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => ch.to_string(),
+            _ => format!("%{:02X}", ch as u32),
+        })
+        .collect()
+}
+
+fn fetch_url_with_headers(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: &[(String, String)],
+) -> Option<AutoBypassFetchResult> {
+    let mut request = agent.get(url);
+    for (key, value) in headers {
+        request = request.set(key, value);
+    }
+    let response = request.call().ok()?;
+    if response.status() >= 400 {
+        return None;
+    }
+    let content_type = response.header("Content-Type").unwrap_or("").to_lowercase();
+    let is_pdf = url.to_lowercase().ends_with(".pdf") || content_type.contains("pdf");
+    if is_pdf {
+        let mut pdf_bytes = Vec::new();
+        {
+            let mut reader = response.into_reader();
+            if std::io::Read::read_to_end(&mut reader, &mut pdf_bytes).is_err() || pdf_bytes.is_empty()
+            {
+                return None;
+            }
+        }
+        return Some(AutoBypassFetchResult {
+            strategy: String::new(),
+            fetched_url: url.to_string(),
+            content_type,
+            is_pdf: true,
+            body: String::new(),
+            pdf_bytes: Some(pdf_bytes),
+        });
+    }
+    let body = response.into_string().ok()?;
+    if body.len() < 200 {
+        return None;
+    }
+    Some(AutoBypassFetchResult {
+        strategy: String::new(),
+        fetched_url: url.to_string(),
+        content_type,
+        is_pdf: false,
+        body,
+        pdf_bytes: None,
+    })
+}
+
+fn lookup_archive_snapshot(agent: &ureq::Agent, original_url: &str) -> Option<String> {
+    let api_url = format!(
+        "https://archive.org/wayback/available?url={}",
+        encode_url_query_component(original_url)
+    );
+    let response = agent.get(&api_url).call().ok()?;
+    let payload: serde_json::Value = serde_json::from_str(&response.into_string().ok()?).ok()?;
+    payload
+        .get("archived_snapshots")?
+        .get("closest")?
+        .get("url")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn auto_bypass_candidate_score(result: &AutoBypassFetchResult) -> i64 {
+    if result.is_pdf {
+        result.pdf_bytes.as_ref().map(|b| b.len() as i64).unwrap_or(0)
+    } else {
+        auto_bypass_content_score(&result.body)
+    }
+}
+
+fn auto_bypass_http_result_usable(result: &AutoBypassFetchResult) -> bool {
+    if result.is_pdf {
+        result.pdf_bytes.as_ref().is_some_and(|bytes| bytes.len() >= 400)
+    } else {
+        result.body.len() >= 400 && login_wall_score(&result.body) == 0
+    }
+}
+
+fn auto_bypass_resolve(
+    agent: &ureq::Agent,
+    original_url: &str,
+    max_reach: bool,
+    max_depth: u32,
+) -> Option<AutoBypassFetchResult> {
+    let mut best: Option<AutoBypassFetchResult> = None;
+    let mut best_score = i64::MIN;
+
+    // Fast path: one direct fetch is enough for most public pages.
+    if let Some(mut direct) = fetch_url_with_headers(agent, original_url, &anon_headers()) {
+        direct.strategy = "direct+fast_path".to_string();
+        if auto_bypass_http_result_usable(&direct)
+            && !max_reach
+            && !bypass_intel::is_paid_content_platform_url(original_url)
+        {
+            return Some(direct);
+        }
+        let score = auto_bypass_candidate_score(&direct);
+        if score > best_score {
+            best_score = score;
+            best = Some(direct);
+        }
+    }
+
+    let playbook_headers = bypass_intel::playbook_header_strategies_for_url(original_url);
+    for (url_variant, candidate_url) in bypass_intel::playbook_url_variants_for_url(original_url) {
+        if is_forbidden(&candidate_url) {
+            continue;
+        }
+        let header_sets = if playbook_headers.is_empty() {
+            auto_bypass_header_strategies()
+        } else {
+            playbook_headers.clone()
+        };
+        for (header_variant, headers) in header_sets {
+            jitter_delay();
+            let Some(mut result) = fetch_url_with_headers(agent, &candidate_url, &headers) else {
+                continue;
+            };
+            result.strategy = format!("{url_variant}+{header_variant}");
+            if auto_bypass_http_result_usable(&result)
+                && !max_reach
+                && !bypass_intel::is_paid_content_platform_url(original_url)
+            {
+                return Some(result);
+            }
+            let score = auto_bypass_candidate_score(&result);
+            if score > best_score {
+                best_score = score;
+                best = Some(result);
+            }
+        }
+    }
+
+    for (url_variant, candidate_url) in auto_bypass_url_variants(original_url) {
+        if is_forbidden(&candidate_url) {
+            continue;
+        }
+        for (header_variant, headers) in auto_bypass_header_strategies() {
+            jitter_delay();
+            let Some(mut result) = fetch_url_with_headers(agent, &candidate_url, &headers) else {
+                continue;
+            };
+            result.strategy = format!("{url_variant}+{header_variant}");
+            if auto_bypass_http_result_usable(&result)
+                && !max_reach
+                && !bypass_intel::is_paid_content_platform_url(original_url)
+            {
+                return Some(result);
+            }
+            let score = auto_bypass_candidate_score(&result);
+            if score > best_score {
+                best_score = score;
+                best = Some(result);
+            }
+        }
+    }
+
+    if let Some(archive_url) = lookup_archive_snapshot(agent, original_url) {
+        if !is_forbidden(&archive_url) {
+            jitter_delay();
+            if let Some(mut result) = fetch_url_with_headers(agent, &archive_url, &anon_headers()) {
+                result.strategy = "archive_org".to_string();
+                let score = auto_bypass_candidate_score(&result);
+                if score > best_score {
+                    best = Some(result);
+                }
+            }
+        }
+    }
+
+    // Host bridge phase: deep bypass or max reach (strongest tier).
+    // Skip Playwright when HTTP tricks already returned usable content (auto bypass only).
+    let http_result_usable = best.as_ref().is_some_and(auto_bypass_http_result_usable);
+    let try_host_bridge = if max_reach || bypass_intel::is_paid_content_platform_url(original_url) {
+        host_bridge_tcp_probe()
+    } else if http_result_usable {
+        false
+    } else {
+        host_bridge_tcp_probe()
+    };
+    if try_host_bridge {
+        if max_reach {
+            let _ = invoke_host_bridge_max_reach(original_url, max_depth);
+            if let Some(artifacts) = read_max_reach_artifacts() {
+                apply_host_bridge_artifacts(
+                    agent,
+                    original_url,
+                    &mut best,
+                    &mut best_score,
+                    &artifacts.strategy,
+                    artifacts.final_url.as_deref(),
+                    artifacts.html.as_deref(),
+                    artifacts.visible_text.as_deref(),
+                    artifacts.cookie.as_deref(),
+                    artifacts.authorization.as_deref(),
+                    "max_reach",
+                );
+            }
+        } else {
+            let _ = invoke_host_bridge_deep_bypass(original_url);
+            if let Some(artifacts) = read_deep_bypass_artifacts() {
+                apply_host_bridge_artifacts(
+                    agent,
+                    original_url,
+                    &mut best,
+                    &mut best_score,
+                    &artifacts.strategy,
+                    artifacts.final_url.as_deref(),
+                    artifacts.html.as_deref(),
+                    None,
+                    artifacts.cookie.as_deref(),
+                    artifacts.authorization.as_deref(),
+                    "deep_bypass",
+                );
+            }
+        }
+    }
+
+    best
+}
+
+fn merge_visible_html(html: Option<&str>, visible_text: Option<&str>) -> Option<String> {
+    let html = html?.to_string();
+    if html.len() < 200 {
+        return None;
+    }
+    if let Some(text) = visible_text.filter(|value| value.len() >= 200) {
+        if text.len() > html.len() {
+            return Some(format!("{html}\n<!-- visible-text -->\n{text}"));
+        }
+    }
+    Some(html)
+}
+
+fn apply_host_bridge_artifacts(
+    agent: &ureq::Agent,
+    original_url: &str,
+    best: &mut Option<AutoBypassFetchResult>,
+    best_score: &mut i64,
+    strategy: &Option<String>,
+    final_url: Option<&str>,
+    html: Option<&str>,
+    visible_text: Option<&str>,
+    cookie: Option<&str>,
+    authorization: Option<&str>,
+    prefix: &str,
+) {
+    if let Some(body) = merge_visible_html(html, visible_text) {
+        let html_result = AutoBypassFetchResult {
+            strategy: strategy
+                .clone()
+                .unwrap_or_else(|| format!("{prefix}_html")),
+            fetched_url: final_url
+                .unwrap_or(original_url)
+                .to_string(),
+            content_type: "text/html".to_string(),
+            is_pdf: false,
+            body,
+            pdf_bytes: None,
+        };
+        let score = auto_bypass_candidate_score(&html_result);
+        if score > *best_score {
+            *best_score = score;
+            *best = Some(html_result);
+        }
+    }
+
+    if cookie.is_some() || authorization.is_some() {
+        let authed_payload = serde_json::json!({
+            "bypass_auth": true,
+            "cookie": cookie,
+            "authorization": authorization,
+            "referer": original_url,
+        });
+        let authed_headers = web_fetch_headers(&authed_payload);
+        let fetch_url = final_url.unwrap_or(original_url);
+        if let Some(mut authed_result) = fetch_url_with_headers(agent, fetch_url, &authed_headers) {
+            authed_result.strategy = format!(
+                "{prefix}_session+{}",
+                strategy.as_deref().unwrap_or("unknown")
+            );
+            let score = auto_bypass_candidate_score(&authed_result);
+            if score > *best_score {
+                *best = Some(authed_result);
+            }
+        }
+    }
+}
+
+struct DeepBypassArtifacts {
+    strategy: Option<String>,
+    final_url: Option<String>,
+    cookie: Option<String>,
+    authorization: Option<String>,
+    html: Option<String>,
+}
+
+struct MaxReachArtifacts {
+    strategy: Option<String>,
+    final_url: Option<String>,
+    cookie: Option<String>,
+    authorization: Option<String>,
+    html: Option<String>,
+    visible_text: Option<String>,
+    discovered_links: Vec<String>,
+    media_urls: Vec<String>,
+}
+
+fn deep_bypass_result_path() -> PathBuf {
+    artifact_data_root().join("ops/deep-bypass-result.json")
+}
+
+fn read_deep_bypass_artifacts() -> Option<DeepBypassArtifacts> {
+    let content = fs::read_to_string(deep_bypass_result_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    Some(DeepBypassArtifacts {
+        strategy: value
+            .get("strategy")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        final_url: value
+            .get("final_url")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        cookie: value
+            .get("cookie")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        authorization: value
+            .get("authorization")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        html: value
+            .get("html")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+    })
+}
+
+fn max_reach_result_path() -> PathBuf {
+    artifact_data_root().join("ops/max-reach-result.json")
+}
+
+fn read_max_reach_artifacts() -> Option<MaxReachArtifacts> {
+    let content = fs::read_to_string(max_reach_result_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let discovered_links = value
+        .get("discovered_links")
+        .and_then(|entry| entry.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let media_urls = value
+        .get("media_urls")
+        .and_then(|entry| entry.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(MaxReachArtifacts {
+        strategy: value
+            .get("strategy")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        final_url: value
+            .get("final_url")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        cookie: value
+            .get("cookie")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        authorization: value
+            .get("authorization")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        html: value
+            .get("html")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        visible_text: value
+            .get("visible_text")
+            .and_then(|entry| entry.as_str())
+            .map(str::to_string),
+        discovered_links,
+        media_urls,
+    })
+}
+
+fn host_bridge_listen_addr() -> Result<(String, u16), GatewayError> {
+    let host = env::var("IGY6_HOST_BRIDGE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    if host != "127.0.0.1" && host != "host.docker.internal" {
+        return Err(GatewayError::Conflict(
+            "Host bridge must be configured for 127.0.0.1 or host.docker.internal only".to_string(),
+        ));
+    }
+    let port = env::var("IGY6_HOST_BRIDGE_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(8765);
+    Ok((host, port))
+}
+
+fn host_bridge_tcp_probe() -> bool {
+    let Ok((host, port)) = host_bridge_listen_addr() else {
+        return false;
+    };
+    TcpStream::connect_timeout(
+        &format!("{host}:{port}")
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .unwrap_or_else(|| format!("{host}:{port}").parse().expect("socket addr")),
+        Duration::from_secs(2),
+    )
+    .is_ok()
+}
+
+fn signal_max_reach_ensure_request() {
+    let path = artifact_data_root().join("ops/max-reach-ensure.requested");
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(
+        &path,
+        format!("requested_at={:?}", SystemTime::now()),
+    );
+}
+
+fn wait_for_host_bridge_ready(max_wait_secs: u64) -> Result<(), GatewayError> {
+    signal_max_reach_ensure_request();
+    for _ in 0..max_wait_secs {
+        if host_bridge_tcp_probe() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    Err(GatewayError::Conflict(
+        "Host bridge is unavailable after waiting. Run: pwsh -File scripts\\start-host-bridge.ps1"
+            .to_string(),
+    ))
+}
+
+fn host_bridge_ensure_max_reach_response() -> GatewayResponse {
+    write_route_response(wait_for_host_bridge_ready(45).map(|()| {
+        serde_json::json!({
+            "ok": true,
+            "status": "ready",
+            "host_bridge": "reachable"
+        })
+        .to_string()
+    }))
+}
+
+fn invoke_host_bridge_action(
+    action_name: &str,
+    body: &serde_json::Value,
+    read_timeout_secs: u64,
+) -> Result<(), GatewayError> {
+    let token = host_bridge_token()?;
+    let (host, port) = host_bridge_listen_addr()?;
+    let mut stream = TcpStream::connect((host.as_str(), port))
+        .map_err(|error| GatewayError::Conflict(format!("Host bridge is unavailable: {error}")))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(read_timeout_secs)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let body_text = body.to_string();
+    let request = format!(
+        "POST /actions/{action_name} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_text}",
+        body_text.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let (head, _) = response.split_once("\r\n\r\n").unwrap_or(("", ""));
+    let status_code = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(502);
+    if status_code != 200 {
+        return Err(GatewayError::Conflict(format!(
+            "Host bridge {action_name} failed with status {status_code}"
+        )));
+    }
+    Ok(())
+}
+
+fn invoke_host_bridge_deep_bypass(url: &str) -> Result<(), GatewayError> {
+    invoke_host_bridge_action(
+        "deep_bypass_collect",
+        &serde_json::json!({ "url": url }),
+        120,
+    )
+}
+
+fn invoke_host_bridge_max_reach(url: &str, max_depth: u32) -> Result<(), GatewayError> {
+    invoke_host_bridge_action(
+        "max_reach_collect",
+        &serde_json::json!({ "url": url, "max_depth": max_depth }),
+        620,
+    )
 }
 
 fn full_access_collection_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
@@ -2167,12 +2950,41 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     // UI-driven payload (everything controllable from web UI, no cmdline needed):
     // { "requested_by_actor_id": "...", "password": "...", "totp_code": "optional",
     //   "scope": ["url1", "/local/path", "everything"], "max_depth": 3,
-    //   "safe_mode": true, "web_only": true, "media_focus": false, "anonymity": "high" }
-    let object: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
+    //   "safe_mode": true, "web_only": true, "bypass_auth": true,
+    //   "cookie": "session=...", "authorization": "Bearer ...", "referer": "https://...",
+    //   "media_focus": false, "anonymity": "high" }
+    let mut object: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
+    let paid_escalation = bypass_intel::scope_requires_paid_content_escalation(object.get("scope"));
+    if paid_escalation {
+        object["max_reach"] = serde_json::json!(true);
+        object["auto_bypass"] = serde_json::json!(true);
+        object["media_focus"] = serde_json::json!(true);
+        if !bypass_fetch_has_credentials(&object) {
+            if let Some((cookie, authorization)) = bypass_intel::load_patreon_session_credentials() {
+                object["bypass_auth"] = serde_json::json!(true);
+                object["cookie"] = serde_json::json!(cookie);
+                if let Some(authorization) = authorization {
+                    object["authorization"] = serde_json::json!(authorization);
+                }
+            }
+        }
+    }
+    let bypass_auth = bypass_auth_enabled(&object);
+    let max_reach = max_reach_enabled(&object);
+    let auto_bypass = auto_bypass_enabled(&object) || max_reach || paid_escalation;
+    if max_reach || paid_escalation {
+        wait_for_host_bridge_ready(45)?;
+    }
+    if bypass_auth && !bypass_fetch_has_credentials(&object) {
+        return Err(GatewayError::Validation(
+            "Bypass fetch requires cookie or authorization for an authorized session you already own."
+                .to_string(),
+        ));
+    }
     let web_only = object
         .get("web_only")
         .and_then(|value| value.as_bool())
-        .unwrap_or_else(|| is_web_only_scope(object.get("scope")));
+        .unwrap_or_else(|| bypass_auth || auto_bypass || max_reach || is_web_only_scope(object.get("scope")));
     let cfg = load_user_config();
     // Public URL-only fetch from the local UI does not require program password/TOTP.
     if !web_only {
@@ -2190,7 +3002,11 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
 
     let max_depth = object.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
     let safe_mode = object.get("safe_mode").and_then(|v| v.as_bool()).unwrap_or(true);
-    let media_focus = object.get("media_focus").and_then(|v| v.as_bool()).unwrap_or(false);
+    let media_focus = object
+        .get("media_focus")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || paid_escalation;
     let anonymity = object.get("anonymity").and_then(|v| v.as_str()).unwrap_or("high");
     let requested_by = object.get("requested_by_actor_id")
         .and_then(|v| v.as_str())
@@ -2217,11 +3033,37 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let mut evidence_created: Vec<String> = vec![];
     let mut graph_candidates: Vec<serde_json::Value> = vec![];
     let mut summary = serde_json::json!({
-        "mode": if web_only { "web_only_public_fetch" } else { "full_access_grok" },
+        "mode": if paid_escalation && max_reach {
+            "web_paid_platform_max_reach"
+        } else if max_reach {
+            "web_max_reach_fetch"
+        } else if auto_bypass {
+            "web_auto_bypass_fetch"
+        } else if bypass_auth {
+            "web_bypass_fetch"
+        } else if web_only {
+            "web_only_public_fetch"
+        } else {
+            "full_access_grok"
+        },
         "web_only": web_only,
+        "max_reach": max_reach,
+        "auto_bypass": auto_bypass,
+        "paid_escalation": paid_escalation,
+        "bypass_auth": bypass_auth,
+        "had_cookie": optional_payload_string(&object, "cookie").is_some(),
+        "had_authorization": optional_payload_string(&object, "authorization").is_some(),
         "requested_by": requested_by,
         "started_at": format!("{:?}", std::time::SystemTime::now()),
-        "access_note": if web_only {
+        "access_note": if paid_escalation {
+            "Paid-platform fetch (Patreon/OnlyFans/Fansly). Auto-escalates to max reach, reuses saved browser session when available, harvests Patreon API/media URLs, and downloads patron media locally."
+        } else if max_reach {
+            "Max reach URL fetch. Runs full auto bypass plus headed/CDP Playwright, multi-profile Chrome/Edge passes, scroll/expand harvesting, optional proxy, and session re-fetch. Requires host bridge. Data stored locally only."
+        } else if auto_bypass {
+            "Automatic URL bypass fetch. Tries crawler UAs, referrer tricks, AMP/mobile mirrors, archive snapshots, then host Playwright + local browser cookie harvest (devtools-equivalent) and authenticated bypass fetch. No local filesystem scan. Data stored locally only."
+        } else if bypass_auth {
+            "Authorized-session URL fetch. Uses caller-provided cookie or bearer token. No local filesystem scan. Data stored locally only."
+        } else if web_only {
             "Public URL fetch only. No local filesystem scan. Data stored locally only."
         } else {
             "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
@@ -2360,6 +3202,9 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     // Not traceable: generic UAs, no unique headers, exif stripped, local storage only.
     let mut web_count = 0;
     let mut media_from_web = 0;
+    let mut auto_bypass_attempts = 0usize;
+    let mut auto_bypass_wins = 0usize;
+    let mut auto_bypass_strategies: Vec<String> = vec![];
     let mut crawled_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut url_queue: std::collections::VecDeque<(String, usize)> = std::collections::VecDeque::new();
 
@@ -2378,15 +3223,159 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     }
 
     let agent = anon_agent();
+    let fetch_headers = web_fetch_headers(&object);
     while let Some((current_url, depth)) = url_queue.pop_front() {
         if crawled_urls.contains(&current_url) || depth > max_depth { continue; }
         crawled_urls.insert(current_url.clone());
         if is_forbidden(&current_url) { continue; }
         jitter_delay();
 
-        let headers = anon_headers();
+        let mut prefetched_pdf: Option<Vec<u8>> = None;
+        let mut prefetched_html: Option<String> = None;
+        let mut auto_bypass_strategy: Option<String> = None;
+        let mut resolved_fetch_url = current_url.clone();
+        if auto_bypass {
+            auto_bypass_attempts += 1;
+            if let Some(resolved) =
+                auto_bypass_resolve(&agent, &current_url, max_reach, max_depth as u32)
+            {
+                auto_bypass_wins += 1;
+                auto_bypass_strategy = Some(resolved.strategy.clone());
+                auto_bypass_strategies.push(resolved.strategy);
+                resolved_fetch_url = resolved.fetched_url;
+                if resolved.is_pdf {
+                    prefetched_pdf = resolved.pdf_bytes;
+                } else {
+                    prefetched_html = Some(resolved.body);
+                }
+                if max_reach {
+                    if let Some(artifacts) = read_max_reach_artifacts() {
+                        for link in artifacts
+                            .media_urls
+                            .iter()
+                            .chain(artifacts.discovered_links.iter())
+                        {
+                            if depth < max_depth
+                                && !crawled_urls.contains(link)
+                                && !is_forbidden(link)
+                            {
+                                url_queue.push_back((link.clone(), depth + 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut handled_fetch = false;
+        if let Some(pdf_bytes) = prefetched_pdf {
+            if !pdf_bytes.is_empty() {
+                let kind = detect_content_kind(&pdf_bytes, Some(&resolved_fetch_url));
+                let store = ArtifactStore::new(artifact_data_root()).unwrap();
+                if let Ok(stored) = store.write_bytes(&pdf_bytes) {
+                    let art_id = generated_record_id("artifact");
+                    let meta = serde_json::json!({
+                        "scraped_url": resolved_fetch_url,
+                        "requested_url": current_url,
+                        "full_access_web": true,
+                        "deep_scrape": true,
+                        "auto_bypass": auto_bypass,
+                        "auto_bypass_strategy": auto_bypass_strategy,
+                        "mime": kind.mime,
+                        "kind": kind.kind,
+                        "depth": depth
+                    });
+                    let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta] );
+                    collected_artifacts.push(art_id.clone()); web_count += 1;
+                    let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
+                    let ev_id = generated_record_id("evidence");
+                    let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &resolved_fetch_url, &"pdf".to_string(), &extracted, &meta] );
+                    evidence_created.push(ev_id.clone());
+                    if let Some(claim) = simple_mine_claim_from_text(&extracted, &resolved_fetch_url) {
+                        graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
+                    }
+                    handled_fetch = true;
+                }
+            }
+        } else if let Some(body) = prefetched_html {
+            let data = body.as_bytes();
+            let store = ArtifactStore::new(artifact_data_root()).unwrap();
+            if let Ok(stored) = store.write_bytes(data) {
+                let art_id = generated_record_id("artifact");
+                let page_meta = serde_json::json!({
+                    "scraped_url": resolved_fetch_url,
+                    "requested_url": current_url,
+                    "full_access_web": true,
+                    "deep_scrape": true,
+                    "auto_bypass": auto_bypass,
+                    "auto_bypass_strategy": auto_bypass_strategy,
+                    "depth": depth
+                });
+                let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &page_meta] );
+                collected_artifacts.push(art_id.clone()); web_count += 1;
+                for cap in extract_simple_links_and_claims(&body, &resolved_fetch_url) { graph_candidates.push(cap); }
+
+                let asset_urls = extract_img_and_video_srcs(&body, &resolved_fetch_url);
+                for asset_url in asset_urls {
+                    if is_forbidden(&asset_url) { continue; }
+                    jitter_delay();
+                    let mut asset_req = agent.get(&asset_url);
+                    for (k, v) in &fetch_headers {
+                        asset_req = asset_req.set(k, v);
+                    }
+                    if let Ok(aresp) = asset_req.call() {
+                        let mut abytes = Vec::new();
+                        { let mut rdr = aresp.into_reader(); let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes); }
+                        if !abytes.is_empty() {
+                            let mut final_bytes = abytes;
+                            let kind = detect_content_kind(&final_bytes, None);
+                            if kind.kind == "image" {
+                                if let Ok(img) = image::load_from_memory(&final_bytes) {
+                                    let mut buf = Vec::new();
+                                    let _ = img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png);
+                                    final_bytes = buf;
+                                }
+                            }
+                            if kind.kind == "image" || kind.kind == "video" || kind.kind == "pdf" || (media_focus && kind.kind != "text") {
+                                if let Ok(stored) = store.write_bytes(&final_bytes) {
+                                    let mart_id = generated_record_id("artifact");
+                                    let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": resolved_fetch_url, "mime": kind.mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
+                                    let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&mart_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &mmeta] );
+                                    collected_artifacts.push(mart_id.clone()); media_from_web += 1;
+                                    let stub = extract_text_if_possible(&final_bytes, &kind).unwrap_or_else(|| format!("[Deep media from {} via {}]", asset_url, resolved_fetch_url));
+                                    let ev_id = generated_record_id("evidence");
+                                    let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &mart_id, &asset_url, &kind.kind, &stub, &mmeta] );
+                                    evidence_created.push(ev_id.clone());
+                                    if let Some(claim) = simple_mine_claim_from_text(&stub, &asset_url) {
+                                        graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if depth < max_depth {
+                    for link in extract_simple_links_and_claims(&body, &resolved_fetch_url) {
+                        if let Some(to) = link.get("to").and_then(|v| v.as_str()) {
+                            if (to.starts_with("http://") || to.starts_with("https://")) && !is_forbidden(to) && !crawled_urls.contains(to) {
+                                url_queue.push_back((to.to_string(), depth + 1));
+                            }
+                        }
+                    }
+                }
+                handled_fetch = true;
+            }
+        }
+
+        if handled_fetch {
+            continue;
+        }
+
         let mut req = agent.get(&current_url);
-        for (k, v) in headers { req = req.set(&k, &v); }
+        for (k, v) in &fetch_headers {
+            req = req.set(k, v);
+        }
 
         if let Ok(resp) = req.call() {
             let content_type = resp.header("Content-Type").unwrap_or("").to_lowercase();
@@ -2427,7 +3416,11 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     for asset_url in asset_urls {
                         if is_forbidden(&asset_url) { continue; }
                         jitter_delay();
-                        if let Ok(aresp) = agent.get(&asset_url).set("User-Agent", random_ua()).call() {
+                        let mut asset_req = agent.get(&asset_url);
+                        for (k, v) in &fetch_headers {
+                            asset_req = asset_req.set(k, v);
+                        }
+                        if let Ok(aresp) = asset_req.call() {
                             let mut abytes = Vec::new();
                             { let mut rdr = aresp.into_reader(); let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes); }
                             if !abytes.is_empty() {
@@ -2475,6 +3468,9 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     }
     summary["web_scraped"] = serde_json::json!(web_count);
     summary["media_from_deep_scrape"] = serde_json::json!(media_from_web);
+    summary["auto_bypass_attempts"] = serde_json::json!(auto_bypass_attempts);
+    summary["auto_bypass_wins"] = serde_json::json!(auto_bypass_wins);
+    summary["auto_bypass_strategies"] = serde_json::json!(auto_bypass_strategies);
     summary["crawled_pages"] = serde_json::json!(crawled_urls.len());
     summary["deep_crawl_depth"] = serde_json::json!(max_depth);
     summary["safe_mode"] = serde_json::json!(safe_mode);
@@ -2528,6 +3524,17 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     ).map(|r| r.get::<_, String>(0)).unwrap_or_else(|_| summary.to_string());
 
     tx.commit().ok();
+
+    let mut tracked_urls = Vec::new();
+    if let Some(scope) = object.get("scope").and_then(|value| value.as_array()) {
+        for item in scope {
+            if let Some(url) = item.as_str() {
+                tracked_urls.push(url.to_string());
+            }
+        }
+    }
+    bypass_intel::record_bypass_intel_domains(&tracked_urls);
+    bypass_intel::maybe_background_bypass_intel_harvest(Some(database_url.to_string()));
 
     // Tie the collected evidence/artifacts into the real graph (Neo4j via existing pipeline)
     // This makes graph candidates and new sources/artifacts/docs real in the relationship memory, not just Postgres.
@@ -10878,7 +11885,7 @@ fn collection_normalization_work_payload(
     })
 }
 
-fn artifact_data_root() -> PathBuf {
+pub(crate) fn artifact_data_root() -> PathBuf {
     if let Ok(artifact_store_path) = env::var("ARTIFACT_STORE_PATH") {
         let path = PathBuf::from(artifact_store_path);
         if path.file_name().is_some_and(|name| name == "artifacts") {
@@ -12047,9 +13054,9 @@ fn execute_host_bridge_action(
     }
     let token = host_bridge_token()?;
     let host = env::var("IGY6_HOST_BRIDGE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    if host != "127.0.0.1" {
+    if host != "127.0.0.1" && host != "host.docker.internal" {
         return Err(GatewayError::Conflict(
-            "Host bridge must be configured for 127.0.0.1 only".to_string(),
+            "Host bridge must be configured for 127.0.0.1 or host.docker.internal only".to_string(),
         ));
     }
     let port = env::var("IGY6_HOST_BRIDGE_PORT")
@@ -12065,8 +13072,9 @@ fn execute_host_bridge_action(
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|error| GatewayError::Conflict(error.to_string()))?;
     let request = format!(
-        "POST /actions/{} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        "POST /actions/{} HTTP/1.1\r\nHost: {}:{}\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         action_name,
+        host,
         port,
         token
     );
@@ -12719,7 +13727,7 @@ fn generated_record_id(prefix: &str) -> String {
     format!("{prefix}-{nanos:x}")
 }
 
-fn postgres_client_url(database_url: &str) -> String {
+pub(crate) fn postgres_client_url(database_url: &str) -> String {
     for prefix in ["postgresql+", "postgres+"] {
         if let Some(driver_url) = database_url.strip_prefix(prefix) {
             if let Some((_, rest)) = driver_url.split_once("://") {
@@ -13283,7 +14291,7 @@ fn evidence_answer_json(body: &str) -> String {
     evidence_grounded_answer_json(&answer)
 }
 
-fn json_response(
+pub(crate) fn json_response(
     status_code: u16,
     reason: &str,
     body: String,
@@ -13973,6 +14981,58 @@ mod tests {
         assert!(is_web_only_scope(Some(&scope)));
         let mixed = serde_json::json!(["https://example.com", "everything"]);
         assert!(!is_web_only_scope(Some(&mixed)));
+    }
+
+    #[test]
+    fn bypass_fetch_headers_include_cookie_and_bearer() {
+        let payload = serde_json::json!({
+            "bypass_auth": true,
+            "cookie": "session=abc123",
+            "authorization": "token-value"
+        });
+        let headers = web_fetch_headers(&payload);
+        assert!(headers.iter().any(|(k, v)| k == "Cookie" && v == "session=abc123"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "Authorization" && v == "Bearer token-value")
+        );
+        assert!(!headers.iter().any(|(k, _)| k == "DNT"));
+    }
+
+    #[test]
+    fn bypass_fetch_requires_credentials() {
+        let payload = serde_json::json!({
+            "bypass_auth": true,
+            "scope": ["https://example.com/private"]
+        });
+        assert!(!bypass_fetch_has_credentials(&payload));
+    }
+
+    #[test]
+    fn max_reach_flag_enables_auto_bypass_path() {
+        let payload = serde_json::json!({
+            "max_reach": true,
+            "scope": ["https://example.com/article"]
+        });
+        assert!(max_reach_enabled(&payload));
+        assert!(auto_bypass_enabled(&payload) || max_reach_enabled(&payload));
+    }
+
+    #[test]
+    fn auto_bypass_prefers_richer_html_over_login_wall() {
+        let public_page = "<html><body><main><article><p>Full article text with many details.</p></article></main></body></html>";
+        let login_wall = "<html><body><h1>Sign in to continue</h1><p>Subscribe to read this article.</p></body></html>";
+        assert!(auto_bypass_content_score(public_page) > auto_bypass_content_score(login_wall));
+    }
+
+    #[test]
+    fn auto_bypass_url_variants_include_amp_and_mobile() {
+        let variants = auto_bypass_url_variants("https://www.example.com/news/story");
+        let labels: Vec<String> = variants.into_iter().map(|(label, _)| label).collect();
+        assert!(labels.contains(&"direct".to_string()));
+        assert!(labels.contains(&"amp_query".to_string()));
+        assert!(labels.contains(&"mobile_www".to_string()));
     }
 
     #[test]

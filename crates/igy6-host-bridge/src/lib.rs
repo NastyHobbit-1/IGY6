@@ -14,10 +14,12 @@ pub const DEFAULT_PORT: u16 = 8765;
 
 const MAX_OUTPUT_CHARS: usize = 4000;
 const ACTION_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_REACH_ACTION_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionSpec {
     pub name: &'static str,
+    pub runner: Option<&'static str>,
     pub script: &'static str,
     pub args: &'static [&'static str],
 }
@@ -46,20 +48,43 @@ pub fn action_specs() -> &'static [ActionSpec] {
     &[
         ActionSpec {
             name: "start_stack",
+            runner: None,
             script: "scripts/run.sh",
             args: &["--detached"],
         },
         ActionSpec {
             name: "stop_stack",
+            runner: None,
             script: "scripts/stop.sh",
             args: &[],
         },
         ActionSpec {
             name: "run_last_healthy_stack",
+            runner: None,
             script: "scripts/run-last-healthy-config.sh",
             args: &[],
         },
+        ActionSpec {
+            name: "deep_bypass_collect",
+            runner: Some("node"),
+            script: "apps/web/scripts/deep-bypass-collect.mjs",
+            args: &[],
+        },
+        ActionSpec {
+            name: "max_reach_collect",
+            runner: Some("node"),
+            script: "apps/web/scripts/max-reach-collect.mjs",
+            args: &[],
+        },
     ]
+}
+
+fn action_timeout(action_name: &str) -> Duration {
+    if action_name == "max_reach_collect" {
+        MAX_REACH_ACTION_TIMEOUT
+    } else {
+        ACTION_TIMEOUT
+    }
 }
 
 pub fn allowed_action(action_name: &str) -> Option<&'static ActionSpec> {
@@ -71,9 +96,13 @@ pub fn fixed_argv(repo_root: &Path, action_name: &str) -> Option<Vec<String>> {
     let script = repo_root.join(spec.script);
     // Shell scripts always use POSIX paths, even when the bridge runs on Windows hosts.
     let script_path = script.to_string_lossy().replace('\\', "/");
-    let mut argv = vec![script_path];
-    argv.extend(spec.args.iter().map(|arg| (*arg).to_string()));
-    Some(argv)
+    if let Some(runner) = spec.runner {
+        Some(vec![runner.to_string(), script_path])
+    } else {
+        let mut argv = vec![script_path];
+        argv.extend(spec.args.iter().map(|arg| (*arg).to_string()));
+        Some(argv)
+    }
 }
 
 pub fn validate_bind_host(host: &str) -> Result<(), String> {
@@ -155,8 +184,21 @@ pub fn redact_output(value: &str) -> String {
 }
 
 pub fn execute_allowed_action(repo_root: &Path, action_name: &str) -> Result<ActionResult, String> {
+    execute_allowed_action_with_env(repo_root, action_name, &HashMap::new())
+}
+
+pub fn execute_allowed_action_with_env(
+    repo_root: &Path,
+    action_name: &str,
+    extra_env: &HashMap<String, String>,
+) -> Result<ActionResult, String> {
+    let spec = allowed_action(action_name).ok_or_else(|| "unknown action".to_string())?;
     let argv = fixed_argv(repo_root, action_name).ok_or_else(|| "unknown action".to_string())?;
-    let script_path = PathBuf::from(&argv[0]);
+    let script_path = if spec.runner.is_some() {
+        repo_root.join(spec.script)
+    } else {
+        PathBuf::from(&argv[0])
+    };
     if !script_path.is_file() {
         return Err(format!(
             "operator script not found: {}",
@@ -168,6 +210,7 @@ pub fn execute_allowed_action(repo_root: &Path, action_name: &str) -> Result<Act
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(repo_root)
+        .envs(extra_env)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -201,7 +244,7 @@ pub fn execute_allowed_action(repo_root: &Path, action_name: &str) -> Result<Act
             });
         }
 
-        if started.elapsed() > ACTION_TIMEOUT {
+        if started.elapsed() > action_timeout(action_name) {
             let _ = child.kill();
             let output = child
                 .wait_with_output()
@@ -248,10 +291,60 @@ pub fn serve(config: BridgeConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_json_url_from_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    let key = "\"url\"";
+    let start = trimmed.find(key)? + key.len();
+    let after_key = trimmed.get(start..)?.trim_start();
+    let after_key = after_key.strip_prefix(':')?.trim_start();
+    if after_key.starts_with('"') {
+        let inner = after_key.get(1..)?;
+        let end = inner.find('"')?;
+        let url = inner.get(..end)?.trim();
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+fn parse_json_depth_from_body(body: &str) -> Option<u32> {
+    let trimmed = body.trim();
+    let key = "\"max_depth\"";
+    let start = trimmed.find(key)? + key.len();
+    let after_key = trimmed.get(start..)?.trim_start();
+    let after_key = after_key.strip_prefix(':')?.trim_start();
+    let digits: String = after_key.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+pub fn handle_request_with_body(
+    method: &str,
+    path: &str,
+    headers: &HashMap<String, String>,
+    body: &str,
+    config: &BridgeConfig,
+) -> (u16, String) {
+    handle_request_internal(method, path, headers, Some(body), config)
+}
+
 pub fn handle_request(
     method: &str,
     path: &str,
     headers: &HashMap<String, String>,
+    config: &BridgeConfig,
+) -> (u16, String) {
+    handle_request_internal(method, path, headers, None, config)
+}
+
+fn handle_request_internal(
+    method: &str,
+    path: &str,
+    headers: &HashMap<String, String>,
+    body: Option<&str>,
     config: &BridgeConfig,
 ) -> (u16, String) {
     if !token_authorized(headers, &config.token) {
@@ -269,7 +362,56 @@ pub fn handle_request(
                     json_error("unknown_action", "action is not allowlisted"),
                 );
             }
-            match execute_allowed_action(&config.repo_root, action_name) {
+            let mut extra_env = HashMap::new();
+            if action_name == "deep_bypass_collect" || action_name == "max_reach_collect" {
+                let Some(body_text) = body.filter(|value| !value.trim().is_empty()) else {
+                    return (
+                        400,
+                        json_error(
+                            "missing_body",
+                            &format!("{action_name} requires JSON body with url"),
+                        ),
+                    );
+                };
+                let Some(url) = parse_json_url_from_body(body_text) else {
+                    return (
+                        400,
+                        json_error(
+                            "missing_url",
+                            &format!("{action_name} requires JSON body with url"),
+                        ),
+                    );
+                };
+                if action_name == "deep_bypass_collect" {
+                    extra_env.insert("DEEP_BYPASS_URL".to_string(), url);
+                } else {
+                    extra_env.insert("MAX_REACH_URL".to_string(), url);
+                    if let Some(depth) = parse_json_depth_from_body(body_text) {
+                        extra_env.insert("MAX_REACH_DEPTH".to_string(), depth.to_string());
+                    }
+                    if let Ok(headed) = std::env::var("MAX_REACH_HEADED") {
+                        if !headed.trim().is_empty() {
+                            extra_env.insert("MAX_REACH_HEADED".to_string(), headed);
+                        }
+                    }
+                    if let Ok(proxy) = std::env::var("MAX_REACH_PROXY") {
+                        if !proxy.trim().is_empty() {
+                            extra_env.insert("MAX_REACH_PROXY".to_string(), proxy);
+                        }
+                    }
+                    if let Ok(cdp) = std::env::var("MAX_REACH_CDP_PORT") {
+                        if !cdp.trim().is_empty() {
+                            extra_env.insert("MAX_REACH_CDP_PORT".to_string(), cdp);
+                        }
+                    }
+                }
+                if let Ok(data_root) = std::env::var("IGY6_DATA_ROOT") {
+                    if !data_root.trim().is_empty() {
+                        extra_env.insert("IGY6_DATA_ROOT".to_string(), data_root);
+                    }
+                }
+            }
+            match execute_allowed_action_with_env(&config.repo_root, action_name, &extra_env) {
                 Ok(result) => (200, action_result_json(&result)),
                 Err(error) => (500, json_error("action_failed", &error)),
             }
@@ -284,14 +426,18 @@ fn handle_stream(stream: &mut TcpStream, config: &BridgeConfig) -> Result<(), St
         .read(&mut buffer)
         .map_err(|error| format!("failed to read request: {error}"))?;
     let request = String::from_utf8_lossy(&buffer[..read_count]);
-    let (method, path, headers) = parse_request(&request)?;
-    let (status, body) = handle_request(&method, &path, &headers, config);
+    let (method, path, headers, request_body) = parse_request(&request)?;
+    let (status, body) = if request_body.is_empty() {
+        handle_request(&method, &path, &headers, config)
+    } else {
+        handle_request_with_body(&method, &path, &headers, &request_body, config)
+    };
     write_response(stream, status, &body)
 }
 
-fn parse_request(request: &str) -> Result<(String, String, HashMap<String, String>), String> {
-    let mut lines = request.lines();
-    let request_line = lines
+fn parse_request(request: &str) -> Result<(String, String, HashMap<String, String>, String), String> {
+    let mut header_lines = request.lines();
+    let request_line = header_lines
         .next()
         .ok_or_else(|| "missing request line".to_string())?;
     let mut parts = request_line.split_whitespace();
@@ -304,7 +450,7 @@ fn parse_request(request: &str) -> Result<(String, String, HashMap<String, Strin
         .ok_or_else(|| "missing path".to_string())?
         .to_string();
     let mut headers = HashMap::new();
-    for line in lines {
+    for line in header_lines.by_ref() {
         if line.trim().is_empty() {
             break;
         }
@@ -312,7 +458,8 @@ fn parse_request(request: &str) -> Result<(String, String, HashMap<String, Strin
             headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
         }
     }
-    Ok((method, path, headers))
+    let body = header_lines.collect::<Vec<_>>().join("\n");
+    Ok((method, path, headers, body))
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> Result<(), String> {
@@ -474,6 +621,48 @@ mod tests {
 
         let stop_argv = fixed_argv(&root, "stop_stack").expect("stop_stack is allowlisted");
         assert_eq!(stop_argv, vec!["/repo/scripts/stop.sh"]);
+
+        let deep_argv =
+            fixed_argv(&root, "deep_bypass_collect").expect("deep_bypass_collect is allowlisted");
+        assert_eq!(
+            deep_argv,
+            vec!["node", "/repo/apps/web/scripts/deep-bypass-collect.mjs"]
+        );
+
+        let max_argv =
+            fixed_argv(&root, "max_reach_collect").expect("max_reach_collect is allowlisted");
+        assert_eq!(
+            max_argv,
+            vec!["node", "/repo/apps/web/scripts/max-reach-collect.mjs"]
+        );
+    }
+
+    #[test]
+    fn deep_bypass_collect_requires_url_body() {
+        let config = test_config();
+        let (status, body) = handle_request_with_body(
+            "POST",
+            "/actions/deep_bypass_collect",
+            &auth_headers("test-token"),
+            "{}",
+            &config,
+        );
+        assert_eq!(status, 400);
+        assert!(body.contains("missing_url"));
+    }
+
+    #[test]
+    fn max_reach_collect_requires_url_body() {
+        let config = test_config();
+        let (status, body) = handle_request_with_body(
+            "POST",
+            "/actions/max_reach_collect",
+            &auth_headers("test-token"),
+            "{}",
+            &config,
+        );
+        assert_eq!(status, 400);
+        assert!(body.contains("missing_url"));
     }
 
     #[test]

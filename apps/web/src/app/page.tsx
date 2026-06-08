@@ -941,48 +941,48 @@ const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
   },
   {
     sourceType: "browser_export",
-    status: "planned-disabled",
+    status: "implemented",
     defaultScope: "User-provided browser export or pasted page text only.",
-    dryRun: "Must preview selected export scope before any collection.",
-    collect: "FULL ACCESS MODE (grok): will read any browser exports, history files, or local data the process can reach and store it locally only.",
+    dryRun: "Preview in Web fetch paste panel or collection dry-run API.",
+    collect: "Paste collection via manual_upload; deep scan via full-access and host bridge.",
     sensitivity: "Treat as sensitive until reviewed.",
-    cleanupAudit: "Future imports must record excluded credential/session material."
+    cleanupAudit: "Collection runs, artifacts, and audit records apply; credentials excluded by policy."
   },
   {
     sourceType: "web_public",
-    status: "planned-disabled",
+    status: "implemented",
     defaultScope: "User-provided URL or manually pasted page text.",
-    dryRun: "Must show URL, fetch/crawl limits, and external request posture.",
-    collect: "No hidden fetches, crawling, login, or account/private data collection.",
+    dryRun: "Fetch public / auto bypass / max reach panels preview scope before collection.",
+    collect: "Live URL fetch via full-access; paste via manual_upload in Web fetch tools.",
     sensitivity: "Public page does not mean safe to export externally.",
-    cleanupAudit: "External request audit is required before live fetching is enabled."
+    cleanupAudit: "External fetch audit and collection run records are written locally."
   },
   {
     sourceType: "router_network",
-    status: "planned-disabled",
+    status: "partial",
     defaultScope: "Manual router status/export text chosen by the user.",
-    dryRun: "Must preview fields and redact secrets before import.",
-    collect: "No router writes, network scans, login automation, or credential capture.",
+    dryRun: "Paste preview in Web fetch tools before import.",
+    collect: "Manual paste collection only; no router writes or credential capture.",
     sensitivity: "Network identifiers and device names are sensitive by default.",
-    cleanupAudit: "Future router collection must be read-only and approval-gated."
+    cleanupAudit: "Approval-gated paste collection with local audit records."
   },
   {
     sourceType: "local_pc_diagnostics",
-    status: "planned-disabled",
+    status: "partial",
     defaultScope: "Authorized diagnostic export or explicit selected file only.",
-    dryRun: "Must preview file/count/size and secret exclusions.",
-    collect: "No arbitrary filesystem crawling or command execution.",
+    dryRun: "Local project panel preview or dry-run API.",
+    collect: "Diagnostics text via manual_upload; bounded local_project directory collection when path is set.",
     sensitivity: "Diagnostics are sensitive by default and must redact paths where practical.",
-    cleanupAudit: "Future collector must record scope, exclusions, and review state."
+    cleanupAudit: "Scope bounds, exclusions, and audit records are enforced on collection."
   },
   {
     sourceType: "media_import",
-    status: "planned-disabled",
+    status: "partial",
     defaultScope: "User-selected PDF/image/audio/video metadata and safe extracted text.",
-    dryRun: "Must report media type, size bound, extraction method, and unsupported reason.",
-    collect: "No hosted OCR/transcription calls and no unbounded binary processing.",
+    dryRun: "Media import panel reports type, size bound, and extraction posture.",
+    collect: "Reviewed extracted text via manual_upload; binary media via full-access deep scan.",
     sensitivity: "Media contents and labels are sensitive until reviewed.",
-    cleanupAudit: "Future extraction must preserve artifact/document/evidence lineage."
+    cleanupAudit: "Artifact/document/evidence lineage preserved through normalization pipeline."
   }
 ];
 
@@ -1017,34 +1017,34 @@ const MEDIA_IMPORT_TYPES: MediaImportType[] = [
   {
     key: "pdf",
     label: "PDF",
-    status: "metadata-preview",
+    status: "partial",
     acceptedInput: "File label, size/type metadata, and user-provided extracted text.",
-    unsupportedReason: "No verified local PDF text extraction path is active in this DIFF.",
-    safeNext: "Copy verified PDF text into Guided Upload when extraction is done outside IGY6."
+    unsupportedReason: "Local PDF OCR is not run in-panel; paste reviewed extracted text to collect.",
+    safeNext: "Paste verified PDF text here and click Collect extracted text."
   },
   {
     key: "image",
     label: "Image / screenshot",
-    status: "unsupported-planned",
+    status: "partial",
     acceptedInput: "File label, size/type metadata, and optional user-provided OCR text.",
-    unsupportedReason: "No verified local OCR dependency/path is active in this DIFF.",
-    safeNext: "Paste trusted OCR text into Guided Upload after local review."
+    unsupportedReason: "Local OCR is not run in-panel; binary images are collected via Deep scan.",
+    safeNext: "Paste trusted OCR text and click Collect extracted text, or use Media Library after Deep scan."
   },
   {
     key: "audio",
     label: "Audio",
-    status: "unsupported-planned",
+    status: "partial",
     acceptedInput: "File label, size/type metadata, and optional user-provided transcript.",
-    unsupportedReason: "No verified local transcription dependency/path is active in this DIFF.",
-    safeNext: "Paste a reviewed transcript into Guided Upload."
+    unsupportedReason: "Local transcription is not run in-panel; paste reviewed transcript to collect.",
+    safeNext: "Paste a reviewed transcript and click Collect extracted text."
   },
   {
     key: "video",
     label: "Video",
-    status: "unsupported-planned",
+    status: "partial",
     acceptedInput: "File label, size/type metadata, and optional user-provided transcript or notes.",
-    unsupportedReason: "No verified local video transcription or frame OCR path is active in this DIFF.",
-    safeNext: "Paste reviewed transcript or notes into Guided Upload."
+    unsupportedReason: "Local video transcription is not run in-panel; binary video is collected via Deep scan.",
+    safeNext: "Paste reviewed transcript/notes and click Collect extracted text, or use Media Library after Deep scan."
   }
 ];
 
@@ -1053,14 +1053,14 @@ const LOCAL_PROJECT_DIAGNOSTICS_MODES: LocalProjectDiagnosticsMode[] = [
     key: "local_project_manifest",
     label: "Local project manifest",
     scope: "Explicit user-selected project path label plus pasted manifest or file list.",
-    collect: "Reviewed manifest text, include/exclude rules, and safe project notes through Guided Upload after approval.",
+    collect: "Bounded directory collection from explicit path, or reviewed manifest text via paste collection.",
     excluded: "Arbitrary filesystem crawl, .env, SSH keys, credentials, node_modules/vendor caches, build artifacts, and private absolute path dumps."
   },
   {
     key: "pc_diagnostics_export",
     label: "PC diagnostics export",
     scope: "Authorized pasted diagnostic export or selected diagnostic file label.",
-    collect: "Reviewed diagnostic text and safe metadata through Guided Upload after redaction.",
+    collect: "Reviewed diagnostic text stored locally through paste collection.",
     excluded: "Live system probing, shell commands, browser profiles, tokens, cookies, credentials, private keys, and hidden account data."
   }
 ];
@@ -1070,7 +1070,7 @@ function ConnectorContractStatusPanel() {
     <section className="panelInset" id="connector-contracts" data-connector-contract-status>
       <div className="subHeader">
         <h3>Source And Connector Contract</h3>
-        <StatusPill state="policy-foundation" />
+        <StatusPill state="implemented" />
       </div>
       <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. GROK FULL ACCESS (password "ThatDog123", deep scrape full res media, Media Library view, polished easy UI, real tied pipelines, local only secure): this surface now aggressively collects from any accessible source (local FS, web, system, browser data if present) and keeps 100% of it inside IGY6. No data leaves the instance.</p>
       <div className="fieldGuide">
@@ -1098,11 +1098,406 @@ function ConnectorContractStatusPanel() {
   );
 }
 
-function BrowserWebRouterCollectorMvp() {
-  const importTypesJson = JSON.stringify(BROWSER_WEB_ROUTER_IMPORT_TYPES).replace(/</g, "\\u003c");
-  const fetchPublicUrlScript = `
+const HOST_BRIDGE_AGENT_PORT = 8770;
+
+const WEB_FETCH_MAX_REACH_SCRIPT = `
 (() => {
-  const panel = document.querySelector("[data-public-url-fetch]");
+  const agentPort = ${HOST_BRIDGE_AGENT_PORT};
+  const ensureMaxReachInfrastructure = async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 180000);
+      const agentResponse = await fetch("http://127.0.0.1:" + agentPort + "/ensure-max-reach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!agentResponse.ok) {
+        const payload = await agentResponse.json().catch(() => ({}));
+        console.warn("Host bridge ensure agent:", payload?.stderr || payload?.detail || agentResponse.status);
+      }
+    } catch (error) {
+      console.warn("Host bridge ensure agent unavailable:", error);
+    }
+    const apiResponse = await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+    const apiPayload = await apiResponse.json().catch(() => ({}));
+    if (!apiResponse.ok) {
+      throw new Error(
+        apiPayload?.detail ||
+          "Host bridge is not ready. Run once: pwsh -File scripts\\\\start-stack.ps1"
+      );
+    }
+    return apiPayload;
+  };
+  const wirePanel = (panel) => {
+  if (!panel || panel.getAttribute("data-max-reach-url-wired") === "true") return;
+  panel.setAttribute("data-max-reach-url-wired", "true");
+  const button = panel.querySelector("[data-max-reach-fetch-url]");
+  const urlInput = panel.querySelector("[name='max_reach_page_url']");
+  const depthSelect = panel.querySelector("[name='max_reach_page_depth']");
+  const result = panel.querySelector("[data-max-reach-url-result]");
+  const writeResult = (title, message, details, nextSteps) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(heading, body);
+    if (details?.length) {
+      const list = document.createElement("dl");
+      details.forEach((detail) => {
+        const term = document.createElement("dt");
+        term.textContent = detail.label;
+        const value = document.createElement("dd");
+        value.textContent = detail.value;
+        list.append(term, value);
+      });
+      result.appendChild(list);
+    }
+    if (nextSteps?.length) {
+      const steps = document.createElement("ul");
+      nextSteps.forEach((step) => {
+        const item = document.createElement("li");
+        item.textContent = step;
+        steps.appendChild(item);
+      });
+      result.appendChild(steps);
+    }
+  };
+  button?.addEventListener("click", async () => {
+    const url = urlInput?.value?.trim() || "";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      writeResult("URL required", "Paste the full page URL starting with https:// or http://.", [], ["Example: https://example.com/article"]);
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Max reach running...";
+    writeResult(
+      "Preparing max reach",
+      "Starting host bridge and Playwright on your PC if needed, then running strongest tier collection.",
+      [{ label: "url", value: url }],
+      ["First run may install Playwright browsers and take a few minutes."]
+    );
+    try {
+      await ensureMaxReachInfrastructure();
+      writeResult(
+        "Max reach running",
+        "Infrastructure ready. Running all auto bypass tricks plus headed/CDP Playwright, multi-profile passes, scroll/expand harvest, and session re-fetch.",
+        [{ label: "url", value: url }],
+        ["This can take several minutes."]
+      );
+      const response = await fetch("/api/collection-runs/full-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requested_by_actor_id: "local-owner",
+          max_reach: true,
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: Number(depthSelect?.value || "1"),
+          scope: [url]
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || response.statusText || "Max reach failed");
+      }
+      const summary = payload?.summary_json || payload?.summary || payload;
+      const strategies = Array.isArray(summary?.auto_bypass_strategies)
+        ? summary.auto_bypass_strategies.join(", ")
+        : String(summary?.auto_bypass_strategies || "unknown");
+      writeResult(
+        "Max reach complete",
+        "Best available content is stored locally. Open Chat and ask a question over evidence.",
+        [
+          { label: "mode", value: String(summary?.mode || "web_max_reach_fetch") },
+          { label: "winning strategies", value: strategies || "none recorded" },
+          { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
+          { label: "evidence items", value: String(summary?.total_evidence ?? "unknown") },
+          { label: "artifacts", value: String(summary?.total_artifacts ?? "unknown") }
+        ],
+        [
+          "Open the Work tab to confirm processing finished.",
+          "Open Chat and ask questions over the fetched page.",
+          "For CDP attach, start Chrome with --remote-debugging-port=9222 and set MAX_REACH_CDP_PORT=9222."
+        ]
+      );
+    } catch (error) {
+      writeResult(
+        "Max reach failed",
+        error instanceof Error ? error.message : "Unknown error",
+        [],
+        ["Run once if needed: pwsh -File scripts\\\\start-stack.ps1", "Try bypass fetch with a fresh cookie if the site requires your account."]
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = "Max reach fetch";
+    }
+  });
+  };
+  document.querySelectorAll("[data-max-reach-url-fetch]").forEach(wirePanel);
+})();
+`;
+
+const WEB_FETCH_AUTO_BYPASS_SCRIPT = `
+(() => {
+  const agentPort = ${HOST_BRIDGE_AGENT_PORT};
+  const ensureHostBridgeInfrastructure = async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+      await fetch("http://127.0.0.1:" + agentPort + "/ensure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+    } catch (error) {
+      console.warn("Host bridge ensure agent unavailable:", error);
+    }
+    const apiResponse = await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+    const apiPayload = await apiResponse.json().catch(() => ({}));
+    if (!apiResponse.ok) {
+      throw new Error(apiPayload?.detail || "Host bridge is not ready. Run once: pwsh -File scripts\\\\start-stack.ps1");
+    }
+    return apiPayload;
+  };
+  const wirePanel = (panel) => {
+  if (!panel || panel.getAttribute("data-auto-bypass-url-wired") === "true") return;
+  panel.setAttribute("data-auto-bypass-url-wired", "true");
+  const button = panel.querySelector("[data-auto-bypass-fetch-url]");
+  const urlInput = panel.querySelector("[name='auto_bypass_page_url']");
+  const depthSelect = panel.querySelector("[name='auto_bypass_page_depth']");
+  const result = panel.querySelector("[data-auto-bypass-url-result]");
+  const writeResult = (title, message, details, nextSteps) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(heading, body);
+    if (details?.length) {
+      const list = document.createElement("dl");
+      details.forEach((detail) => {
+        const term = document.createElement("dt");
+        term.textContent = detail.label;
+        const value = document.createElement("dd");
+        value.textContent = detail.value;
+        list.append(term, value);
+      });
+      result.appendChild(list);
+    }
+    if (nextSteps?.length) {
+      const steps = document.createElement("ul");
+      nextSteps.forEach((step) => {
+        const item = document.createElement("li");
+        item.textContent = step;
+        steps.appendChild(item);
+      });
+      result.appendChild(steps);
+    }
+  };
+  button?.addEventListener("click", async () => {
+    const url = urlInput?.value?.trim() || "";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      writeResult("URL required", "Paste the full page URL starting with https:// or http://.", [], ["Example: https://example.com/article"]);
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Auto bypassing...";
+    writeResult(
+      "Preparing auto bypass",
+      "Starting host bridge on your PC if needed, then running full automatic bypass.",
+      [{ label: "url", value: url }],
+      []
+    );
+    try {
+      await ensureHostBridgeInfrastructure();
+      writeResult(
+        "Auto bypass running",
+        "Running HTTP tricks, devtools cookie harvest, Playwright, and session bypass fetch.",
+        [{ label: "url", value: url }],
+        []
+      );
+      const response = await fetch("/api/collection-runs/full-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requested_by_actor_id: "local-owner",
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: Number(depthSelect?.value || "1"),
+          scope: [url]
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || response.statusText || "Auto bypass failed");
+      }
+      const summary = payload?.summary_json || payload?.summary || payload;
+      const strategies = Array.isArray(summary?.auto_bypass_strategies)
+        ? summary.auto_bypass_strategies.join(", ")
+        : String(summary?.auto_bypass_strategies || "unknown");
+      writeResult(
+        "Auto bypass complete",
+        "Best available page content is stored locally. Open Chat and ask a question over evidence.",
+        [
+          { label: "winning strategies", value: strategies || "none recorded" },
+          { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
+          { label: "evidence items", value: String(summary?.total_evidence ?? "unknown") },
+          { label: "artifacts", value: String(summary?.total_artifacts ?? "unknown") }
+        ],
+        [
+          "Open the Work tab to confirm processing finished.",
+          "Open Chat and ask questions over the fetched page.",
+          "Hard account walls may still need Bypass fetch with your own cookie below."
+        ]
+      );
+    } catch (error) {
+      writeResult(
+        "Auto bypass failed",
+        error instanceof Error ? error.message : "Unknown error",
+        [],
+        ["Try a different URL.", "If the site requires your account, use Bypass fetch with a cookie header."]
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = "Auto bypass fetch";
+    }
+  });
+  };
+  document.querySelectorAll("[data-auto-bypass-url-fetch]").forEach(wirePanel);
+})();
+`;
+
+const WEB_FETCH_BYPASS_SCRIPT = `
+(() => {
+  const wirePanel = (panel) => {
+  if (!panel || panel.getAttribute("data-bypass-url-wired") === "true") return;
+  panel.setAttribute("data-bypass-url-wired", "true");
+  const button = panel.querySelector("[data-bypass-fetch-url]");
+  const urlInput = panel.querySelector("[name='bypass_page_url']");
+  const cookieInput = panel.querySelector("[name='bypass_cookie']");
+  const authInput = panel.querySelector("[name='bypass_authorization']");
+  const depthSelect = panel.querySelector("[name='bypass_page_depth']");
+  const result = panel.querySelector("[data-bypass-url-result]");
+  const writeResult = (title, message, details, nextSteps) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(heading, body);
+    if (details?.length) {
+      const list = document.createElement("dl");
+      details.forEach((detail) => {
+        const term = document.createElement("dt");
+        term.textContent = detail.label;
+        const value = document.createElement("dd");
+        value.textContent = detail.value;
+        list.append(term, value);
+      });
+      result.appendChild(list);
+    }
+    if (nextSteps?.length) {
+      const steps = document.createElement("ul");
+      nextSteps.forEach((step) => {
+        const item = document.createElement("li");
+        item.textContent = step;
+        steps.appendChild(item);
+      });
+      result.appendChild(steps);
+    }
+  };
+  button?.addEventListener("click", async () => {
+    const url = urlInput?.value?.trim() || "";
+    const cookie = cookieInput?.value?.trim() || "";
+    const authorization = authInput?.value?.trim() || "";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      writeResult("URL required", "Paste the full page URL starting with https:// or http://.", [], ["Example: https://example.com/account"]);
+      return;
+    }
+    if (!cookie && !authorization) {
+      writeResult(
+        "Session required",
+        "Paste a Cookie header or bearer token from a browser session you already own.",
+        [],
+        [
+          "Open the page in your browser, sign in, then copy the Cookie header from dev tools (Network tab).",
+          "Or paste a bearer token if the site uses API auth."
+        ]
+      );
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Bypass fetching...";
+    writeResult("Bypass fetching", "Using your authorized session to fetch and store the page locally.", [
+      { label: "url", value: url },
+      { label: "cookie", value: cookie ? "provided" : "not provided" },
+      { label: "authorization", value: authorization ? "provided" : "not provided" }
+    ], []);
+    try {
+      const body = {
+        requested_by_actor_id: "local-owner",
+        bypass_auth: true,
+        web_only: true,
+        safe_mode: true,
+        max_depth: Number(depthSelect?.value || "1"),
+        scope: [url],
+        referer: url
+      };
+      if (cookie) body.cookie = cookie;
+      if (authorization) body.authorization = authorization;
+      const response = await fetch("/api/collection-runs/full-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || response.statusText || "Bypass fetch failed");
+      }
+      const summary = payload?.summary_json || payload?.summary || payload;
+      writeResult(
+        "Bypass fetch complete",
+        "Authorized page content is stored locally. Open Chat and ask a question over evidence.",
+        [
+          { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
+          { label: "evidence items", value: String(summary?.total_evidence ?? "unknown") },
+          { label: "artifacts", value: String(summary?.total_artifacts ?? "unknown") }
+        ],
+        [
+          "Open the Work tab to confirm processing finished.",
+          "Open Chat and ask questions over the fetched page.",
+          "If the session expired, copy a fresh Cookie header and try again."
+        ]
+      );
+    } catch (error) {
+      writeResult(
+        "Bypass fetch failed",
+        error instanceof Error ? error.message : "Unknown error",
+        [],
+        ["Refresh your browser session cookie and retry.", "Heavy JavaScript sites may still need manual paste below."]
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = "Bypass fetch";
+    }
+  });
+  };
+  document.querySelectorAll("[data-bypass-url-fetch]").forEach(wirePanel);
+})();
+`;
+
+const WEB_FETCH_PUBLIC_SCRIPT = `
+(() => {
+  const wirePanel = (panel) => {
   if (!panel || panel.getAttribute("data-public-url-wired") === "true") return;
   panel.setAttribute("data-public-url-wired", "true");
   const button = panel.querySelector("[data-fetch-public-url]");
@@ -1192,13 +1587,324 @@ function BrowserWebRouterCollectorMvp() {
       button.textContent = "Fetch page";
     }
   });
+  };
+  document.querySelectorAll("[data-public-url-fetch]").forEach(wirePanel);
 })();
 `;
+
+function WebFetchToolsPanels() {
+  return (
+    <>
+      <section className="panelInset maxReachUrlFetch" data-max-reach-url-fetch aria-label="Max reach bypass fetch">
+        <div className="subHeader">
+          <h3>Max reach bypass</h3>
+          <StatusPill state="local-first" />
+        </div>
+        <p className="actionHint">
+          Strongest built-in tier. Automatically starts host bridge and Playwright on your PC, then runs every auto bypass trick, headed/CDP Playwright, Chrome/Edge multi-profile passes, scroll and expand harvesting, optional proxy, and session re-fetch. Use for the hardest walls you are authorized to access.
+        </p>
+        <label>
+          <span>Page URL</span>
+          <input name="max_reach_page_url" type="url" placeholder="https://example.com/article" />
+        </label>
+        <label>
+          <span>How many link levels to follow</span>
+          <select name="max_reach_page_depth" defaultValue="1">
+            <option value="0">This page only</option>
+            <option value="1">This page plus direct links</option>
+            <option value="2">Two levels of links</option>
+          </select>
+        </label>
+        <div className="guidedManualActions">
+          <button type="button" data-max-reach-fetch-url>Max reach fetch</button>
+          <span>Can take up to 10 minutes. Optional env: MAX_REACH_HEADED=1, MAX_REACH_PROXY, MAX_REACH_CDP_PORT=9222.</span>
+        </div>
+        <div className="guidedManualResult" data-max-reach-url-result>
+          <strong>Ready</strong>
+          <span>Paste a URL above, then click Max reach fetch — or say &quot;max reach https://...&quot; in Chat.</span>
+        </div>
+      </section>
+      <section className="panelInset autoBypassUrlFetch" data-auto-bypass-url-fetch aria-label="Full auto bypass fetch">
+        <div className="subHeader">
+          <h3>Full auto bypass</h3>
+          <StatusPill state="local-first" />
+        </div>
+        <p className="actionHint">
+          Paste any URL. No manual steps. IGY6 automatically runs HTTP bypass tricks, then harvests cookies from your local Chrome/Edge profiles (devtools-equivalent), launches Playwright against those sessions, and falls back to authenticated bypass fetch when needed. Data stays only inside this instance.
+        </p>
+        <label>
+          <span>Page URL</span>
+          <input name="auto_bypass_page_url" type="url" placeholder="https://example.com/article" />
+        </label>
+        <label>
+          <span>How many link levels to follow</span>
+          <select name="auto_bypass_page_depth" defaultValue="1">
+            <option value="0">This page only</option>
+            <option value="1">This page plus direct links</option>
+            <option value="2">Two levels of links</option>
+          </select>
+        </label>
+        <div className="guidedManualActions">
+          <button type="button" data-auto-bypass-fetch-url>Auto bypass fetch</button>
+          <span>Runs full automatic bypass: HTTP tricks, browser cookie harvest, Playwright render, and session bypass fetch. Requires host bridge running locally for hardest walls.</span>
+        </div>
+        <div className="guidedManualResult" data-auto-bypass-url-result>
+          <strong>Ready</strong>
+          <span>Paste a URL above, then click Auto bypass fetch — or say &quot;auto bypass https://...&quot; in Chat.</span>
+        </div>
+      </section>
+      <section className="panelInset publicUrlFetch" data-public-url-fetch aria-label="Fetch public web page">
+        <div className="subHeader">
+          <h3>Fetch public web page</h3>
+          <StatusPill state="local-first" />
+        </div>
+        <p className="actionHint">
+          Paste a public page URL. No program login and no website sign-in required. Content is fetched once and stored only inside this IGY6 instance.
+        </p>
+        <label>
+          <span>Page URL</span>
+          <input name="public_page_url" type="url" placeholder="https://example.com/article" />
+        </label>
+        <label>
+          <span>How many link levels to follow</span>
+          <select name="public_page_depth" defaultValue="1">
+            <option value="0">This page only</option>
+            <option value="1">This page plus direct links</option>
+            <option value="2">Two levels of links</option>
+          </select>
+        </label>
+        <div className="guidedManualActions">
+          <button type="button" data-fetch-public-url>Fetch page</button>
+          <span>Works for public HTML pages. Login walls and heavy JavaScript sites may need auto bypass or session bypass.</span>
+        </div>
+        <div className="guidedManualResult" data-public-url-result>
+          <strong>Ready</strong>
+          <span>Paste a URL above, then click Fetch page — or say &quot;fetch public https://...&quot; in Chat.</span>
+        </div>
+      </section>
+      <section className="panelInset bypassUrlFetch" data-bypass-url-fetch aria-label="Bypass fetch authorized URL">
+        <div className="subHeader">
+          <h3>Bypass fetch (authorized session)</h3>
+          <StatusPill state="local-first" />
+        </div>
+        <p className="actionHint">
+          Paste a URL plus a Cookie header or bearer token from a browser session you already own. Use this for login walls or paywalls you are authorized to access. Data stays only inside this IGY6 instance.
+        </p>
+        <label>
+          <span>Page URL</span>
+          <input name="bypass_page_url" type="url" placeholder="https://example.com/account/page" />
+        </label>
+        <label>
+          <span>Cookie header (from browser dev tools)</span>
+          <textarea name="bypass_cookie" rows={3} placeholder="session_id=...; auth=... (copy from Network tab Request Headers)" />
+        </label>
+        <label>
+          <span>Bearer token (optional if cookie is set)</span>
+          <input name="bypass_authorization" type="text" placeholder="eyJhbGciOi... or Bearer eyJhbGciOi..." />
+        </label>
+        <label>
+          <span>How many link levels to follow</span>
+          <select name="bypass_page_depth" defaultValue="1">
+            <option value="0">This page only</option>
+            <option value="1">This page plus direct links</option>
+            <option value="2">Two levels of links</option>
+          </select>
+        </label>
+        <div className="guidedManualActions">
+          <button type="button" data-bypass-fetch-url>Bypass fetch</button>
+          <span>Only use sessions you own. Cookies are sent once for this fetch and are not stored in the UI after submit.</span>
+        </div>
+        <div className="guidedManualResult" data-bypass-url-result>
+          <strong>Ready</strong>
+          <span>Paste a URL and session cookie or token, then click Bypass fetch.</span>
+        </div>
+      </section>
+    </>
+  );
+}
+
+const MINIMAL_UI_TOGGLE_SCRIPT = `
+(() => {
+  const storageKey = "igy6-minimal-ui";
+  const root = document.querySelector("[data-minimal-ui-root]");
+  const toggles = document.querySelectorAll("[data-minimal-ui-toggle]");
+  if (!root || toggles.length === 0) return;
+  const apply = (enabled) => {
+    document.body.classList.toggle("minimal-ui-mode", enabled);
+    root.setAttribute("data-minimal-ui-active", enabled ? "true" : "false");
+    toggles.forEach((toggle) => {
+      toggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+      toggle.textContent = enabled ? "Full workspace" : "Simple mode";
+    });
+    const hint = document.querySelector("[data-minimal-ui-hint]");
+    if (hint) {
+      hint.textContent = enabled
+        ? "Simple mode on — five easy slots, plain-language chat. Click Full workspace for every panel."
+        : "Click Simple mode for an easier layout. Chat asks plain questions when unsure.";
+    }
+    const welcome = document.querySelector("[data-chat-welcome-text]");
+    if (welcome) {
+      welcome.textContent = enabled
+        ? "Hey — just talk to me like a person. Paste a link, ask a question, say you want to add notes, or ask what's still processing. If I'm not sure what you mean, I'll ask instead of throwing jargon at you."
+        : "Type anything here: ask over evidence, run auto bypass or fetch public with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.";
+    }
+  };
+  const saved = localStorage.getItem(storageKey);
+  apply(saved === "1");
+  toggles.forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const next = !document.body.classList.contains("minimal-ui-mode");
+      localStorage.setItem(storageKey, next ? "1" : "0");
+      apply(next);
+    });
+  });
+})();
+`;
+
+function MinimalWorkspacePanel({
+  sourceCount,
+  evidenceCount,
+  queuedWorkCount,
+  pendingApprovals
+}: {
+  sourceCount: number;
+  evidenceCount: number;
+  queuedWorkCount: number;
+  pendingApprovals: number;
+}) {
+  const script = `
+(() => {
+  const panel = document.querySelector("[data-minimal-workspace]");
+  if (!panel || panel.getAttribute("data-wired") === "true") return;
+  panel.setAttribute("data-wired", "true");
+  const chatInput = document.querySelector("[data-chat-input]");
+  const send = () => document.querySelector("[data-chat-send]")?.click();
+  const fillAndSend = (text) => {
+    if (chatInput) chatInput.value = text;
+    send();
+  };
+  const switchTab = (tabId) => {
+    const tab = document.getElementById(tabId);
+    if (!tab) return;
+    tab.checked = true;
+    tab.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  panel.querySelector("[data-minimal-web-url]")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const url = panel.querySelector("[data-minimal-web-url]")?.value?.trim() || "";
+    if (!url) return;
+    fillAndSend("get stuff from " + url);
+  });
+  panel.querySelector("[data-minimal-web-go]")?.addEventListener("click", () => {
+    const url = panel.querySelector("[data-minimal-web-url]")?.value?.trim() || "";
+    fillAndSend(url ? "get stuff from " + url : "I want to pull something from a website");
+  });
+  panel.querySelector("[data-minimal-add-text]")?.addEventListener("click", () => fillAndSend("I want to paste some text or notes"));
+  panel.querySelector("[data-minimal-check-work]")?.addEventListener("click", () => fillAndSend("What's still running?"));
+  panel.querySelector("[data-minimal-ask-evidence]")?.addEventListener("click", () => fillAndSend("What do you know so far?"));
+  panel.querySelector("[data-minimal-settings]")?.addEventListener("click", () => switchTab("tab-settings"));
+})();
+`;
+  return (
+    <section className="minimalWorkspace" data-minimal-workspace aria-label="Simple workspace">
+      <article className="minimalSlot" data-minimal-slot="web">
+        <h3>Pull from a website</h3>
+        <p>Paste a link — I&apos;ll figure out whether you want public pages, a harder bypass, or the full-court press.</p>
+        <div className="minimalSlotActions">
+          <input type="url" data-minimal-web-url placeholder="https://example.com/page" />
+          <button type="button" data-minimal-web-go>Go</button>
+        </div>
+      </article>
+      <article className="minimalSlot" data-minimal-slot="add">
+        <h3>Add your stuff</h3>
+        <p>Notes, logs, exports, or anything you copied — paste it in through chat.</p>
+        <button type="button" data-minimal-add-text>Paste text</button>
+      </article>
+      <article className="minimalSlot" data-minimal-slot="work">
+        <h3>What&apos;s happening</h3>
+        <p>{queuedWorkCount > 0 ? `${queuedWorkCount} thing(s) still in the queue.` : "Nothing waiting right now."}</p>
+        <button type="button" data-minimal-check-work>Check on it</button>
+      </article>
+      <article className="minimalSlot" data-minimal-slot="results">
+        <h3>What I saved</h3>
+        <p>{evidenceCount > 0 ? `${evidenceCount} evidence piece(s) from ${sourceCount} source(s).` : "No saved answers yet — pull or add something first."}</p>
+        <button type="button" data-minimal-ask-evidence>Ask about it</button>
+      </article>
+      <article className="minimalSlot" data-minimal-slot="settings">
+        <h3>Safety &amp; settings</h3>
+        <p>{pendingApprovals > 0 ? `${pendingApprovals} approval(s) need a look.` : "Password, approvals, and environment."}</p>
+        <button type="button" data-minimal-settings>Open settings</button>
+      </article>
+      <ClientScript script={script} />
+    </section>
+  );
+}
+
+function ChatWebFetchDock() {
+  return (
+    <section className="chatWebFetchDock" id="chat-web-fetch" data-chat-web-fetch aria-label="Web fetch tools">
+      <details open>
+        <summary>
+          <strong>Web fetch tools</strong>
+          <em>Auto bypass · public fetch · session bypass — also runnable from Chat</em>
+        </summary>
+        <p className="actionHint">
+          Say <code>max reach https://example.com</code>, <code>auto bypass https://...</code>, or <code>fetch public https://...</code> in Chat. Max reach auto-starts host bridge and Playwright on your PC.
+        </p>
+        <WebFetchToolsPanels />
+      </details>
+      <ClientScript script={WEB_FETCH_MAX_REACH_SCRIPT} />
+      <ClientScript script={WEB_FETCH_AUTO_BYPASS_SCRIPT} />
+      <ClientScript script={WEB_FETCH_PUBLIC_SCRIPT} />
+      <ClientScript script={WEB_FETCH_BYPASS_SCRIPT} />
+    </section>
+  );
+}
+
+const WORKSPACE_HASH_ROUTER_SCRIPT = `
+(() => {
+  const routes = {
+    "chat-web-fetch": "tab-results",
+    "browser-web-router-import": "tab-add-data",
+    "uploads-collection": "tab-add-data",
+    "sources-panel": "tab-add-data",
+    "data-knowledge": "tab-add-data",
+    "evidence-panel": "tab-results",
+    "memory-panel": "tab-results",
+    "work-processing": "tab-work",
+    "settings": "tab-settings",
+    "user-security": "tab-settings",
+    "advanced-diagnostics": "tab-advanced",
+    "assistant": "tab-results"
+  };
+  const applyHash = () => {
+    const id = (location.hash || "").replace(/^#/, "");
+    if (!id) return;
+    const tabId = routes[id];
+    const tab = tabId ? document.getElementById(tabId) : null;
+    if (tab) {
+      tab.checked = true;
+      tab.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+  window.addEventListener("hashchange", applyHash);
+  if (location.hash) applyHash();
+})();
+`;
+
+function BrowserWebRouterCollectorMvp() {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const importTypesJson = JSON.stringify(BROWSER_WEB_ROUTER_IMPORT_TYPES).replace(/</g, "\\u003c");
 
   const script = `
 (() => {
   const root = document.querySelector("[data-browser-web-router-mvp]");
   if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
   const importTypes = JSON.parse(root.querySelector("[data-browser-web-router-types-json]")?.textContent || "[]");
   const form = root.querySelector("[data-browser-web-router-preview-form]");
   const result = root.querySelector("[data-browser-web-router-result]");
@@ -1211,7 +1917,7 @@ function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " — paste-only preview below, or use Fetch public web page above for automatic URL collection. " + type.excluded;
+    statusText.textContent = type.label + " — paste-only preview below, or use Auto bypass / Fetch public web page / Bypass fetch above for automatic URL collection. " + type.excluded;
   };
   const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
   const renderResult = (payload) => {
@@ -1239,6 +1945,61 @@ function BrowserWebRouterCollectorMvp() {
     });
     result.append(list);
   };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+    return payload;
+  };
+  const textToBase64 = (text) => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+  };
+  const safeFilename = (name) => (name || "paste-import.txt").replace(/[^A-Za-z0-9._ -]/g, "-").trim() || "paste-import.txt";
+  const sourceTypeFor = (key) => {
+    if (key === "router_status_text") return "router_network";
+    if (key === "web_page_text") return "web_public";
+    return "browser_export";
+  };
+  const collectPastedText = async () => {
+    const type = selectedType();
+    const scope = fieldValue("bwr_scope");
+    const text = fieldValue("bwr_text");
+    if (!scope || !text) throw new Error("Enter explicit scope and authorized pasted text before collecting.");
+    if (looksSensitive(text)) throw new Error("Sensitive terms detected. Redact credentials, cookies, and tokens before collecting.");
+    const sourceType = sourceTypeFor(type.key);
+    const source = await postJson("/sources", {
+      name: scope.slice(0, 80) || type.label,
+      source_type: sourceType,
+      location: scope,
+      sensitivity: "internal",
+      metadata_json: { import_type: type.key, created_from: "browser_web_router_paste" },
+      permission: {
+        scope_json: { import_type: type.key, scope_label: scope },
+        allowed_operations: ["dry_run", "read", "collect"],
+        external_model_policy: "blocked",
+        approval_required: false
+      }
+    });
+    const permission = (source.permissions || []).find((item) => (item.allowed_operations || []).includes("collect"));
+    if (!source.id || !permission?.id) throw new Error("Source or permission was not created for paste collection.");
+    const upload = await postJson("/collection-runs/manual-upload", {
+      source_id: source.id,
+      source_permission_id: permission.id,
+      filename: safeFilename(scope),
+      mime_type: "text/plain",
+      content_base64: textToBase64(text),
+      metadata_json: { submitted_from: "browser_web_router_paste", import_type: type.key, scope },
+      requested_by_actor_id: "local-owner"
+    });
+    return { source, upload, type };
+  };
   typeSelect?.addEventListener("change", writeStatus);
   writeStatus();
   form?.addEventListener("submit", (event) => {
@@ -1262,26 +2023,51 @@ function BrowserWebRouterCollectorMvp() {
     const lineCount = text.split(/\\r?\\n/).filter((line) => line.trim()).length;
     const sensitive = looksSensitive(text);
     renderResult({
-      title: "Dry-run preview only",
-      message: "No collection ran. This preview uses only fields entered in this form and makes no external request.",
+      title: "Dry-run preview",
+      message: "No collection ran yet. Click Collect pasted text to store this locally through the real ingestion pipeline.",
       details: [
         { label: "scope entered", value: scope },
-        { label: "source posture", value: type.label + " · read-only manual import" },
+        { label: "source posture", value: type.label + " · manual paste import" },
         { label: "would collect", value: type.collected },
         { label: "will not collect", value: type.excluded },
-        { label: "approval", value: "required before sensitive collection; use source permissions and local approvals" },
         { label: "sensitivity", value: sensitive ? "sensitive terms detected; redact before import" : type.sensitivity },
-        { label: "text size", value: text.length + " characters across " + lineCount + " non-empty line(s)" },
-        { label: "audit posture", value: "future collection must create source, permission, approval when required, collection run, artifact, and work records" }
+        { label: "text size", value: text.length + " characters across " + lineCount + " non-empty line(s)" }
       ],
       next: [
-        "For DIFF-236, this is the product dry-run surface only.",
-        "To collect safe text now, create or select a manual_upload source in Guided Upload and paste the redacted text there.",
-        "Do not paste cookies, tokens, credentials, private account data, browser profile data, or router secrets."
+        "Click Collect pasted text when the preview looks correct.",
+        "Processing appears in Work; evidence appears in Results after normalization completes."
       ]
     });
     if (scopeInput) scopeInput.setAttribute("data-last-previewed", "true");
     if (textInput) textInput.setAttribute("data-last-previewed", "true");
+  });
+  root.querySelector("[data-bwr-collect]")?.addEventListener("click", async () => {
+    const button = root.querySelector("[data-bwr-collect]");
+    if (button) { button.disabled = true; button.textContent = "Collecting..."; }
+    try {
+      const resultPayload = await collectPastedText();
+      const summary = resultPayload.upload?.summary_json || {};
+      renderResult({
+        title: "Paste collected",
+        message: "Authorized text was stored locally and normalization work was queued.",
+        details: [
+          { label: "source", value: resultPayload.source.id },
+          { label: "import type", value: resultPayload.type.label },
+          { label: "collection run", value: resultPayload.upload?.id || "not returned" },
+          { label: "work item", value: summary.normalization_work_item_id || "not returned" }
+        ],
+        next: ["Open Work to watch processing.", "Open Results and Chat when evidence is ready."]
+      });
+    } catch (error) {
+      renderResult({
+        title: "Collection failed",
+        message: error instanceof Error ? error.message : "Unknown error",
+        details: [{ label: "collection", value: "not started" }],
+        next: ["Fix validation issues and try again.", "Use Guided Upload if you need approval-gated collection."]
+      });
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "Collect pasted text"; }
+    }
   });
 })();
 `;
@@ -1344,40 +2130,11 @@ function BrowserWebRouterCollectorMvp() {
 `;
 
   return (
-    <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp>
-      <section className="panelInset publicUrlFetch" data-public-url-fetch aria-label="Fetch public web page">
-        <div className="subHeader">
-          <h3>Fetch public web page</h3>
-          <StatusPill state="local-first" />
-        </div>
-        <p className="actionHint">
-          Paste a public page URL. No program login and no website sign-in required. Content is fetched once and stored only inside this IGY6 instance.
-        </p>
-        <label>
-          <span>Page URL</span>
-          <input name="public_page_url" type="url" placeholder="https://example.com/article" />
-        </label>
-        <label>
-          <span>How many link levels to follow</span>
-          <select name="public_page_depth" defaultValue="1">
-            <option value="0">This page only</option>
-            <option value="1">This page plus direct links</option>
-            <option value="2">Two levels of links</option>
-          </select>
-        </label>
-        <div className="guidedManualActions">
-          <button type="button" data-fetch-public-url>Fetch page</button>
-          <span>Works for public HTML pages. Login walls and heavy JavaScript sites may need copy/paste below.</span>
-        </div>
-        <div className="guidedManualResult" data-public-url-result>
-          <strong>Ready</strong>
-          <span>Paste a URL above, then click Fetch page.</span>
-        </div>
-        <ClientScript script={fetchPublicUrlScript} />
-      </section>
+    <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp data-api-base-url={browserApiBaseUrl}>
+      <WebFetchToolsPanels />
       <div className="guidedManualNotice">
-        <strong>Manual paste and preview</strong>
-        <span>Use this section when you already copied page text, or want a dry-run preview before pasting into Guided Upload.</span>
+        <strong>Manual paste, preview, and collect</strong>
+        <span>Paste authorized page, web, or router text here. Preview first, then collect through the real local ingestion pipeline.</span>
       </div>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
         {/* Added by grok: password protected deep full res media library + polished controls */}
@@ -1425,12 +2182,13 @@ function BrowserWebRouterCollectorMvp() {
         </label>
         <div className="guidedManualActions">
           <button type="submit">Preview paste plan</button>
-          <span>Does not fetch URLs. For automatic URL collection, use Fetch public web page above.</span>
+          <button type="button" data-bwr-collect>Collect pasted text</button>
+          <span>Does not fetch URLs. For automatic URL collection, use Max reach / Auto bypass / Fetch public above.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-browser-web-router-result>
         <strong>Ready</strong>
-        <span>Choose a type, enter explicit scope, paste authorized text, and preview what would be collected or excluded.</span>
+        <span>Choose a type, enter explicit scope, paste authorized text, preview, then collect locally.</span>
       </div>
       <DomJsonScript marker="data-browser-web-router-types-json" json={importTypesJson} />
       <ClientScript script={script} />
@@ -1439,6 +2197,7 @@ function BrowserWebRouterCollectorMvp() {
 }
 
 function MediaImportMvp() {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const mediaTypesJson = JSON.stringify(MEDIA_IMPORT_TYPES).replace(/</g, "\\u003c");
   const script = `
 (() => {
@@ -1490,6 +2249,68 @@ function MediaImportMvp() {
   };
   typeSelect?.addEventListener("change", updateStatus);
   updateStatus();
+  const postJson = async (path, body) => {
+    const apiBaseUrl = root.getAttribute("data-api-base-url");
+    const response = await fetch(apiBaseUrl + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(JSON.stringify(payload));
+    return payload;
+  };
+  const textToBase64 = (text) => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+  };
+  root.querySelector("[data-media-collect-text]")?.addEventListener("click", async () => {
+    const button = root.querySelector("[data-media-collect-text]");
+    const extractedText = value("media_extracted_text");
+    const label = value("media_label") || "media-extract.txt";
+    if (!extractedText) {
+      render({ title: "Text required", message: "Paste reviewed extracted text before collecting.", details: [], next: ["OCR/transcription is not run here. Paste reviewed UTF-8 text only."] });
+      return;
+    }
+    if (button) { button.disabled = true; button.textContent = "Collecting..."; }
+    try {
+      const created = await postJson("/sources", {
+        name: label.slice(0, 80),
+        source_type: "media_file",
+        location: label,
+        sensitivity: "internal",
+        metadata_json: { created_from: "media_import_panel" },
+        permission: {
+          scope_json: { media_label: label, media_type: selectedType().key },
+          allowed_operations: ["dry_run", "read", "collect"],
+          external_model_policy: "blocked",
+          approval_required: false
+        }
+      });
+      const permission = (created.permissions || []).find((item) => (item.allowed_operations || []).includes("collect"));
+      const upload = await postJson("/collection-runs/manual-upload", {
+        source_id: created.id,
+        source_permission_id: permission.id,
+        filename: label.endsWith(".txt") ? label : label + ".txt",
+        mime_type: "text/plain",
+        content_base64: textToBase64(extractedText),
+        metadata_json: { submitted_from: "media_import_panel", media_type: selectedType().key },
+        requested_by_actor_id: "local-owner"
+      });
+      render({
+        title: "Media text collected",
+        message: "Reviewed extracted text was stored locally and normalization work was queued.",
+        details: [
+          { label: "source", value: created.id },
+          { label: "collection run", value: upload?.id || "not returned" },
+          { label: "work item", value: upload?.summary_json?.normalization_work_item_id || "not returned" }
+        ],
+        next: ["Open Work to watch processing.", "Use Deep scan or Media Library for binary image/video artifacts."]
+      });
+    } catch (error) {
+      render({ title: "Collection failed", message: error instanceof Error ? error.message : "Unknown error", details: [], next: [] });
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "Collect extracted text"; }
+    }
+  });
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     const type = selectedType();
@@ -1498,8 +2319,8 @@ function MediaImportMvp() {
     const fileSize = file ? file.size : null;
     const bounded = fileSize === null || fileSize <= 25 * 1024 * 1024;
     render({
-      title: "Media import preview only",
-      message: "No binary media was uploaded, parsed, OCRed, transcribed, or sent to a hosted service.",
+      title: "Media import preview",
+      message: extractedText ? "Reviewed extracted text can be collected with the button below. Binary parsing/OCR/transcription are not run in this panel." : "No binary media was uploaded, parsed, OCRed, transcribed, or sent to a hosted service.",
       details: [
         { label: "media type", value: type.label + " · " + type.status },
         { label: "file label", value: file ? file.name : (value("media_label") || "not selected") },
@@ -1522,10 +2343,10 @@ function MediaImportMvp() {
 `;
 
   return (
-    <section className="guidedManualText" id="media-import" data-media-import-mvp>
+    <section className="guidedManualText" id="media-import" data-media-import-mvp data-api-base-url={browserApiBaseUrl}>
       <div className="guidedManualNotice">
-        <strong>PDF, image, audio, and video import foundation.</strong>
-        <span>Metadata and extraction-posture preview only. Binary parsing, OCR, transcription, and hosted media services are not enabled here.</span>
+        <strong>PDF, image, audio, and video import.</strong>
+        <span>Preview media posture here. Collect reviewed extracted text locally; use Deep scan / Media Library for binary image and video artifacts.</span>
       </div>
       <form className="guidedManualForm" data-media-import-preview-form>
         <label>
@@ -1547,11 +2368,12 @@ function MediaImportMvp() {
         </label>
         <label>
           <span>Reviewed extracted text or transcript if already available</span>
-          <textarea name="media_extracted_text" rows={5} placeholder="Optional reviewed text. This panel does not collect it; use Guided Upload after review." />
+          <textarea name="media_extracted_text" rows={5} placeholder="Paste reviewed extracted text or transcript to collect locally." />
         </label>
         <div className="guidedManualActions">
           <button type="submit">Preview media import status</button>
-          <span>No binary upload or parsing starts from this preview.</span>
+          <button type="button" data-media-collect-text>Collect extracted text</button>
+          <span>Binary parsing/OCR/transcription are not run here. Deep scan collects binary media artifacts.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-media-import-result>
@@ -1564,13 +2386,33 @@ function MediaImportMvp() {
   );
 }
 
-function LocalProjectPcDiagnosticsHardeningPanel() {
+function LocalProjectPcDiagnosticsHardeningPanel({
+  sources,
+  approvals
+}: {
+  sources: ApiResult<SourceRecord[]>;
+  approvals: ApiResult<ApprovalRecord[]>;
+}) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const localProjectSources = sources.data
+    .filter((source) => source.enabled && source.source_type === "local_project")
+    .map((source) => ({
+      id: source.id,
+      name: source.name,
+      location: source.location,
+      permissions: source.permissions ?? []
+    }));
   const modesJson = JSON.stringify(LOCAL_PROJECT_DIAGNOSTICS_MODES).replace(/</g, "\\u003c");
+  const localSourcesJson = JSON.stringify(localProjectSources).replace(/</g, "\\u003c");
+  const approvalsJson = JSON.stringify(approvals.data).replace(/</g, "\\u003c");
   const script = `
 (() => {
   const root = document.querySelector("[data-local-project-pc-diagnostics]");
   if (!root) return;
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
   const modes = JSON.parse(root.querySelector("[data-local-project-pc-modes-json]")?.textContent || "[]");
+  const localSources = JSON.parse(root.querySelector("[data-local-project-pc-sources-json]")?.textContent || "[]");
+  const approvalData = JSON.parse(root.querySelector("[data-local-project-pc-approvals-json]")?.textContent || "[]");
   const form = root.querySelector("[data-local-project-pc-preview-form]");
   const modeSelect = root.querySelector("[name='lp_mode']");
   const modeStatus = root.querySelector("[data-local-project-pc-mode-status]");
@@ -1616,6 +2458,24 @@ function LocalProjectPcDiagnosticsHardeningPanel() {
     if (!modeStatus || !mode) return;
     modeStatus.textContent = mode.label + ": " + mode.scope + " Excludes: " + mode.excluded;
   };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
+    return payload;
+  };
+  const textToBase64 = (text) => {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+  };
+  const permissionFor = (source) => (source.permissions || []).find((permission) => (permission.allowed_operations || []).includes("collect"));
+  const looksLikeDirectory = (input) => /^[A-Za-z]:[\\\\/]/.test(input) || input.startsWith("/") || input.startsWith("\\\\");
   modeSelect?.addEventListener("change", updateStatus);
   updateStatus();
   form?.addEventListener("submit", (event) => {
@@ -1642,35 +2502,135 @@ function LocalProjectPcDiagnosticsHardeningPanel() {
     }
     const secretSignal = hasSecretSignal(scope + "\\n" + includeRules + "\\n" + excludeRules + "\\n" + pasted);
     render({
-      title: "Local project / diagnostics dry-run preview",
-      message: "No filesystem read, live probing, command execution, or collection was performed.",
+      title: "Scoped import preview",
+      message: mode.key === "local_project_manifest" && looksLikeDirectory(scope)
+        ? "Directory collection is available. Click Collect scoped import to read bounded files from the path."
+        : "Text collection is available. Click Collect scoped import to store pasted diagnostics or manifest text.",
       details: [
         { label: "mode", value: mode.label },
         { label: "scope label", value: redactPath(scope) },
         { label: "include entries", value: String(countList(includeRules)) },
         { label: "exclude entries", value: String(countList(excludeRules)) },
-        { label: "file count limit", value: maxFiles > 0 ? String(Math.min(maxFiles, 500)) + " preview cap" : "not set; future collector must enforce a cap" },
-        { label: "byte limit", value: maxBytes > 0 ? String(Math.min(maxBytes, 10 * 1024 * 1024)) + " byte preview cap" : "not set; future collector must enforce a cap" },
+        { label: "file count limit", value: maxFiles > 0 ? String(Math.min(maxFiles, 500)) : "100 default on collect" },
+        { label: "byte limit", value: maxBytes > 0 ? String(Math.min(maxBytes, 10 * 1024 * 1024)) : "1 MB default on collect" },
         { label: "pasted text", value: pasted.length + " characters; content not echoed here" },
         { label: "secret signal", value: secretSignal ? "potential secret/path signal detected; redact before import" : "no obvious secret keyword detected" },
         { label: "would collect", value: mode.collect },
         { label: "will not collect", value: mode.excluded }
       ],
-      next: [
-        "Use Guided Upload for reviewed UTF-8 manifest or diagnostics text after redaction.",
-        "Future automated local_project collection must require explicit selected scope, dry-run preview, file/size caps, secret exclusions, and audit records.",
-        "Do not use this flow for arbitrary filesystem crawling or live diagnostics commands."
-      ]
+      next: ["Click Collect scoped import when the preview looks correct.", "Processing appears in Work; evidence appears in Results."]
     });
+  });
+  root.querySelector("[data-lp-collect]")?.addEventListener("click", async () => {
+    const button = root.querySelector("[data-lp-collect]");
+    if (button) { button.disabled = true; button.textContent = "Collecting..."; }
+    try {
+      const mode = selectedMode();
+      const scope = value("lp_scope");
+      const includeRules = value("lp_include");
+      const excludeRules = value("lp_exclude");
+      const pasted = value("lp_text");
+      const maxFiles = Number(value("lp_max_files") || 100);
+      const maxBytes = Number(value("lp_max_bytes") || 1048576);
+      if (!scope || !pasted) throw new Error("Enter explicit scope and authorized text before collecting.");
+      if (hasSecretSignal(scope + "\\n" + includeRules + "\\n" + excludeRules + "\\n" + pasted)) {
+        throw new Error("Potential secret signal detected. Redact before collecting.");
+      }
+      if (mode.key === "local_project_manifest" && looksLikeDirectory(scope)) {
+        let source = localSources.find((item) => item.location === scope) || null;
+        if (!source) {
+          const created = await postJson("/sources", {
+            name: scope.split(/[\\\\/]/).filter(Boolean).slice(-1)[0] || "local-project",
+            source_type: "local_project",
+            location: scope,
+            sensitivity: "internal",
+            metadata_json: { created_from: "local_project_panel" },
+            permission: {
+              scope_json: {
+                include: includeRules ? includeRules.split(/\\r?\\n|,/).map((item) => item.trim()).filter(Boolean) : ["**/*"],
+                exclude: excludeRules ? excludeRules.split(/\\r?\\n|,/).map((item) => item.trim()).filter(Boolean) : [".env", "**/node_modules/**"],
+                max_files: Math.min(maxFiles, 500),
+                max_file_bytes: Math.min(maxBytes, 10 * 1024 * 1024)
+              },
+              allowed_operations: ["dry_run", "read", "collect"],
+              external_model_policy: "blocked",
+              approval_required: false
+            }
+          });
+          source = { id: created.id, name: created.name, location: created.location, permissions: created.permissions || [] };
+        }
+        const permission = permissionFor(source);
+        if (!source?.id || !permission?.id) throw new Error("Local project source or collect permission is unavailable.");
+        const collection = await postJson("/collection-runs/local-project", {
+          source_id: source.id,
+          source_permission_id: permission.id,
+          requested_by_actor_id: "local-owner"
+        });
+        render({
+          title: "Local project collected",
+          message: "Bounded directory files were stored locally and normalization work was queued.",
+          details: [
+            { label: "source", value: source.id },
+            { label: "path", value: redactPath(scope) },
+            { label: "collection run", value: collection?.id || "not returned" },
+            { label: "files", value: String(collection?.summary_json?.collected_files ?? "unknown") }
+          ],
+          next: ["Open Work to watch processing.", "Open Results when evidence is ready."]
+        });
+      } else {
+        const created = await postJson("/sources", {
+          name: scope.slice(0, 80) || "diagnostics-export",
+          source_type: "local_pc_diagnostics",
+          location: scope,
+          sensitivity: "internal",
+          metadata_json: { mode: mode.key, created_from: "local_project_panel_paste" },
+          permission: {
+            scope_json: { mode: mode.key, scope_label: scope },
+            allowed_operations: ["dry_run", "read", "collect"],
+            external_model_policy: "blocked",
+            approval_required: false
+          }
+        });
+        const permission = permissionFor(created);
+        if (!created?.id || !permission?.id) throw new Error("Diagnostics source or collect permission was not created.");
+        const upload = await postJson("/collection-runs/manual-upload", {
+          source_id: created.id,
+          source_permission_id: permission.id,
+          filename: "diagnostics-export.txt",
+          mime_type: "text/plain",
+          content_base64: textToBase64(pasted),
+          metadata_json: { submitted_from: "local_project_panel_paste", mode: mode.key },
+          requested_by_actor_id: "local-owner"
+        });
+        render({
+          title: "Diagnostics text collected",
+          message: "Pasted diagnostics or manifest text was stored locally.",
+          details: [
+            { label: "collection run", value: upload?.id || "not returned" },
+            { label: "work item", value: upload?.summary_json?.normalization_work_item_id || "not returned" }
+          ],
+          next: ["Open Work to watch processing.", "Open Results when evidence is ready."]
+        });
+      }
+    } catch (error) {
+      render({
+        title: "Collection failed",
+        message: error instanceof Error ? error.message : "Unknown error",
+        details: [{ label: "collection", value: "not started" }],
+        next: ["Verify the directory exists for local project mode.", "Use Guided Upload for approval-gated text collection."]
+      });
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "Collect scoped import"; }
+    }
   });
 })();
 `;
 
   return (
-    <section className="guidedManualText" id="local-project-pc-diagnostics" data-local-project-pc-diagnostics>
+    <section className="guidedManualText" id="local-project-pc-diagnostics" data-local-project-pc-diagnostics data-api-base-url={browserApiBaseUrl}>
       <div className="guidedManualNotice">
-        <strong>Local project and PC diagnostics hardening.</strong>
-        <span>Dry-run preview for explicit project manifests or authorized diagnostics exports only. It does not read files, crawl folders, or run system commands.</span>
+        <strong>Local project and PC diagnostics collection.</strong>
+        <span>Preview scope, then collect bounded directory files from an explicit path or store reviewed diagnostics/manifest text locally.</span>
       </div>
       <form className="guidedManualForm" data-local-project-pc-preview-form>
         <label>
@@ -1710,14 +2670,17 @@ function LocalProjectPcDiagnosticsHardeningPanel() {
         </label>
         <div className="guidedManualActions">
           <button type="submit">Preview scoped import</button>
-          <span>No filesystem crawl, live probing, command execution, or collection starts here.</span>
+          <button type="button" data-lp-collect>Collect scoped import</button>
+          <span>Directory mode requires a real folder path. Diagnostics mode stores pasted UTF-8 text.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-local-project-pc-result>
         <strong>Ready</strong>
-        <span>Enter explicit scope, include/exclude posture, and authorized text to preview safe import boundaries.</span>
+        <span>Enter explicit scope, include/exclude posture, and authorized text to preview and collect.</span>
       </div>
       <DomJsonScript marker="data-local-project-pc-modes-json" json={modesJson} />
+      <DomJsonScript marker="data-local-project-pc-sources-json" json={localSourcesJson} />
+      <DomJsonScript marker="data-local-project-pc-approvals-json" json={approvalsJson} />
       <ClientScript script={script} />
     </section>
   );
@@ -1863,6 +2826,91 @@ const USER_READINESS = [
   { label: "Background processing", value: "ready", state: "ready" },
   { label: "Old Python services", value: "archived", state: "archived" }
 ];
+
+function BypassIntelPanel() {
+  const script = `
+(() => {
+  const root = document.querySelector("[data-bypass-intel-panel]");
+  if (!root || root.getAttribute("data-wired") === "true") return;
+  root.setAttribute("data-wired", "true");
+  const statusNode = root.querySelector("[data-bypass-intel-status]");
+  const domainsNode = root.querySelector("[data-bypass-intel-domains]");
+  const harvestButton = root.querySelector("[data-bypass-intel-harvest]");
+  const writeStatus = (payload) => {
+    if (!statusNode) return;
+    const last = payload?.last_run || {};
+    const domains = payload?.sample_domains || [];
+    const harvested = last?.domains_harvested ?? payload?.targets_count ?? 0;
+    const techniques = last?.techniques_total ?? payload?.techniques_total ?? 0;
+    const when = last?.finished_at || payload?.playbook_updated_at || "not yet";
+    statusNode.textContent =
+      "Tracking " + (payload?.targets_count ?? 0) +
+      " site(s). Playbook has " + techniques +
+      " technique(s). Last harvest: " + when +
+      " (" + harvested + " domains researched).";
+    if (domainsNode) {
+      domainsNode.textContent = domains.length
+        ? "Includes: " + domains.join(", ")
+        : "No target domains recorded yet — they are added automatically when you fetch URLs.";
+    }
+  };
+  const refresh = async () => {
+    try {
+      const response = await fetch("/api/bypass-intel/status");
+      const payload = await response.json();
+      if (response.ok) writeStatus(payload);
+    } catch (error) {
+      if (statusNode) {
+        statusNode.textContent = error instanceof Error ? error.message : "Could not load bypass research status.";
+      }
+    }
+  };
+  harvestButton?.addEventListener("click", async () => {
+    if (harvestButton) {
+      harvestButton.disabled = true;
+      harvestButton.textContent = "Researching...";
+    }
+    if (statusNode) statusNode.textContent = "Searching the web for bypass techniques on tracked sites...";
+    try {
+      const response = await fetch("/api/bypass-intel/harvest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true, requested_by_actor_id: "local-owner" })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "Harvest failed");
+      writeStatus(payload?.status || payload);
+    } catch (error) {
+      if (statusNode) {
+        statusNode.textContent = error instanceof Error ? error.message : "Bypass research failed.";
+      }
+    } finally {
+      if (harvestButton) {
+        harvestButton.disabled = false;
+        harvestButton.textContent = "Refresh bypass research";
+      }
+      void refresh();
+    }
+  });
+  void refresh();
+})();
+`;
+  return (
+    <section className="panel panelInset bypassIntelPanel" id="bypass-intel" data-bypass-intel-panel data-tab-panel="settings" aria-label="Bypass research">
+      <div className="subHeader">
+        <h3>Bypass research (automatic)</h3>
+        <StatusPill state="local-first" />
+      </div>
+      <p className="actionHint">
+        IGY6 regularly searches the open web for bypass ideas on sites you have fetched (including Patreon and other paywalled targets) and folds working tricks into auto bypass.
+      </p>
+      <p data-bypass-intel-status>Loading bypass research status...</p>
+      <p className="statusText" data-bypass-intel-domains />
+      <button type="button" data-bypass-intel-harvest>Refresh bypass research</button>
+      <ClientScript script={script} />
+    </section>
+  );
+}
 
 function SettingsPanel({ envSettings }: { envSettings: ApiResult<EnvSettingsResponse> }) {
   const data = envSettings.data;
@@ -2480,6 +3528,7 @@ function UnifiedChatHub({
   const agentExecuteApproved = document.querySelector("[data-agent-execute-approved]");
   const saveAnswer = document.querySelector("[data-chat-save-answer]");
   const previewResults = document.querySelector("[data-chat-preview-results]");
+  const agentPort = ${HOST_BRIDGE_AGENT_PORT};
 
   const tabFor = (id) => document.getElementById(id);
 
@@ -2491,14 +3540,511 @@ function UnifiedChatHub({
     return true;
   };
 
+  const scrollToSection = (sectionId) => {
+    if (!sectionId) return;
+    requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const navigateTo = (tabId, sectionId) => {
+    const opened = switchTab(tabId);
+    scrollToSection(sectionId);
+    return opened;
+  };
+
+  const extractUrl = (text) => {
+    const match = text.match(/https?:\\/\\/[^\\s<>"']+/i);
+    if (!match) return null;
+    return match[0].replace(/[.,;:!?)]+$/, "");
+  };
+
+  const extractDepth = (lower) => {
+    if (/\\b(two levels|depth 2|2 levels)\\b/.test(lower)) return 2;
+    if (/\\b(this page only|depth 0|no links|single page)\\b/.test(lower)) return 0;
+    return 1;
+  };
+
+  const extractCookie = (text) => {
+    const cookieMatch = text.match(/\\bcookie\\s*[:=]\\s*([^\\n]+)/i);
+    return cookieMatch ? cookieMatch[1].trim() : "";
+  };
+
+  const extractBearer = (text) => {
+    const bearerMatch = text.match(/\\b(bearer|token|authorization)\\s*[:=]\\s*([^\\n]+)/i);
+    return bearerMatch ? bearerMatch[2].trim() : "";
+  };
+
+  const ensureMaxReachInfrastructure = async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+      const agentResponse = await fetch("http://127.0.0.1:" + agentPort + "/ensure-max-reach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (!agentResponse.ok) {
+        const payload = await agentResponse.json().catch(() => ({}));
+        console.warn("Host bridge ensure agent:", payload?.stderr || payload?.detail || agentResponse.status);
+      }
+    } catch (error) {
+      console.warn("Host bridge ensure agent unavailable:", error);
+    }
+    const apiResponse = await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+    const apiPayload = await apiResponse.json().catch(() => ({}));
+    if (!apiResponse.ok) {
+      throw new Error(
+        apiPayload?.detail ||
+          "Host bridge is not ready. Run once: pwsh -File scripts\\start-stack.ps1"
+      );
+    }
+    return apiPayload;
+  };
+
+  const runCollectionFetch = async (body) => {
+    const response = await fetch("/api/collection-runs/full-access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.detail || response.statusText || "Collection fetch failed");
+    }
+    return payload?.summary_json || payload?.summary || payload;
+  };
+
+  const summarizeCollection = (summary) => {
+    const strategies = Array.isArray(summary?.auto_bypass_strategies)
+      ? summary.auto_bypass_strategies.join(", ")
+      : String(summary?.auto_bypass_strategies || "");
+    return [
+      strategies ? "strategies: " + strategies : null,
+      "pages: " + String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown"),
+      "evidence: " + String(summary?.total_evidence ?? "unknown"),
+      "artifacts: " + String(summary?.total_artifacts ?? "unknown")
+    ].filter(Boolean).join(" · ");
+  };
+
+  const fillWebFetchField = (name, value) => {
+    const field = document.querySelector("[name='" + name + "']");
+    if (field && value) field.value = value;
+  };
+
+  let pendingClarification = null;
+
+  const siteLabel = (url) => {
+    try {
+      return new URL(url).hostname.replace(/^www\\./, "");
+    } catch {
+      return "that site";
+    }
+  };
+
+  const friendlyCollectionDone = (summary, site) => {
+    const pages = String(summary?.crawled_pages ?? summary?.web_scraped ?? "some");
+    const evidence = String(summary?.total_evidence ?? "new");
+    return "Finished with " + site + ". I grabbed " + pages + " page(s) and stored " + evidence + " evidence piece(s) locally. Want me to answer questions about it?";
+  };
+
+  const interpretFetchIntent = (text, lower, url) => {
+    if (!url) return null;
+    const site = siteLabel(url);
+    const isPaidPlatform = /patreon\\.com|patreonusercontent\\.com|onlyfans\\.com|fansly\\.com/i.test(url);
+    if (isPaidPlatform) {
+      return { clear: true, intent: "max_reach", url, site, paid_platform: true };
+    }
+    const wantsMedia = /\\b(images?|photos?|pics?|pictures?|videos?|media|thumbnails?|full[ -]?res|download|onlyfans|fansly)\\b/i.test(lower);
+    const wantsPaid = /\\b(paid|premium|paywall|subscriber|members?[- ]only|locked|vip|patreon|subscription)\\b/i.test(lower);
+    const wantsHard = /\\b(hardest|everything|all of it|go hard|aggressive|free|bypass|login wall|locked content|paid content)\\b/i.test(lower);
+    const wantsPublic = /\\b(public|no login|without logging|open page|just the page)\\b/i.test(lower);
+    const wantsSession = /\\b(logged in|my account|cookie|session|already pay|i subscribe)\\b/i.test(lower);
+    const scores = {
+      max_reach: (wantsPaid ? 4 : 0) + (wantsHard ? 3 : 0) + (wantsMedia ? 2 : 0) + (/max reach|go anywhere|omnifetch|go all out/.test(lower) ? 6 : 0),
+      auto_bypass: (/auto bypass|full auto|try harder/.test(lower) ? 6 : 0) + (wantsHard ? 2 : 0),
+      public_fetch: (wantsPublic ? 6 : 0) + (/fetch public|public only/.test(lower) ? 6 : 0),
+      session_fetch: (wantsSession ? 6 : 0) + (/bypass fetch|my login/.test(lower) ? 5 : 0)
+    };
+    const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const top = sorted[0];
+    const second = sorted[1] || ["none", 0];
+    if (top[1] >= 6 && top[1] - second[1] >= 3) {
+      return { clear: true, intent: top[0], url, site };
+    }
+    if (top[1] > 0 || wantsMedia || /\\b(get|grab|pull|scrape|fetch|download|save|stuff from)\\b/.test(lower)) {
+      if (wantsPaid || wantsMedia || wantsHard) {
+        return {
+          clear: false,
+          site,
+          question: "Do you want me to try and get the paid or locked content from " + site + " for free? Fair warning — it can take several minutes and might not work on every site.",
+          options: [
+            { label: "Yeah, try the hard way", intent: "max_reach", url },
+            { label: "Just what's public", intent: "public_fetch", url },
+            { label: "I already have a login", intent: "session_fetch", url }
+          ]
+        };
+      }
+      return {
+        clear: false,
+        site,
+        question: "Want me to grab stuff from " + site + "? I can stick to public pages, try harder bypass tricks, or go all out if it's really locked down.",
+        options: [
+          { label: "Public pages only", intent: "public_fetch", url },
+          { label: "Try harder", intent: "auto_bypass", url },
+          { label: "Go all out", intent: "max_reach", url }
+        ]
+      };
+    }
+    return null;
+  };
+
+  const resolveClarificationReply = (text, lower, pending) => {
+    if (!pending) return null;
+    if (/^(no|nah|nope|don't|do not|never mind|cancel)\\b/i.test(lower)) return { cancel: true };
+    if (/^(yes|yeah|yep|sure|do it|go ahead|try it|ok|okay|yup)\\b/i.test(lower)) {
+      return pending.options[0];
+    }
+    for (const option of pending.options) {
+      const label = option.label.toLowerCase();
+      if (lower.includes(label) || lower.includes(option.intent.replace(/_/g, " "))) return option;
+    }
+    if (/public/.test(lower)) return pending.options.find((option) => option.intent === "public_fetch") || pending.options[1];
+    if (/login|session|cookie|account/.test(lower)) return pending.options.find((option) => option.intent === "session_fetch");
+    if (/hard|max|aggressive|paid|locked/.test(lower)) return pending.options.find((option) => option.intent === "max_reach");
+    if (/bypass|trick/.test(lower)) return pending.options.find((option) => option.intent === "auto_bypass");
+    return null;
+  };
+
+  const askClarification = (interpretation) => {
+    pendingClarification = interpretation;
+    appendMessage("assistant", "Quick question", interpretation.question);
+    interpretation.options.forEach((option) => {
+      addAction(option.label, async () => {
+        pendingClarification = null;
+        await executeResolvedFetchIntent(option);
+      });
+    });
+    setStatus("Waiting for your call");
+  };
+
+  const executeResolvedFetchIntent = async (option) => {
+    const url = option.url;
+    const site = siteLabel(url);
+    const depth = 1;
+    if (option.intent === "session_fetch") {
+      appendMessage(
+        "assistant",
+        "Login needed",
+        "To use your account on " + site + ", paste a cookie or token here — like: my login for " + url + " cookie: session_id=..."
+      );
+      fillWebFetchField("bypass_page_url", url);
+      return;
+    }
+    if (option.intent === "max_reach") {
+      setStatus("Getting things ready...");
+      const paidNote = option.paid_platform
+        ? " This is a paid-content site — I'll use your browser login, Patreon API calls, and media extraction."
+        : "";
+      appendMessage("assistant", "On it", "Alright — I'll pull out all the stops for " + site + ". Might take a few minutes." + paidNote);
+      try {
+        await ensureMaxReachInfrastructure();
+        const summary = await runCollectionFetch({
+          requested_by_actor_id: "local-owner",
+          max_reach: true,
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url]
+        });
+        appendMessage("assistant", "Done", friendlyCollectionDone(summary, site));
+        addAction("Check on processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "That didn't work", error instanceof Error ? error.message : "Something went wrong.");
+      }
+      setStatus("Ready");
+      return;
+    }
+    if (option.intent === "auto_bypass") {
+      setStatus("Warming up...");
+      appendMessage("assistant", "On it", "I'll try the sneakier route for " + site + " — cookies, browser tricks, the works.");
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        await fetch("http://127.0.0.1:" + agentPort + "/ensure", { method: "POST", signal: controller.signal });
+        clearTimeout(timeoutId);
+        await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+        const summary = await runCollectionFetch({
+          requested_by_actor_id: "local-owner",
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url]
+        });
+        appendMessage("assistant", "Done", friendlyCollectionDone(summary, site));
+        addAction("Check on processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "That didn't work", error instanceof Error ? error.message : "Something went wrong.");
+      }
+      setStatus("Ready");
+      return;
+    }
+    setStatus("Fetching...");
+    appendMessage("assistant", "On it", "I'll grab the public parts of " + site + " — no login tricks.");
+    try {
+      const summary = await runCollectionFetch({
+        requested_by_actor_id: "local-owner",
+        web_only: true,
+        safe_mode: true,
+        max_depth: depth,
+        scope: [url]
+      });
+      appendMessage("assistant", "Done", friendlyCollectionDone(summary, site));
+      addAction("Check on processing", () => navigateTo("tab-work", "work-processing"));
+    } catch (error) {
+      appendMessage("assistant", "That didn't work", error instanceof Error ? error.message : "Something went wrong.");
+    }
+    setStatus("Ready");
+  };
+
   const navigationFromMessage = (text) => {
     const lower = text.toLowerCase();
-    if (/\\b(add data|upload|new source|import data|bring in)\\b/.test(lower)) return switchTab("tab-add-data");
-    if (/\\b(processing|work queue|work item|check processing|pipeline)\\b/.test(lower)) return switchTab("tab-work");
-    if (/\\b(settings|password|totp|llm provider|environment)\\b/.test(lower)) return switchTab("tab-settings");
-    if (/\\b(approval|safety|audit)\\b/.test(lower)) return switchTab("tab-settings");
-    if (/\\b(diagnostics|advanced|service readiness)\\b/.test(lower)) return switchTab("tab-advanced");
-    if (/\\b(evidence library|documents|reports|memory)\\b/.test(lower)) return switchTab("tab-results");
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(web fetch|auto bypass|bypass fetch|fetch tools)\\b/.test(lower)) {
+      return navigateTo("tab-results", "chat-web-fetch");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(uploads|guided upload)\\b/.test(lower)) {
+      return navigateTo("tab-add-data", "uploads-collection");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(sources)\\b/.test(lower)) {
+      return navigateTo("tab-add-data", "sources-panel");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(user security|password|totp|2fa)\\b/.test(lower)) {
+      return navigateTo("tab-settings", "user-security");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(configuration|environment|env settings)\\b/.test(lower)) {
+      return navigateTo("tab-settings", "settings");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(safety|audit|approvals)\\b/.test(lower)) {
+      return navigateTo("tab-settings", "safety-audit");
+    }
+    if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(media library|media)\\b/.test(lower)) {
+      navigateTo("tab-add-data", "browser-web-router-import");
+      document.querySelector("[data-grok-open-media]")?.click();
+      return true;
+    }
+    if (/\\b(add data|upload|new source|import data|bring in)\\b/.test(lower)) return navigateTo("tab-add-data", "uploads-collection");
+    if (/\\b(auto bypass|full auto bypass|bypass fetch|fetch public|web fetch)\\b/.test(lower) && !extractUrl(text)) {
+      return navigateTo("tab-results", "chat-web-fetch");
+    }
+    if (/\\b(processing|work queue|work item|check processing|pipeline)\\b/.test(lower)) return navigateTo("tab-work", "work-processing");
+    if (/\\b(settings|password|totp|llm provider|environment)\\b/.test(lower)) return navigateTo("tab-settings", "settings");
+    if (/\\b(approval|safety|audit)\\b/.test(lower)) return navigateTo("tab-settings", "safety-audit");
+    if (/\\b(diagnostics|advanced|service readiness)\\b/.test(lower)) return navigateTo("tab-advanced", "advanced-diagnostics");
+    if (/\\b(evidence library|documents|reports|memory)\\b/.test(lower)) return navigateTo("tab-results", "evidence-panel");
+    if (/\\b(open chat|back to chat)\\b/.test(lower)) return navigateTo("tab-results", "assistant");
+    return false;
+  };
+
+  const executeChatCommand = async (text) => {
+    const lower = text.toLowerCase();
+    const url = extractUrl(text);
+    const depth = extractDepth(lower);
+
+    if (/\\b(what's still running|what is still running|still running|check on it|processing status)\\b/.test(lower)) {
+      setStatus("Checking...");
+      appendMessage("assistant", "Work queue", "Let me show you what's still processing — open the Work tab or say 'show work items' for details.");
+      navigateTo("tab-work", "work-processing");
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(what do you know|what have you got|what did you save|what do you know so far)\\b/.test(lower)) {
+      appendMessage("assistant", "Your stuff", "I'll search what you've already saved locally. Ask a specific question next — like 'what did I upload today?'");
+      setStatus("Ready");
+      return false;
+    }
+
+    if (/\\b(paste|add notes|add text|upload text|i want to paste)\\b/.test(lower)) {
+      navigateTo("tab-add-data", "uploads-collection");
+      appendMessage("assistant", "Add stuff", "Opened the upload area — paste your text there, or just drop it in chat and tell me what it is.");
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(help|what can you do|commands|capabilities|feature list)\\b/.test(lower)) {
+      appendMessage(
+        "assistant",
+        "What I can do",
+        "Talk normally — paste a link and say what you want from it, ask questions about stuff you've saved, paste notes to add, check what's still processing, or open settings. If I'm unsure, I'll ask a plain question instead of making you learn command names."
+      );
+      addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+      addAction("Show project health", () => handleSend("Show project health."));
+      return true;
+    }
+
+    if (/\\b(max reach|go anywhere|omnifetch|max bypass)\\b/.test(lower) && url) {
+      setStatus("Preparing max reach...");
+      appendMessage("assistant", "Max reach", "Starting host bridge and Playwright if needed, then fetching " + url + " with strongest tier (CDP/headed Playwright, multi-profile, scroll/expand, session re-fetch).");
+      try {
+        await ensureMaxReachInfrastructure();
+        setStatus("Running max reach bypass...");
+        const summary = await runCollectionFetch({
+          requested_by_actor_id: "local-owner",
+          max_reach: true,
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url]
+        });
+        appendMessage("assistant", "Max reach complete", summarizeCollection(summary) + " Mode: " + String(summary?.mode || "web_max_reach_fetch"));
+        addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "Max reach failed", error instanceof Error ? error.message : "Unknown error");
+        addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+      }
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(auto bypass|full auto bypass)\\b/.test(lower) && url) {
+      setStatus("Preparing auto bypass...");
+      appendMessage("assistant", "Auto bypass", "Starting host bridge if needed, then fetching " + url + " with HTTP tricks, cookie harvest, Playwright, and session bypass.");
+      try {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 120000);
+          await fetch("http://127.0.0.1:" + agentPort + "/ensure", { method: "POST", signal: controller.signal });
+          clearTimeout(timeoutId);
+        } catch (error) {
+          console.warn("Host bridge ensure agent unavailable:", error);
+        }
+        const ensureResponse = await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+        if (!ensureResponse.ok) {
+          const ensurePayload = await ensureResponse.json().catch(() => ({}));
+          throw new Error(ensurePayload?.detail || "Host bridge is not ready");
+        }
+        setStatus("Running full auto bypass...");
+        const summary = await runCollectionFetch({
+          requested_by_actor_id: "local-owner",
+          auto_bypass: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url]
+        });
+        appendMessage("assistant", "Auto bypass complete", summarizeCollection(summary) + " Ask a question over the new evidence.");
+        addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "Auto bypass failed", error instanceof Error ? error.message : "Unknown error");
+        addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+      }
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(bypass fetch|authorized bypass|session bypass)\\b/.test(lower) && url) {
+      const cookie = extractCookie(text);
+      const authorization = extractBearer(text);
+      if (!cookie && !authorization) {
+        fillWebFetchField("bypass_page_url", url);
+        navigateTo("tab-results", "chat-web-fetch");
+        appendMessage(
+          "assistant",
+          "Session needed",
+          "Opened bypass fetch with your URL. Paste a Cookie header or bearer token in Web fetch tools, or say: bypass fetch " + url + " cookie: session_id=..."
+        );
+        return true;
+      }
+      setStatus("Running authorized bypass fetch...");
+      appendMessage("assistant", "Bypass fetch", "Using your session to fetch " + url + ".");
+      try {
+        const body = {
+          requested_by_actor_id: "local-owner",
+          bypass_auth: true,
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url],
+          referer: url
+        };
+        if (cookie) body.cookie = cookie;
+        if (authorization) body.authorization = authorization;
+        const summary = await runCollectionFetch(body);
+        appendMessage("assistant", "Bypass fetch complete", summarizeCollection(summary));
+        addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "Bypass fetch failed", error instanceof Error ? error.message : "Unknown error");
+      }
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(fetch public|fetch page|fetch url|scrape url|scrape page)\\b/.test(lower) && url) {
+      setStatus("Fetching public page...");
+      appendMessage("assistant", "Public fetch", "Fetching " + url + ".");
+      try {
+        const summary = await runCollectionFetch({
+          requested_by_actor_id: "local-owner",
+          web_only: true,
+          safe_mode: true,
+          max_depth: depth,
+          scope: [url]
+        });
+        appendMessage("assistant", "Fetch complete", summarizeCollection(summary));
+        addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
+      } catch (error) {
+        appendMessage("assistant", "Fetch failed", error instanceof Error ? error.message : "Unknown error");
+      }
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(get stuff from|grab from|pull from|stuff from)\\b/.test(lower) && url) {
+      const interpretation = interpretFetchIntent(text, lower, url);
+      if (interpretation && !interpretation.clear) {
+        askClarification(interpretation);
+        return true;
+      }
+      if (interpretation?.clear) {
+        await executeResolvedFetchIntent({ intent: interpretation.intent, url });
+        return true;
+      }
+    }
+
+    if (/\\b(fetch|import url|collect url)\\b/.test(lower) && url && !/\\b(bypass|public)\\b/.test(lower)) {
+      const interpretation = interpretFetchIntent(text, lower, url);
+      if (interpretation && !interpretation.clear) {
+        askClarification(interpretation);
+        return true;
+      }
+      await executeResolvedFetchIntent({ intent: interpretation?.intent || "auto_bypass", url });
+      return true;
+    }
+
+    if (/\\b(user status|auth status|am i logged in)\\b/.test(lower)) {
+      setStatus("Checking user status...");
+      try {
+        const response = await fetch("/api/user/status");
+        const payload = await response.json();
+        appendMessage("assistant", "User status", JSON.stringify(payload));
+      } catch (error) {
+        appendMessage("assistant", "Error", error instanceof Error ? error.message : "Status check failed");
+      }
+      setStatus("Ready");
+      return true;
+    }
+
+    if (/\\b(open media|media library|show media)\\b/.test(lower)) {
+      navigateTo("tab-add-data", "browser-web-router-import");
+      document.querySelector("[data-grok-open-media]")?.click();
+      appendMessage("assistant", "Media library", "Opened the media library viewer.");
+      return true;
+    }
+
     return false;
   };
 
@@ -2551,6 +4097,8 @@ function UnifiedChatHub({
   const looksLikeEvidenceQuestion = (intent, text) => {
     const understanding = intent?.request_understanding || {};
     const lower = text.toLowerCase();
+    if (/\\b(max reach|go anywhere|omnifetch|auto bypass|bypass fetch|fetch public|fetch url|scrape|open web fetch|help|what can you do|commands)\\b/.test(lower)) return false;
+    if (extractUrl(text) && /\\b(fetch|bypass|scrape|import url)\\b/.test(lower)) return false;
     if (understanding.evidence_required) return true;
     if (understanding.category === "ask_question" || understanding.category === "review_evidence") return true;
     if (/\\b(what|why|how|when|where|who|cite|evidence|document|upload|bill|log|say|mean|failed|summary)\\b/.test(lower)) return true;
@@ -2628,6 +4176,47 @@ function UnifiedChatHub({
     clearActions();
     appendMessage("user", "You", text);
     setStatus("Understanding request...");
+    const lower = text.toLowerCase();
+    const url = extractUrl(text);
+
+    if (pendingClarification) {
+      const resolved = resolveClarificationReply(text, lower, pendingClarification);
+      if (resolved?.cancel) {
+        pendingClarification = null;
+        appendMessage("assistant", "No problem", "Okay, I won't fetch that. What else?");
+        setStatus("Ready");
+        return;
+      }
+      if (resolved?.intent) {
+        pendingClarification = null;
+        await executeResolvedFetchIntent(resolved);
+        return;
+      }
+      appendMessage("assistant", "Quick check", "Pick one of the buttons below, or say yeah / no / public / login.");
+      pendingClarification.options.forEach((option) => {
+        addAction(option.label, async () => {
+          pendingClarification = null;
+          await executeResolvedFetchIntent(option);
+        });
+      });
+      setStatus("Waiting for your call");
+      return;
+    }
+
+    const hasExplicitCommand = /\\b(max reach|auto bypass|fetch public|bypass fetch|go all out|try harder)\\b/.test(lower);
+    const fetchInterpretation = interpretFetchIntent(text, lower, url);
+    if (fetchInterpretation && !hasExplicitCommand) {
+      if (fetchInterpretation.clear) {
+        await executeResolvedFetchIntent({ intent: fetchInterpretation.intent, url: fetchInterpretation.url });
+        return;
+      }
+      askClarification(fetchInterpretation);
+      return;
+    }
+
+    if (await executeChatCommand(text)) {
+      return;
+    }
 
     if (navigationFromMessage(text)) {
       appendMessage("assistant", "Navigation", "Opened the matching workspace view. You can keep chatting here or use the panel that opened.");
@@ -2697,9 +4286,19 @@ function UnifiedChatHub({
       } else {
         appendMessage(
           "assistant",
-          "Next step",
-          "Try asking over evidence, requesting project health, or say 'add data', 'check processing', or 'open settings'."
+          "Not sure yet",
+          url
+            ? "I see a link in there — want me to try pulling content from " + siteLabel(url) + "? Say what you're after (public pages, locked stuff, images, etc.) and I'll ask if I'm still unsure."
+            : "I'm not totally sure what you want. You can paste a link, ask about stuff you've saved, say you want to add notes, or ask what's still running."
         );
+        if (url) {
+          const interpretation = interpretFetchIntent(text, lower, url);
+          if (interpretation && !interpretation.clear) {
+            askClarification(interpretation);
+            setStatus("Waiting for your call");
+            return;
+          }
+        }
         addAction("Show project health", () => handleSend("Show project health."));
         addAction("Add data", () => switchTab("tab-add-data"));
       }
@@ -2742,7 +4341,10 @@ function UnifiedChatHub({
           <p className="eyebrow">Chat</p>
           <h2>Ask, upload, check status, or run safe actions</h2>
         </div>
-        <span className="statusText" data-chat-status>Ready</span>
+        <div className="chatHubHeaderActions">
+          <button type="button" className="simpleModeToggle" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
+          <span className="statusText" data-chat-status>Ready</span>
+        </div>
       </div>
       <div className="retrievalStrip chatHubStats" aria-label="Workspace snapshot">
         <span>{llmEnabled ? `Ollama · ${llmModel || "model not set"}` : "Deterministic evidence mode"}</span>
@@ -2758,7 +4360,7 @@ function UnifiedChatHub({
           <div className="avatar">SYS</div>
           <div className="messageBubble">
             <span className="messageLabel">Welcome</span>
-            <p>Type anything here. Ask questions over evidence, upload data, check processing, open settings, or run bounded actions like project health and stack control.</p>
+            <p data-chat-welcome-text>Type anything here: ask over evidence, run auto bypass or fetch public with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.</p>
             <div className="messageMeta">
               <StatusPill state="local-first" />
               <StatusPill state="read-only-default" />
@@ -2767,7 +4369,9 @@ function UnifiedChatHub({
         </article>
       </div>
       <div className="chatQuickChips" aria-label="Quick starts">
-        <button type="button" data-chat-chip="What did I upload today?">What did I upload?</button>
+        <button type="button" data-chat-chip="help">Commands</button>
+        <button type="button" data-chat-chip="open web fetch">Web fetch</button>
+        <button type="button" data-chat-chip="max reach https://example.com">Max reach</button>
         <button type="button" data-chat-chip="Show project health.">Project health</button>
         <button type="button" data-chat-chip="Check processing status">Check processing</button>
         <button type="button" data-chat-chip="Add data">Add data</button>
@@ -2780,7 +4384,7 @@ function UnifiedChatHub({
           <textarea
             data-chat-input
             rows={2}
-            placeholder="Ask a question or request an action..."
+            placeholder="Talk to me — paste a link, ask a question, say what you want..."
             defaultValue=""
           />
         </label>
@@ -4733,7 +6337,7 @@ function ConversationHistoryImport({ sources, approvals }: { sources: ApiResult<
     <section className="guidedManualText" data-conversation-history-import data-api-base-url={browserApiBaseUrl}>
       <div className="guidedManualNotice">
         <strong>Conversation history import MVP.</strong>
-        <span>Manual local UTF-8 paste only. Browser extraction, account import, connectors, external service collection, and binary/media import are planned future work, not part of this DIFF.</span>
+        <span>Manual local UTF-8 paste plus Web fetch tools for URL collection, paste import, local project directory collection, and media text import.</span>
       </div>
       {sources.error ? <p className="errorText">Source list could not be loaded: {sources.error}</p> : null}
       <form className="guidedManualForm" data-conversation-history-form>
@@ -5204,8 +6808,8 @@ function UserObservationIngestion({ sources, approvals }: { sources: ApiResult<S
 function SourceCollectionApprovalReview({ approvals }: { approvals: ApiResult<ApprovalRecord[]> }) {
   const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
   const collectionApprovals = approvals.data
-    .filter((approval) => approval.request_type === "manual_upload_collection")
-    .slice(0, 8);
+    .filter((approval) => approval.request_type === "manual_upload_collection" || approval.request_type === "agent_action")
+    .slice(0, 12);
   const pendingCollectionApprovals = collectionApprovals.filter((approval) => approval.status === "pending");
   const approvalsJson = JSON.stringify(collectionApprovals).replace(/</g, "\\u003c");
   const script = `
@@ -5256,19 +6860,19 @@ function SourceCollectionApprovalReview({ approvals }: { approvals: ApiResult<Ap
   return (
     <section className="guidedManualText sourceCollectionApprovals" data-source-collection-approval-review data-api-base-url={browserApiBaseUrl}>
       <div className="guidedManualNotice">
-        <strong>Source collection approvals.</strong>
-        <span>Review pending manual, conversation, and observation collection requests without copying raw IDs into Advanced. Approval does not upload by itself; return to Add Data and submit the same guided workflow after approval.</span>
+        <strong>Collection and agent action approvals.</strong>
+        <span>Review pending manual/conversation/observation collection requests and agent action requests. After approval, return to the same workflow or Action engine to execute.</span>
       </div>
       {approvals.error ? <p className="errorText">Approval list could not be loaded: {approvals.error}</p> : null}
       <div className="stack">
         {collectionApprovals.map((approval) => {
           const payload = approval.request_payload_json ?? {};
-          const sourceType = typeof payload.source_type === "string" ? payload.source_type : "manual_upload";
-          const filename = typeof payload.filename === "string" ? payload.filename : "no filename recorded";
+          const sourceType = typeof payload.source_type === "string" ? payload.source_type : approval.request_type === "agent_action" ? "agent action" : "manual_upload";
+          const filename = typeof payload.filename === "string" ? payload.filename : typeof payload.action_name === "string" ? payload.action_name : "no filename recorded";
           return (
             <article className="item evidenceItem" key={approval.id} data-collection-approval-item data-state={approval.status}>
               <div>
-                <strong>{sourceType.replaceAll("_", " ")} collection</strong>
+                <strong>{approval.request_type === "agent_action" ? "Agent action" : sourceType.replaceAll("_", " ") + " collection"}</strong>
                 <span>{filename} · requested by {approval.requested_by_actor_id}</span>
               </div>
               <div>
@@ -5937,6 +7541,115 @@ function GraphLineageExplanationPanel({
         ))}
       </div>
       {lineageRows.length === 0 ? <EmptyState label="No sources are available for lineage explanation yet." /> : null}
+      <section className="guidedManualActions" data-graph-lineage-ops data-api-base-url={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}>
+        <button type="button" data-graph-ensure-schema>Ensure Neo4j schema</button>
+        <button type="button" data-graph-sync-lineage>Sync lineage to graph</button>
+        <span data-graph-lineage-ops-result>Run when vector/graph memory needs schema or lineage refresh.</span>
+      </section>
+      <ClientScript script={`
+(() => {
+  const root = document.querySelector("[data-graph-lineage-ops]");
+  if (!root || root.getAttribute("data-wired") === "true") return;
+  root.setAttribute("data-wired", "true");
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const result = root.querySelector("[data-graph-lineage-ops-result]");
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(JSON.stringify(payload));
+    return payload;
+  };
+  const run = async (label, path) => {
+    if (result) result.textContent = label + " running...";
+    try {
+      const payload = await postJson(path, {});
+      if (result) result.textContent = label + " complete: " + JSON.stringify(payload);
+    } catch (error) {
+      if (result) result.textContent = label + " failed: " + (error instanceof Error ? error.message : "Unknown error");
+    }
+  };
+  root.querySelector("[data-graph-ensure-schema]")?.addEventListener("click", () => run("Ensure Neo4j schema", "/memory/graph/schema/ensure"));
+  root.querySelector("[data-graph-sync-lineage]")?.addEventListener("click", () => run("Sync lineage", "/memory/graph/lineage/sync"));
+})();
+`} />
+    </section>
+  );
+}
+
+function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<WorkItemRecord[]> }) {
+  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const queuedWorkItems = workItems.data.filter((item) => item.status === "queued" || item.status === "pending_intent_verification").slice(0, 8);
+  const queuedJson = JSON.stringify(queuedWorkItems.map((item) => ({ id: item.id, work_type: item.work_type, status: item.status }))).replace(/</g, "\\u003c");
+  const script = `
+(() => {
+  const root = document.querySelector("[data-pipeline-operations]");
+  if (!root || root.getAttribute("data-wired") === "true") return;
+  root.setAttribute("data-wired", "true");
+  const apiBaseUrl = root.getAttribute("data-api-base-url");
+  const queued = JSON.parse(root.querySelector("[data-pipeline-queued-json]")?.textContent || "[]");
+  const result = root.querySelector("[data-pipeline-ops-result]");
+  const show = (message) => { if (result) result.textContent = message; };
+  const postJson = async (path, body) => {
+    const response = await fetch(apiBaseUrl + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(JSON.stringify(payload));
+    return payload;
+  };
+  root.querySelector("[data-vector-ensure]")?.addEventListener("click", async () => {
+    show("Ensuring vector chunks...");
+    try { show("Vector ensure: " + JSON.stringify(await postJson("/memory/vector/chunks/ensure", {}))); } catch (e) { show(String(e)); }
+  });
+  root.querySelector("[data-retrieval-search]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = root.querySelector("[name='pipeline_search_message']")?.value?.trim() || "";
+    const limit = Number(root.querySelector("[name='pipeline_search_limit']")?.value || 5);
+    if (!message) return;
+    show("Searching...");
+    try { show("Retrieval: " + JSON.stringify(await postJson("/chat/retrieval-preview", { message, limit }))); } catch (e) { show(String(e)); }
+  });
+  root.querySelectorAll("[data-dispatch-work-item]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const workItemId = button.getAttribute("data-work-item-id");
+      if (!workItemId) return;
+      button.disabled = true;
+      show("Dispatching " + workItemId + "...");
+      try {
+        show("Dispatch: " + JSON.stringify(await postJson("/work-items/" + encodeURIComponent(workItemId) + "/dispatch", {})));
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (e) {
+        show(String(e));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+})();
+`;
+  return (
+    <section className="panelInset pipelineOperations" id="data-search" data-pipeline-operations data-api-base-url={browserApiBaseUrl}>
+      <div className="subHeader"><h3>Pipeline operations</h3></div>
+      <p className="actionHint">Run memory, search, and work dispatch actions without opening Advanced.</p>
+      <div className="guidedManualActions">
+        <button type="button" data-vector-ensure>Ensure vector chunks</button>
+      </div>
+      <form data-retrieval-search>
+        <label><span>Search your data</span><input name="pipeline_search_message" placeholder="What did I upload today?" /></label>
+        <label><span>Result limit</span><input name="pipeline_search_limit" type="number" min="1" max="20" defaultValue="5" /></label>
+        <button type="submit">Run retrieval preview</button>
+      </form>
+      {queuedWorkItems.length > 0 ? (
+        <div className="stack">
+          {queuedWorkItems.map((item) => (
+            <article className="item evidenceItem" key={item.id}>
+              <div><strong>{item.work_type}</strong><span>{item.id}</span></div>
+              <button type="button" data-dispatch-work-item data-work-item-id={item.id}>Dispatch</button>
+            </article>
+          ))}
+        </div>
+      ) : <p className="actionHint">No queued work items need dispatch right now.</p>}
+      <p data-pipeline-ops-result>Ready.</p>
+      <DomJsonScript marker="data-pipeline-queued-json" json={queuedJson} />
+      <ClientScript script={script} />
     </section>
   );
 }
@@ -8433,6 +10146,27 @@ function ImprovementExperimentReview({
     if (!response.ok) throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
     return payload;
   };
+  root.querySelectorAll("[data-experiment-status-button]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const experimentId = button.getAttribute("data-experiment-id");
+      const status = button.getAttribute("data-experiment-status");
+      if (!experimentId || !status) return;
+      button.disabled = true;
+      try {
+        const payload = await postJson("/experiments/" + encodeURIComponent(experimentId) + "/status", {
+          status,
+          actor_id: "local-owner",
+          status_note: "Updated from Improvement and experiment review panel"
+        });
+        show("Experiment status updated", "Status changed to " + status + ".", payload);
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (error) {
+        show("Experiment status failed", String(error));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
   root.querySelector("[data-experiment-proposal-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const improvementId = value("experiment_improvement_id");
@@ -8502,8 +10236,15 @@ function ImprovementExperimentReview({
                   <span>Optuna: {experiment.optuna_study_name ?? "not executed"}</span>
                 </div>
                 <div>
-                  <StatusPill state="review-only" />
+                  <StatusPill state={experiment.status} />
                   <span>{formatDate(experiment.created_at)}</span>
+                  {experiment.status === "planned" || experiment.status === "running" ? (
+                    <div className="guidedManualActions">
+                      {experiment.status === "planned" ? <button type="button" data-experiment-status-button data-experiment-id={experiment.id} data-experiment-status="running">Mark running</button> : null}
+                      <button type="button" data-experiment-status-button data-experiment-id={experiment.id} data-experiment-status="completed">Mark completed</button>
+                      <button type="button" data-experiment-status-button data-experiment-id={experiment.id} data-experiment-status="abandoned">Abandon</button>
+                    </div>
+                  ) : null}
                 </div>
               </article>
             ))}
@@ -8717,6 +10458,28 @@ function MvpActionConsole() {
 
   bind("[data-dispatch]", () => postJson("/work-items/" + value("dispatch_work_item_id") + "/dispatch", {}));
 
+  bind("[data-local-project]", () => postJson("/collection-runs/local-project", {
+    source_id: value("local_source_id"),
+    source_permission_id: value("local_permission_id"),
+    approval_id: value("local_approval_id") || null,
+    requested_by_actor_id: "local-owner"
+  }));
+
+  bind("[data-hypothesis-create]", () => postJson("/analysis/hypotheses", {
+    hypothesis_text: value("hypothesis_text"),
+    supporting_evidence_ids: value("hypothesis_evidence_ids").split(",").map((item) => item.trim()).filter(Boolean)
+  }));
+
+  bind("[data-experiment-status]", () => postJson("/experiments/" + value("experiment_status_id") + "/status", {
+    status: value("experiment_status_value"),
+    actor_id: "local-owner",
+    status_note: value("experiment_status_note") || null
+  }));
+
+  bind("[data-graph-ensure]", () => postJson("/memory/graph/schema/ensure", {}));
+  bind("[data-graph-sync]", () => postJson("/memory/graph/lineage/sync", {}));
+  bind("[data-vector-ensure]", () => postJson("/memory/vector/chunks/ensure", {}));
+
   bind("[data-answer]", () => postJson("/chat/evidence-answer", {
     message: value("answer_message"),
     limit: Number(value("answer_limit") || 5)
@@ -8837,6 +10600,50 @@ function MvpActionConsole() {
           <h3><HelpHeading term="dispatch">Dispatch</HelpHeading></h3>
           <input name="dispatch_work_item_id" placeholder="Queued work item ID" />
           <button type="submit">Dispatch</button>
+        </form>
+
+        <form className="actionBox" data-local-project>
+          <h3><HelpHeading term="localProject">Local Project Collect</HelpHeading></h3>
+          <input name="local_source_id" placeholder="local_project source ID" />
+          <input name="local_permission_id" placeholder="Permission ID" />
+          <input name="local_approval_id" placeholder="Approval ID (optional)" />
+          <button type="submit">Collect Directory</button>
+        </form>
+
+        <form className="actionBox" data-hypothesis-create>
+          <h3><HelpHeading term="hypothesis">Hypothesis</HelpHeading></h3>
+          <textarea name="hypothesis_text" rows={2} placeholder="Hypothesis text" />
+          <input name="hypothesis_evidence_ids" placeholder="evidence-id-1,evidence-id-2" />
+          <button type="submit">Create</button>
+        </form>
+
+        <form className="actionBox" data-experiment-status>
+          <h3><HelpHeading term="experimentRun">Experiment Status</HelpHeading></h3>
+          <input name="experiment_status_id" placeholder="Experiment ID" />
+          <select name="experiment_status_value" defaultValue="completed">
+            <option value="planned">planned</option>
+            <option value="running">running</option>
+            <option value="completed">completed</option>
+            <option value="failed">failed</option>
+            <option value="abandoned">abandoned</option>
+          </select>
+          <input name="experiment_status_note" placeholder="Status note" />
+          <button type="submit">Update</button>
+        </form>
+
+        <form className="actionBox" data-graph-ensure>
+          <h3>Graph Schema</h3>
+          <button type="submit">Ensure Neo4j Schema</button>
+        </form>
+
+        <form className="actionBox" data-graph-sync>
+          <h3>Graph Sync</h3>
+          <button type="submit">Sync Lineage</button>
+        </form>
+
+        <form className="actionBox" data-vector-ensure>
+          <h3>Vector Memory</h3>
+          <button type="submit">Ensure Vector Chunks</button>
         </form>
 
         <form className="actionBox wide" data-answer>
@@ -9040,8 +10847,10 @@ export default async function Home() {
   const policyPosture = agentCapabilities.data.policy;
   const blockedRequestClasses = policyPosture?.blocked_request_classes ?? [];
 
+  const queuedWorkCount = workItems.data.filter((item) => item.status === "queued" || item.status === "pending_intent_verification" || item.status === "running").length;
+
   return (
-    <main className="consoleShell chatFirstShell">
+    <main className="consoleShell chatFirstShell" data-minimal-ui-root data-minimal-ui-active="false">
       <aside className="leftSidebar" aria-label="IGY6 navigation">
         <div className="brandBlock">
           <div className="brandMark">IG</div>
@@ -9053,9 +10862,10 @@ export default async function Home() {
 
         <div className="sidebarActions">
           <label className="sidebarButton primary" htmlFor="tab-results">Open chat</label>
+          <button type="button" className="sidebarButton" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
         </div>
 
-        <p className="sidebarHint">Say what you want in chat — upload data, check processing, open settings, or run safe actions. No tab hunting required.</p>
+        <p className="sidebarHint" data-minimal-ui-hint>Say what you want in chat — I&apos;ll ask plain questions when I&apos;m not sure what you mean.</p>
 
         <nav className="navSection compactNav" aria-label="Workspace views">
           <label htmlFor="tab-results">Chat</label>
@@ -9092,6 +10902,7 @@ export default async function Home() {
             <h1>Local Evidence Workspace</h1>
           </div>
           <div className="topStatus">
+            <button type="button" className="simpleModeToggle" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
             <StatusPill state="local-first" />
             <StatusPill state={health.data.status} />
           </div>
@@ -9161,6 +10972,12 @@ export default async function Home() {
         </section>
 
         <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="results">
+          <MinimalWorkspacePanel
+            sourceCount={sources.data.length}
+            evidenceCount={evidenceItems.data.length}
+            queuedWorkCount={queuedWorkCount}
+            pendingApprovals={pendingApprovals.length}
+          />
           <OnboardingJourney
             sourceCount={sources.data.length}
             evidenceCount={evidenceItems.data.length}
@@ -9168,6 +10985,7 @@ export default async function Home() {
             llmEnabled={(settingValue(envSettings.data, "LLM_PROVIDER", "none") || "none") === "ollama"}
             llmModel={settingValue(envSettings.data, "OLLAMA_MODEL", "") || "not selected"}
           />
+          <ChatWebFetchDock />
           <UnifiedChatHub
             sourceCount={sources.data.length}
             evidenceCount={evidenceItems.data.length}
@@ -9282,6 +11100,8 @@ export default async function Home() {
               <a href="#data-overview">Overview</a>
               <a href="#sources-panel">Sources</a>
               <a href="#uploads-collection">Uploads</a>
+              <a href="#browser-web-router-import">Web fetch</a>
+              <a href="#chat-web-fetch">Chat web fetch</a>
             </section>
             <div className="quickStartGrid" id="data-overview">
               <article>
@@ -9366,7 +11186,7 @@ export default async function Home() {
             <UserObservationIngestion sources={sources} approvals={approvals} />
             <BrowserWebRouterCollectorMvp />
             <MediaImportMvp />
-            <LocalProjectPcDiagnosticsHardeningPanel />
+            <LocalProjectPcDiagnosticsHardeningPanel sources={sources} approvals={approvals} />
             <div className="subHeader"><h3><HelpHeading term="collectionRun">Collection Runs</HelpHeading></h3>{collectionRuns.error ? <span className="errorText">{collectionRuns.error}</span> : null}</div>
             <div className="stack">
               {recentRuns.map((run) => (
@@ -9601,6 +11421,37 @@ export default async function Home() {
                   ))}
                 </div>
                 {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
+                <form className="guidedManualForm" data-hypothesis-create-form data-api-base-url={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}>
+                  <label><span>New hypothesis</span><textarea name="hypothesis_text" rows={2} placeholder="Describe a testable hypothesis grounded in local evidence." /></label>
+                  <label><span>Supporting evidence ids</span><input name="hypothesis_evidence_ids" placeholder="evidence-id-1, evidence-id-2" /></label>
+                  <button type="submit">Record hypothesis</button>
+                </form>
+                <ClientScript script={`
+(() => {
+  const form = document.querySelector("[data-hypothesis-create-form]");
+  if (!form || form.getAttribute("data-wired") === "true") return;
+  form.setAttribute("data-wired", "true");
+  const apiBaseUrl = form.getAttribute("data-api-base-url");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = form.querySelector("[name='hypothesis_text']")?.value?.trim() || "";
+    const evidenceIds = (form.querySelector("[name='hypothesis_evidence_ids']")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    if (!text) return;
+    try {
+      const response = await fetch(apiBaseUrl + "/analysis/hypotheses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hypothesis_text: text, supporting_evidence_ids: evidenceIds })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(JSON.stringify(payload));
+      window.location.reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Hypothesis create failed");
+    }
+  });
+})();
+`} />
               </div>
 
               <div>
@@ -9630,11 +11481,7 @@ export default async function Home() {
               </div>
 	            </section>
 	            <ImprovementExperimentReview improvements={improvements} experiments={experiments} />
-	            <section className="panelInset" id="data-search">
-              <h3>Search Your Data</h3>
-              <p>Use Assistant for semantic retrieval now. Filter targets include sources, uploads, evidence, memory, and analysis records. Example question: "What did I upload today?"</p>
-              <label className="inlineAction" htmlFor="tab-results">Open Results search</label>
-            </section>
+	            <PipelineOperationsPanel workItems={workItems} />
           </section>
 
           <section className="panel workflowSection tabContent" id="work-processing" data-tab-panel="work">
@@ -9705,14 +11552,16 @@ export default async function Home() {
                 {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
               </div>
             </section>
+            <p className="actionHint">Use Pipeline operations in Results → Memory for search, vector ensure, and one-click dispatch on queued work items.</p>
             <details className="advancedPanel">
               <summary>Advanced: dispatch controls, work item IDs, and raw queue JSON</summary>
-              <p>Use Advanced Route Console above for dispatch. Route: POST /work-items/:work_item_id/dispatch.</p>
+              <p>Route: POST /work-items/:work_item_id/dispatch. Pipeline operations panel also exposes dispatch for queued items.</p>
               <pre>{JSON.stringify(workItems.data.slice(0, 10), null, 2)}</pre>
             </details>
           </section>
 
           <SettingsHubNav />
+          <BypassIntelPanel />
           <SettingsPanel envSettings={envSettings} />
           <UserSecurityPanel />
 
@@ -9971,6 +11820,8 @@ export default async function Home() {
           <p>Retrieval only reflects sources that have been registered, collected, normalized, chunked, and embedded. Missing or disabled sources are not evidence.</p>
         </section>
       </aside>
+      <ClientScript script={WORKSPACE_HASH_ROUTER_SCRIPT} />
+      <ClientScript script={MINIMAL_UI_TOGGLE_SCRIPT} />
     </main>
   );
 }

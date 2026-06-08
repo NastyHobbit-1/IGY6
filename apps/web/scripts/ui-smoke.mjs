@@ -66,6 +66,9 @@ const requiredApiRoutes = [
   "artifacts/route.ts",
   "artifacts/[artifact_id]/content/route.ts",
   "collection-runs/full-access/route.ts",
+  "host-bridge/ensure-max-reach/route.ts",
+  "bypass-intel/status/route.ts",
+  "bypass-intel/harvest/route.ts",
   "chat/evidence-answer/route.ts",
   "chat/retrieval-preview/route.ts",
   "settings/env/route.ts",
@@ -77,12 +80,67 @@ for (const route of requiredApiRoutes) {
   check(`api route file: ${route}`, existsSync(join(apiDir, route)));
 }
 
+includesAll("chat web fetch dock", page, [
+  "ChatWebFetchDock",
+  'id="chat-web-fetch"',
+  "data-chat-web-fetch",
+  "Web fetch tools",
+  "executeChatCommand",
+  "ensureMaxReachInfrastructure",
+  "ensureHostBridgeInfrastructure",
+  "/api/host-bridge/ensure-max-reach",
+  "/api/bypass-intel/status",
+  "/api/bypass-intel/harvest",
+  "BypassIntelPanel",
+  "data-bypass-intel-panel",
+  "Bypass research (automatic)",
+  "/ensure-max-reach",
+  "Max reach bypass",
+  "data-max-reach-url-fetch",
+  "max_reach: true",
+  "max reach https://",
+  "auto bypass https://",
+  "fetch public https://",
+  'data-chat-chip="open web fetch"',
+  'data-chat-chip="help"',
+  'data-chat-chip="max reach https://example.com"'
+]);
+
+includesAll("minimal ui mode", page, [
+  "data-minimal-ui-root",
+  "data-minimal-ui-toggle",
+  "MINIMAL_UI_TOGGLE_SCRIPT",
+  "MinimalWorkspacePanel",
+  "data-minimal-workspace",
+  "interpretFetchIntent",
+  "pendingClarification",
+  "Do you want me to try and get the paid or locked content from",
+  "Simple mode"
+]);
+
+includesAll("implemented collection panels", page, [
+  "data-bwr-collect",
+  "Collect pasted text",
+  "data-lp-collect",
+  "Collect scoped import",
+  "data-media-collect-text",
+  "Collect extracted text",
+  "PipelineOperationsPanel",
+  "data-pipeline-operations",
+  "data-hypothesis-create-form",
+  "data-experiment-status-button",
+  "data-graph-lineage-ops",
+  "agent_action"
+]);
+
 includesAll("workflow section anchors", page, [
   'id="home"',
   'id="assistant"',
+  'id="chat-web-fetch"',
   'id="data-knowledge"',
   'id="sources-panel"',
   'id="uploads-collection"',
+  '#browser-web-router-import">Web fetch',
   'id="evidence-panel"',
   'id="memory-panel"',
   'id="analysis-panel"',
@@ -253,7 +311,8 @@ includesAll("supporting styles", styles, [
   ".chatEnginePanel",
   ".chatFirstShell",
   ".journeyStrip",
-  ".journeyCard"
+  ".journeyCard",
+  ".chatWebFetchDock"
 ]);
 
 if (failures.length > 0) {
