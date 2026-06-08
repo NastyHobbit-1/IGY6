@@ -2148,22 +2148,43 @@ fn full_access_collection_response(body: &str, database_url: Option<&str>) -> Ga
     write_route_response(full_access_collect(body, database_url))
 }
 
+fn scope_entry_is_public_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn is_web_only_scope(scope: Option<&serde_json::Value>) -> bool {
+    let Some(items) = scope.and_then(|value| value.as_array()) else {
+        return false;
+    };
+    !items.is_empty()
+        && items.iter().all(|item| {
+            item.as_str()
+                .is_some_and(scope_entry_is_public_url)
+        })
+}
+
 fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
     // UI-driven payload (everything controllable from web UI, no cmdline needed):
     // { "requested_by_actor_id": "...", "password": "...", "totp_code": "optional",
     //   "scope": ["url1", "/local/path", "everything"], "max_depth": 3,
-    //   "safe_mode": true, "media_focus": false, "anonymity": "high" }
+    //   "safe_mode": true, "web_only": true, "media_focus": false, "anonymity": "high" }
     let object: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
-    // Password protection for the program (grok branch full access)
-    let provided_pass = object.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    let web_only = object
+        .get("web_only")
+        .and_then(|value| value.as_bool())
+        .unwrap_or_else(|| is_web_only_scope(object.get("scope")));
     let cfg = load_user_config();
-    if provided_pass != cfg.password {
-        return Err(GatewayError::Forbidden("Program is password protected. Provide correct current password in payload.password.".to_string()));
-    }
-    if cfg.totp_enabled {
-        let totp_code = object.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
-        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
-            return Err(GatewayError::Forbidden("TOTP code required and incorrect (authenticator is linked and enabled).".to_string()));
+    // Public URL-only fetch from the local UI does not require program password/TOTP.
+    if !web_only {
+        let provided_pass = object.get("password").and_then(|v| v.as_str()).unwrap_or("");
+        if provided_pass != cfg.password {
+            return Err(GatewayError::Forbidden("Program is password protected. Provide correct current password in payload.password.".to_string()));
+        }
+        if cfg.totp_enabled {
+            let totp_code = object.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+            if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+                return Err(GatewayError::Forbidden("TOTP code required and incorrect (authenticator is linked and enabled).".to_string()));
+            }
         }
     }
 
@@ -2196,10 +2217,15 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let mut evidence_created: Vec<String> = vec![];
     let mut graph_candidates: Vec<serde_json::Value> = vec![];
     let mut summary = serde_json::json!({
-        "mode": "full_access_grok",
+        "mode": if web_only { "web_only_public_fetch" } else { "full_access_grok" },
+        "web_only": web_only,
         "requested_by": requested_by,
         "started_at": format!("{:?}", std::time::SystemTime::now()),
-        "access_note": "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
+        "access_note": if web_only {
+            "Public URL fetch only. No local filesystem scan. Data stored locally only."
+        } else {
+            "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
+        }
     });
 
     // 1. Local filesystem - unbounded recursive (anything accessible)
@@ -2213,6 +2239,11 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     ];
 
     let mut local_files = 0usize;
+    if web_only {
+        summary["local_files_ingested"] = serde_json::json!(0);
+        summary["system_snapshots"] = serde_json::json!(0);
+    }
+    if !web_only {
     for root in &roots {
         if !std::path::Path::new(root).exists() { continue; }
         for entry in WalkDir::new(root).follow_links(false).max_depth(8) {  // depth cap to stay reasonable
@@ -2318,6 +2349,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         }
     }
     summary["system_snapshots"] = serde_json::json!(sys_count);
+    }
 
     // 3. Web scraping - DEEPEST + SAFEST on grok (UI controlled, everything from browser, no cmd line).
     // Recursive crawler (BFS up to max_depth), full asset download (original res images/videos/PDFs),
@@ -13933,6 +13965,14 @@ mod tests {
             "DATABASE_URL",
             "postgres://adaptive:secret@postgres:5432/adaptive_intelligence"
         ));
+    }
+
+    #[test]
+    fn web_only_scope_requires_public_http_urls() {
+        let scope = serde_json::json!(["https://example.com/docs"]);
+        assert!(is_web_only_scope(Some(&scope)));
+        let mixed = serde_json::json!(["https://example.com", "everything"]);
+        assert!(!is_web_only_scope(Some(&mixed)));
     }
 
     #[test]

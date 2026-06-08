@@ -1100,6 +1100,101 @@ function ConnectorContractStatusPanel() {
 
 function BrowserWebRouterCollectorMvp() {
   const importTypesJson = JSON.stringify(BROWSER_WEB_ROUTER_IMPORT_TYPES).replace(/</g, "\\u003c");
+  const fetchPublicUrlScript = `
+(() => {
+  const panel = document.querySelector("[data-public-url-fetch]");
+  if (!panel || panel.getAttribute("data-public-url-wired") === "true") return;
+  panel.setAttribute("data-public-url-wired", "true");
+  const button = panel.querySelector("[data-fetch-public-url]");
+  const urlInput = panel.querySelector("[name='public_page_url']");
+  const depthSelect = panel.querySelector("[name='public_page_depth']");
+  const result = panel.querySelector("[data-public-url-result]");
+  const writeResult = (title, message, details, nextSteps) => {
+    if (!result) return;
+    result.innerHTML = "";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const body = document.createElement("span");
+    body.textContent = message;
+    result.append(heading, body);
+    if (details?.length) {
+      const list = document.createElement("dl");
+      details.forEach((detail) => {
+        const term = document.createElement("dt");
+        term.textContent = detail.label;
+        const value = document.createElement("dd");
+        value.textContent = detail.value;
+        list.append(term, value);
+      });
+      result.appendChild(list);
+    }
+    if (nextSteps?.length) {
+      const steps = document.createElement("ul");
+      nextSteps.forEach((step) => {
+        const item = document.createElement("li");
+        item.textContent = step;
+        steps.appendChild(item);
+      });
+      result.appendChild(steps);
+    }
+  };
+  button?.addEventListener("click", async () => {
+    const url = urlInput?.value?.trim() || "";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      writeResult("URL required", "Paste a full public page URL starting with https:// or http://.", [], ["Example: https://example.com/docs/guide"]);
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Fetching...";
+    writeResult("Fetching", "Downloading the public page and storing it locally. This can take up to a minute.", [
+      { label: "url", value: url }
+    ], []);
+    try {
+      const response = await fetch("/api/collection-runs/full-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requested_by_actor_id: "local-owner",
+          web_only: true,
+          safe_mode: true,
+          max_depth: Number(depthSelect?.value || "1"),
+          scope: [url]
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || response.statusText || "Fetch failed");
+      }
+      const summary = payload?.summary_json || payload?.summary || payload;
+      writeResult(
+        "Page fetched",
+        "Public page content is stored locally. Open Chat and ask a question over evidence.",
+        [
+          { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
+          { label: "evidence items", value: String(summary?.total_evidence ?? "unknown") },
+          { label: "artifacts", value: String(summary?.total_artifacts ?? "unknown") }
+        ],
+        [
+          "Open the Work tab to confirm processing finished.",
+          "Open Chat and ask: What does this page say about ...?",
+          "Login-only pages still need copy/paste into Guided Upload below."
+        ]
+      );
+    } catch (error) {
+      writeResult(
+        "Fetch failed",
+        error instanceof Error ? error.message : "Unknown error",
+        [],
+        ["Use a public URL (no sign-in).", "If the site is mostly JavaScript, copy visible text into Guided Upload instead."]
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = "Fetch page";
+    }
+  });
+})();
+`;
+
   const script = `
 (() => {
   const root = document.querySelector("[data-browser-web-router-mvp]");
@@ -1116,33 +1211,8 @@ function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " — GROK FULL ACCESS (password ThatDog123, deep scrape full res media, Media Library view, polished easy UI, real tied pipelines, local only secure): actively scrapes/reads anything reachable and stores ONLY locally. No exfil. " + type.excluded;
+    statusText.textContent = type.label + " — paste-only preview below, or use Fetch public web page above for automatic URL collection. " + type.excluded;
   };
-
-  // Grok full power: make the form actually trigger full access collection
-  if (form) {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const type = selectedType();
-      const scope = scopeInput?.value || type.scopePrompt || 'everything';
-      const text = textInput?.value || '';
-      try {
-        const res = await fetch('/api/collection-runs/full-access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requested_by_actor_id: 'grok-ui-user',
-            scope: [scope, text ? 'text:' + text.substring(0, 2000) : null].filter(Boolean),
-            source_type: type.key.includes('browser') ? 'browser_export' : (type.key.includes('media') ? 'media_file' : 'full_access')
-          })
-        });
-        const json = await res.json();
-        if (result) result.textContent = 'Full access collection result (grok): ' + JSON.stringify(json, null, 2).substring(0, 1500);
-      } catch (err) {
-        if (result) result.textContent = 'Full access error (still local only): ' + err;
-      }
-    });
-  }
   const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
   const renderResult = (payload) => {
     if (!result) return;
@@ -1275,9 +1345,39 @@ function BrowserWebRouterCollectorMvp() {
 
   return (
     <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp>
+      <section className="panelInset publicUrlFetch" data-public-url-fetch aria-label="Fetch public web page">
+        <div className="subHeader">
+          <h3>Fetch public web page</h3>
+          <StatusPill state="local-first" />
+        </div>
+        <p className="actionHint">
+          Paste a public page URL. No program login and no website sign-in required. Content is fetched once and stored only inside this IGY6 instance.
+        </p>
+        <label>
+          <span>Page URL</span>
+          <input name="public_page_url" type="url" placeholder="https://example.com/article" />
+        </label>
+        <label>
+          <span>How many link levels to follow</span>
+          <select name="public_page_depth" defaultValue="1">
+            <option value="0">This page only</option>
+            <option value="1">This page plus direct links</option>
+            <option value="2">Two levels of links</option>
+          </select>
+        </label>
+        <div className="guidedManualActions">
+          <button type="button" data-fetch-public-url>Fetch page</button>
+          <span>Works for public HTML pages. Login walls and heavy JavaScript sites may need copy/paste below.</span>
+        </div>
+        <div className="guidedManualResult" data-public-url-result>
+          <strong>Ready</strong>
+          <span>Paste a URL above, then click Fetch page.</span>
+        </div>
+        <ClientScript script={fetchPublicUrlScript} />
+      </section>
       <div className="guidedManualNotice">
-        <strong>Browser, web, and router import dry-run MVP.</strong>
-        <span>Manual text preview only. GROK BRANCH FULL ACCESS: actively fetches/scans anything reachable (URLs, local files, system state, WiFi, etc.). All data stored ONLY inside this IGY6 instance. No external exfil of your content.</span>
+        <strong>Manual paste and preview</strong>
+        <span>Use this section when you already copied page text, or want a dry-run preview before pasting into Guided Upload.</span>
       </div>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
         {/* Added by grok: password protected deep full res media library + polished controls */}
@@ -1324,8 +1424,8 @@ function BrowserWebRouterCollectorMvp() {
           <textarea name="bwr_text" rows={7} placeholder="Paste redacted visible page text, web text, or read-only router status/export text. Do not paste cookies, tokens, credentials, or router secrets." />
         </label>
         <div className="guidedManualActions">
-          <button type="submit">Preview dry-run only</button>
-          <span>Collection is not started from this surface. Use Guided Upload only after review/redaction.</span>
+          <button type="submit">Preview paste plan</button>
+          <span>Does not fetch URLs. For automatic URL collection, use Fetch public web page above.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-browser-web-router-result>
