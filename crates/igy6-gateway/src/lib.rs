@@ -8697,7 +8697,7 @@ const SAFE_BACKUP_ROOT: &str = "/workspace/storage";
 const SETTING_GROUPS: &[(&str, &str)] = &[
     ("app", "App / Web"),
     ("postgres", "PostgreSQL"),
-    ("redis", "Redis"),
+    ("redis", "Redis (archived)"),
     ("qdrant", "Qdrant"),
     ("neo4j", "Neo4j"),
     ("mlflow", "MLflow"),
@@ -8717,12 +8717,12 @@ const SETTING_DEFINITIONS: &[SettingDefinition] = &[
     SettingDefinition { key: "POSTGRES_DB", group: "postgres", description: "PostgreSQL database name." },
     SettingDefinition { key: "POSTGRES_USER", group: "postgres", description: "PostgreSQL username." },
     SettingDefinition { key: "POSTGRES_PASSWORD", group: "postgres", description: "PostgreSQL password." },
-    SettingDefinition { key: "DATABASE_URL", group: "postgres", description: "SQLAlchemy PostgreSQL connection URL." },
-    SettingDefinition { key: "REDIS_HOST", group: "redis", description: "Redis service hostname." },
-    SettingDefinition { key: "REDIS_PORT", group: "redis", description: "Published local Redis port." },
-    SettingDefinition { key: "REDIS_URL", group: "redis", description: "Redis URL used by API health checks." },
-    SettingDefinition { key: "CELERY_BROKER_URL", group: "redis", description: "Archived Celery broker Redis URL retained for rollback history." },
-    SettingDefinition { key: "CELERY_RESULT_BACKEND", group: "redis", description: "Archived Celery result backend Redis URL retained for rollback history." },
+    SettingDefinition { key: "DATABASE_URL", group: "postgres", description: "PostgreSQL connection URL (postgres:// or postgresql://)." },
+    SettingDefinition { key: "REDIS_HOST", group: "redis", description: "Optional archived Redis hostname. Leave empty for the Rust worker stack." },
+    SettingDefinition { key: "REDIS_PORT", group: "redis", description: "Optional archived Redis port. Leave empty when Redis is not deployed." },
+    SettingDefinition { key: "REDIS_URL", group: "redis", description: "Optional archived Redis URL. Leave empty when Redis is not deployed." },
+    SettingDefinition { key: "CELERY_BROKER_URL", group: "redis", description: "Optional archived Celery broker URL retained for rollback history only." },
+    SettingDefinition { key: "CELERY_RESULT_BACKEND", group: "redis", description: "Optional archived Celery result backend URL retained for rollback history only." },
     SettingDefinition { key: "QDRANT_HOST", group: "qdrant", description: "Qdrant service hostname." },
     SettingDefinition { key: "QDRANT_PORT", group: "qdrant", description: "Published local Qdrant port." },
     SettingDefinition { key: "QDRANT_URL", group: "qdrant", description: "Qdrant API URL used by API and worker." },
@@ -8982,7 +8982,7 @@ fn validate_settings_candidate(
     let mut warnings = Vec::new();
     for definition in SETTING_DEFINITIONS {
         if !setting_read_only(definition.key)
-            && definition.key != "OLLAMA_MODEL"
+            && !setting_optional(definition.key)
             && candidate.get(definition.key).is_none_or(String::is_empty)
         {
             errors.push(settings_issue(
@@ -8992,10 +8992,11 @@ fn validate_settings_candidate(
         }
     }
     for key in SETTINGS_PORT_KEYS {
-        match candidate
-            .get(*key)
-            .and_then(|value| value.parse::<u16>().ok())
-        {
+        let value = candidate.get(*key).map_or("", String::as_str);
+        if value.is_empty() && setting_optional(key) {
+            continue;
+        }
+        match value.parse::<u16>().ok() {
             Some(port) if port > 0 => {}
             _ => errors.push(settings_issue(
                 Some(key),
@@ -9209,6 +9210,14 @@ fn validate_settings_candidate(
 }
 
 const SETTINGS_READ_ONLY_KEYS: &[&str] = &["ENV_FILE_PATH", "ENV_BACKUP_DIR"];
+const SETTINGS_OPTIONAL_KEYS: &[&str] = &[
+    "OLLAMA_MODEL",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_URL",
+    "CELERY_BROKER_URL",
+    "CELERY_RESULT_BACKEND",
+];
 const SETTINGS_SECRET_KEYS: &[&str] = &["POSTGRES_PASSWORD", "DATABASE_URL", "NEO4J_PASSWORD"];
 const SETTINGS_BOOLEAN_KEYS: &[&str] = &[
     "SINGLE_USER_MODE",
@@ -9300,6 +9309,12 @@ fn setting_key_allowed(key: &str) -> bool {
 
 fn setting_read_only(key: &str) -> bool {
     SETTINGS_READ_ONLY_KEYS
+        .iter()
+        .any(|candidate| candidate == &key)
+}
+
+fn setting_optional(key: &str) -> bool {
+    SETTINGS_OPTIONAL_KEYS
         .iter()
         .any(|candidate| candidate == &key)
 }
@@ -9442,7 +9457,7 @@ fn settings_url_plausible(key: &str, value: &str) -> bool {
             matches!(parsed.scheme.as_str(), "bolt" | "neo4j") && parsed.hostname.is_some()
         }
         "DATABASE_URL" => {
-            parsed.scheme.starts_with("postgresql")
+            (parsed.scheme == "postgres" || parsed.scheme.starts_with("postgresql"))
                 && parsed.hostname.is_some()
                 && !parsed.path.trim_matches('/').is_empty()
         }
@@ -12853,7 +12868,7 @@ fn settings_env_status_json() -> String {
     const GROUPS: &[(&str, &str)] = &[
         ("app", "App"),
         ("postgres", "PostgreSQL"),
-        ("redis", "Redis"),
+        ("redis", "Redis (archived)"),
         ("qdrant", "Qdrant"),
         ("neo4j", "Neo4j"),
         ("llm", "Local LLM"),
@@ -13894,6 +13909,30 @@ mod tests {
             assert_eq!(response.status_code, 422, "{body}");
             assert!(!response.proxied_to_fallback, "{body}");
         }
+    }
+
+    #[test]
+    fn settings_env_verify_passes_without_archived_redis_keys() {
+        let config = test_settings_config();
+        let parsed = ParsedSettingsEnv {
+            values: HashMap::new(),
+            unmanaged_order: Vec::new(),
+        };
+        let requested = valid_settings_values();
+        let (candidate, unmanaged, changed_keys) =
+            build_settings_candidate(&config, &parsed, &requested).expect("candidate");
+        let validation = validate_settings_candidate(&candidate, &unmanaged, &changed_keys);
+        assert_eq!(validation.errors.len(), 0);
+        let response = settings_verify_response_json(&candidate, &validation);
+        assert!(response.contains("\"passed\":true"));
+    }
+
+    #[test]
+    fn settings_url_plausible_accepts_postgres_scheme_database_url() {
+        assert!(settings_url_plausible(
+            "DATABASE_URL",
+            "postgres://adaptive:secret@postgres:5432/adaptive_intelligence"
+        ));
     }
 
     #[test]
@@ -15569,19 +15608,8 @@ mod tests {
             ("POSTGRES_PASSWORD".to_string(), "change-me-local-only".to_string()),
             (
                 "DATABASE_URL".to_string(),
-                "postgresql+psycopg://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
+                "postgres://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
                     .to_string(),
-            ),
-            ("REDIS_HOST".to_string(), "redis".to_string()),
-            ("REDIS_PORT".to_string(), "6379".to_string()),
-            ("REDIS_URL".to_string(), "redis://redis:6379/0".to_string()),
-            (
-                "CELERY_BROKER_URL".to_string(),
-                "redis://redis:6379/0".to_string(),
-            ),
-            (
-                "CELERY_RESULT_BACKEND".to_string(),
-                "redis://redis:6379/1".to_string(),
             ),
             ("QDRANT_HOST".to_string(), "qdrant".to_string()),
             ("QDRANT_PORT".to_string(), "6333".to_string()),
