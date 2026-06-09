@@ -155,6 +155,20 @@ Current tabs:
 
 Keep normal user workflows visible and push low-level controls to Advanced. Empty states must be honest empty states, not fake demo data. Settings changes must stay dry-run/verification gated. Advanced controls must not encourage guessing IDs or bypassing approvals.
 
+### UI styling on `grok` (custom CSS, not Tailwind/shadcn)
+
+The Next.js app under `apps/web/` uses **plain CSS** in `apps/web/src/app/globals.css` plus server-rendered markup in `apps/web/src/app/page.tsx`. There is **no** Tailwind or shadcn dependency in this branch.
+
+When polishing UI components:
+
+- Prefer existing semantic classes (`panel`, `panelInset`, `minimalSlot`, `pill`, `tabList`, etc.) before adding new ones.
+- Add responsive layout with CSS media queries or utility classes such as `responsiveToolbar`, `responsiveStatusRow`, and `responsivePanelGrid` (flex-wrap / `auto-fit` grids). Mobile-first: stack vertically below ~640–860px, row layout on wider screens.
+- Use `Skeleton` / `SkeletonBlock` in `page.tsx` and matching `.skeleton` rules in `globals.css` for loading states instead of bare `"Loading..."` text.
+- Keep **Simple mode** (`body.minimal-ui-mode`) working: `minimalWorkspace` cards must remain usable on narrow viewports.
+- Do not introduce Tailwind, shadcn, or a component library unless an active DIFF explicitly authorizes it.
+
+See `docs/ui/README.md` for tab behavior and smoke expectations.
+
 ## Coding Rules
 
 For Rust:

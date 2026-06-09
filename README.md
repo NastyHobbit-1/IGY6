@@ -54,6 +54,15 @@ Stop with `igy6 stop` or the scripts.
 
 Stop with Ctrl+C or the stop/restart scripts in `scripts/`.
 
+#### What you should see after install
+
+1. **Terminal** — `igy6 start` prints a local URL such as `http://127.0.0.1:3000` (or another free port if 3000 is busy).
+2. **Browser** — dark-themed **IGY6** dashboard with sidebar navigation (Chat, Data, Work, Settings, More).
+3. **Simple mode** — toggle in the header or sidebar collapses the UI to five large action cards (pull from web, paste text, check work, ask about saved evidence, settings).
+4. **First unlock** — default password `ThatDog123` when prompted for protected actions.
+
+Optional screenshots for your own docs: capture the home readiness strip, Chat tab, and Media Library after a test scan; store under `docs/ui/` if you maintain operator screenshots locally (not required for runtime).
+
 **Dynamic URL**: The start logic (web dynamic starter + support in operator scripts) detects port conflicts and switches to a free one, always telling you the usable local address. No manual port editing required.
 
 ## Operating the Program (UI & Daily Use)

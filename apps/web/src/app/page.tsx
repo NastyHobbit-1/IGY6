@@ -859,6 +859,20 @@ function EmptyState({ label }: { label: string }) {
   return <p className="empty">{label}</p>;
 }
 
+function Skeleton({ className = "" }: { className?: string }) {
+  return <span className={`skeleton ${className}`.trim()} aria-hidden="true" />;
+}
+
+function SkeletonBlock({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="skeletonBlock" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: lines }, (_, index) => (
+        <Skeleton key={index} className={index === lines - 1 ? "skeletonShort" : ""} />
+      ))}
+    </div>
+  );
+}
+
 const CONNECTOR_CONTRACT_STEPS: ConnectorContractStep[] = [
   {
     key: "validate_scope",
@@ -1807,7 +1821,7 @@ function MinimalWorkspacePanel({
 })();
 `;
   return (
-    <section className="minimalWorkspace" data-minimal-workspace aria-label="Simple workspace">
+    <section className="minimalWorkspace responsivePanelGrid" data-minimal-workspace aria-label="Simple workspace">
       <article className="minimalSlot" data-minimal-slot="web">
         <h3>Pull from a website</h3>
         <p>Paste a link — I&apos;ll figure out whether you want public pages, a harder bypass, or the full-court press.</p>
@@ -2085,7 +2099,7 @@ function BrowserWebRouterCollectorMvp() {
   root.querySelector("[data-grok-open-media]")?.addEventListener("click", () => {
     window.grokLoadMedia = async () => {
       const c = document.createElement("div");
-      c.innerHTML = "Loading media lib...";
+      c.innerHTML = "<div class='skeletonBlock' aria-busy='true'><span class='skeleton'></span><span class='skeleton'></span><span class='skeleton skeletonShort'></span></div>";
       document.body.appendChild(c);
       try {
         const r = await fetch("/api/artifacts");
@@ -2904,7 +2918,9 @@ function BypassIntelPanel() {
       <p className="actionHint">
         IGY6 regularly searches the open web for bypass ideas on sites you have fetched (including Patreon and other paywalled targets) and folds working tricks into auto bypass.
       </p>
-      <p data-bypass-intel-status>Loading bypass research status...</p>
+      <div data-bypass-intel-status>
+        <SkeletonBlock lines={2} />
+      </div>
       <p className="statusText" data-bypass-intel-domains />
       <button type="button" data-bypass-intel-harvest>Refresh bypass research</button>
       <ClientScript script={script} />
@@ -10896,12 +10912,12 @@ export default async function Home() {
       </aside>
 
       <section className="mainConsole">
-        <header className="topBar compactTopBar">
+        <header className="topBar compactTopBar responsiveToolbar">
           <div>
             <p className="eyebrow">IGY6</p>
             <h1>Local Evidence Workspace</h1>
           </div>
-          <div className="topStatus">
+          <div className="topStatus responsiveStatusRow">
             <button type="button" className="simpleModeToggle" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
             <StatusPill state="local-first" />
             <StatusPill state={health.data.status} />

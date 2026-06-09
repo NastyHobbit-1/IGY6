@@ -1715,7 +1715,7 @@ fn ingest_manual_upload_collection(
 
     // grok branch: text_content synthesis happens after we load the source (to know its source_type).
     // For now, attempt UTF-8; if it fails we will synthesize a media-style placeholder after source load.
-    let mut text_content = String::from_utf8(content.clone()).ok();
+    let text_content = String::from_utf8(content.clone()).ok();
 
     let database_url = database_url
         .filter(|value| !value.trim().is_empty())
@@ -3007,7 +3007,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
         || paid_escalation;
-    let anonymity = object.get("anonymity").and_then(|v| v.as_str()).unwrap_or("high");
+    let _anonymity = object.get("anonymity").and_then(|v| v.as_str()).unwrap_or("high");
     let requested_by = object.get("requested_by_actor_id")
         .and_then(|v| v.as_str())
         .unwrap_or("local-owner")
@@ -3476,7 +3476,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     summary["safe_mode"] = serde_json::json!(safe_mode);
 
     // 4. Persist graph candidates via existing memory/graph routes if possible, or direct
-    for cand in &graph_candidates {
+    for _cand in &graph_candidates {
         // Best effort - call the sync if the route exists in spirit, or just log in summary for now
         // In real we could POST internally but for simplicity we record them.
     }

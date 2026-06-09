@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use ureq::Agent;
@@ -259,7 +259,7 @@ fn extract_urls_from_text(text: &str) -> Vec<String> {
     urls.into_iter().collect()
 }
 
-fn technique_templates_for_domain(domain: &str) -> Vec<Value> {
+fn technique_templates_for_domain(_domain: &str) -> Vec<Value> {
     vec![
         json!({
             "id": "archive_wayback",
