@@ -133,12 +133,8 @@ Sources:
   must satisfy before becoming active product paths: scope validation, dry-run
   preview, bounded collection, normalization, sensitivity classification, safe
   metadata, cleanup posture, and audit.
-- Connector status distinguishes implemented manual text paths from partial or
-  planned-disabled source types. Browser, web, router, PC diagnostics, and
-  media import entries are policy/status entries unless a later DIFF implements
-  and verifies their collectors.
-- The contract view does not scrape browsers, accounts, routers, websites, or
-  the local filesystem; it is a source policy and implementation-status view.
+- Connector status in the UI reflects the verified table from DIFF-249: manual text paths (manual_upload, conversation_history, user_observation) are implemented; browser_export/web_public/router_network/local_pc_diagnostics/media_import have real full-access + host-bridge support on the `grok` branch (crawl, authorized bypass, binary media collection, WiFi/system snapshots) with host-bridge/approval/scope requirements. Some guided panels remain more paste/preview oriented.
+- The contract view is a source policy + status view. Actual deep collection for supported types on grok uses the full-access routes + host bridge (see constants.ts and gateway full-access implementation). It does not perform silent external account scraping.
 
 Guided Upload:
 
@@ -189,46 +185,31 @@ User Observation Ingestion:
 - Related IDs or labels are stored as plain text in this MVP; they are not
   validated links unless a later DIFF adds that behavior.
 
-Browser / Web / Router Import Dry-Run:
+Browser / Web / Router Import (grok full-access paths):
 
-- Provides a normal-user preview surface for browser page text exports, web
-  page text, and router status/export text.
-- Accepts explicit user-entered scope plus manually pasted authorized text.
-- Reports what would be collected, what is excluded, approval posture,
-  sensitivity warnings, approximate text size, and audit expectations.
-- Does not start collection from this panel. To collect safe reviewed text now,
-  use Guided Upload with a `manual_upload` source after redaction.
-- Does not fetch pages, crawl sites, read browser profiles, collect cookies,
-  tokens, credentials, browser local storage, private account data, router
-  secrets, or perform router writes.
+- On the `grok` branch, "Deep scan", "Max reach", "Auto bypass", "Bypass fetch", and "Fetch public" panels (and Advanced full-access) call the real `/collection-runs/full-access` Rust endpoint (with web_only, auto_bypass, max_reach, bypass_auth flags) + host bridge / Playwright for live URL crawling, authorized session bypass, and content harvesting.
+- Guided "paste" surfaces accept user-provided browser export text, page text, or router status text and treat them as manual_upload / reviewed extract.
+- Dry-run / preview panels summarize scope/exclusions/sensitivity before real collection.
+- Full paths can crawl, fetch full-res media from sources, and store artifacts + evidence with provenance.
+- Requirements and limits (honest): host bridge often needed for advanced tiers; approval may be required; user must supply their own session cookie/token for authenticated bypass (no silent account scraping); treat all fetched content as sensitive until reviewed; no router writes or credential capture.
+- See constants.ts SOURCE_CONNECTOR_STATUS (browser_export, web_public, router_network) and the full-access implementation in crates/igy6-gateway.
 
-PDF / Image / Audio / Video Import Foundation:
+PDF / Image / Audio / Video Import (grok foundation + deep scan):
 
-- Provides a metadata and support-status preview for PDF, image/screenshot,
-  audio, and video inputs.
-- Lets you select a media type, optionally select a local file for browser-side
-  name/type/size metadata, and paste reviewed extracted text or transcript if
-  you already have it.
-- Does not upload binary media, parse PDFs, run OCR, transcribe audio/video,
-  call hosted OCR/transcription APIs, or create artifacts from this panel.
-- PDF, image, audio, and video parsing remain unsupported/planned unless a
-  later DIFF adds and verifies local extraction.
-- To collect reviewed text now, paste the extracted text into Guided Upload as
-  UTF-8 text after removing secrets and private path details.
+- Guided media panel: metadata + size/type + optional user-provided extracted text/transcript (paste path). Does not run OCR/transcription in the panel itself.
+- On `grok` branch, "Deep scan" / full-access collection (via /collection-runs/full-access with media support) performs real binary media collection + storage as artifacts. igy6-artifacts performs deep PDF text extraction on supported paths; images/videos are stored with original bytes for the Media Library full-res viewer.
+- Kind detection (image/pdf/audio/video/binary) and content-addressed storage are real.
+- Automatic OCR/vision description/audio transcription in all guided flows remains partial (user can provide reviewed text; full automated extraction may require later DIFF + verification).
+- Media Library shows and serves original collected media.
+- All paths remain local-only, approval-aware where configured, and sensitive-by-default. See constants.ts MEDIA_IMPORT_TYPES and artifacts extraction logic.
 
-Local Project / PC Diagnostics Hardening:
+Local Project / PC Diagnostics (grok bounded + full-access):
 
-- Provides a scoped dry-run preview for local project manifests and authorized
-  PC diagnostics exports.
-- Requires explicit scope or selected path label, include/exclude posture,
-  preview file/byte caps, and pasted authorized manifest or diagnostics text.
-- Redacts the scope label in the preview result and does not echo pasted
-  diagnostics/project text back to the page.
-- Does not read files, crawl folders, run diagnostics commands, probe the
-  system, collect browser profiles, or import credentials, `.env`, SSH keys,
-  cookies, tokens, or private account data.
-- Future automated `local_project` or diagnostics collection must keep explicit
-  scope, dry-run preview, file/size caps, secret exclusions, and audit records.
+- Guided panel provides scoped dry-run/preview for explicit container-visible paths or authorized diagnostics exports (paste or selected label).
+- On the `grok` branch, full-access / local_project collection supports bounded directory reads and system snapshot commands (ps, nmcli/iwlist for WiFi/signals, etc.) when the source/permission allows.
+- No arbitrary crawl outside explicit scope; binary/secret content must be excluded or fail.
+- WiFi / local PC diagnostics via full-access system commands are implemented on grok (see gateway lib.rs comments on full-access mode).
+- See constants.ts (local_project and local_pc_diagnostics marked partial/implemented with bounds) and full-access implementation. All collection is local, auditable, and approval-aware where configured.
 
 ### Buttons And Actions
 
@@ -320,9 +301,7 @@ User observation flow:
 
 ### What Not To Use Add Data For
 
-Do not use it for unsupported binary parsing. Binary PDF, image, audio, and
-video parsing are not claimed unless a later DIFF adds them. Convert important
-content to text first.
+Do not assume every source type has identical depth. On `grok`, full-access Deep scan supports binary media collection + PDF text extraction + full-res viewing in the Media Library. Guided media panels are primarily metadata + reviewed-extracted-text paste (partial for automatic OCR/transcription). See the verified table in DIFF-249 and constants.ts for exact status per type. Convert untrusted binary to reviewed text when using guided paste paths if you want immediate evidence creation.
 
 ## Work
 
@@ -927,16 +906,14 @@ operator docs or scripts.
 - IGY6 is local-first and approval-gated for sensitive or system-changing
   workflows.
 
-## Current Limitations
+## Current Limitations (aligned to DIFF-249 verified table)
 
-- Manual upload is best for UTF-8 text.
-- Binary PDF, image, audio, and video parsing are not claimed unless a later
-  DIFF adds them.
-- Some source types are planned or metadata-only until their collector workflow
-  is completed.
-- Empty states are real empty states, not demo placeholders.
-- Advanced controls may require exact IDs and approvals.
-- Report, graph, prediction/recommendation, and improvement workflows are
-  implemented only to the extent supported by their current API-backed records
-  and later DIFFs; advanced graph reasoning, forecasting engines, and
-  autonomous self-improvement are not claimed.
+- Core manual UTF-8 text paths (manual_upload, conversation_history, user_observation) are the most mature implemented flows.
+- On the `grok` branch, web/public URL, browser export, authorized bypass, media binary, and system/WiFi collection are implemented via full-access + host bridge (crawl, full-res media artifacts, Media Library viewing, system snapshots). See constants.ts and gateway full-access code.
+- Guided "paste/preview" panels for media/browser/router are often partial (metadata + user-provided extracted text) or status entries; the "Deep scan" / full-access buttons deliver the deeper implemented paths.
+- Automatic OCR / vision / audio transcription in guided panels is partial; full extraction is available on some deep paths and via provided text + library.
+- Host bridge is a dependency for the most aggressive web tiers (max reach, advanced auto bypass, Playwright).
+- All collection remains local-only, scope-bounded where configured, approval-aware, and sensitive-by-default. No external exfil.
+- Empty states are real. Advanced requires exact IDs/approvals.
+- Report/graph/prediction/improvement are implemented to the extent of their current records + pipelines (see verified table). Advanced autonomous reasoning/forecasting not claimed.
+- Refer to the capability table in DIFF-249 for the current honest status of every item.

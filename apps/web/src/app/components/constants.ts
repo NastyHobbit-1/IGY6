@@ -410,7 +410,7 @@ export const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
     status: "implemented",
     defaultScope: "User-provided browser export or pasted page text only.",
     dryRun: "Preview in Web fetch paste panel or collection dry-run API.",
-    collect: "Paste collection via manual_upload; deep scan via full-access and host bridge.",
+    collect: "Paste via manual_upload or deep live collection (crawl, authorized bypass, media) via full-access + host bridge on grok branch.",
     sensitivity: "Treat as sensitive until reviewed.",
     cleanupAudit: "Collection runs, artifacts, and audit records apply; credentials excluded by policy."
   },
@@ -446,7 +446,7 @@ export const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
     status: "partial",
     defaultScope: "User-selected PDF/image/audio/video metadata and safe extracted text.",
     dryRun: "Media import panel reports type, size bound, and extraction posture.",
-    collect: "Reviewed extracted text via manual_upload; binary media via full-access deep scan.",
+    collect: "Reviewed text via manual_upload; binary media + full-res artifacts via full-access deep scan + Media Library on grok (PDF text extraction supported in artifacts for applicable paths).",
     sensitivity: "Media contents and labels are sensitive until reviewed.",
     cleanupAudit: "Artifact/document/evidence lineage preserved through normalization pipeline."
   }
