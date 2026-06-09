@@ -53,9 +53,22 @@ See [docs/WORKING.md](docs/WORKING.md) for full flow and verification.
 
 ## 🛠 Architecture
 
-[Diagram placeholder]
+```mermaid
+graph TD
+    A[User / Next.js Web UI] --> B[Rust API Gateway]
+    B --> C[PostgreSQL: Metadata, Audit, Evidence]
+    B --> D[Rust Worker Daemon]
+    D --> E[Qdrant: Vector Memory]
+    D --> F[Neo4j: Graph Relationships]
+    D --> G[MLflow / Phoenix: Observability]
+    subgraph Processing Pipeline
+    D --> H[Normalization → Chunking → Vectorization → Evidence Answer]
+    end
+    H --> E
+    H --> F
+```
 
-User → Next.js UI → Rust API Gateway → Worker Daemon → Postgres / Qdrant / Neo4j
+Text summary: User → Next.js UI → Rust API Gateway → Worker Daemon → (Postgres / Qdrant / Neo4j) with full processing pipeline.
 
 ## 🔧 Development & Contribution
 

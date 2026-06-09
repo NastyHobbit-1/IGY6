@@ -17,7 +17,9 @@
 
 **Governance Note:** One scoped sub-DIFF at a time. This master DIFF tracks progress. Start with #9 Documentation and #2 Multimodal planning.
 
-**Progress:** 0% complete (initial setup)
+**Progress:**
+- #9 Documentation: Mermaid architecture diagram added to README (from grok-enhancements side branch review)
+- Overall: 10% (initial setup + first documentation step complete)
 
 **Verification Plan:** Cargo test, UI build, smoke scripts after each sub-change.
 
