@@ -122,11 +122,11 @@ def web_used_routes() -> set[Route]:
             routes.add(Route(method_by_function[match.group("fn")], match.group("path")))
         for match in fetch_route.finditer(source):
             route_path = match.group("path")
-            method = "POST" if "method: \"POST\"" in source[match.end() : match.end() + 240] else "GET"
+            method = "POST" if "method: \"POST\"" in source[match.end() : match.end() + 100] else "GET"
             routes.add(Route(method, route_path))
         for match in local_fetch.finditer(source):
             route_path = match.group("path").removeprefix("/api")
-            method = "POST" if "method: \"POST\"" in source[match.end() : match.end() + 240] else "GET"
+            method = "POST" if "method: \"POST\"" in source[match.end() : match.end() + 100] else "GET"
             routes.add(Route(method, route_path))
     return routes
 

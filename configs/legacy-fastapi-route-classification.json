@@ -9,9 +9,9 @@
   },
   "route_parity": {
     "fastapi_routes": 91,
-    "rust_native_routes": 114,
+    "rust_native_routes": 118,
     "fastapi_routes_missing_from_rust": 0,
-    "web_used_routes": 65,
+    "web_used_routes": 79,
     "web_routes_requiring_fallback": 0
   },
   "fastapi_fallback_required": false,
