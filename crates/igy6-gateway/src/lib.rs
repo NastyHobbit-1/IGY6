@@ -211,6 +211,7 @@ pub struct GatewayRequest {
 pub struct GatewayResponse {
     pub status_code: u16,
     pub reason: String,
+    pub content_type: String,
     
     pub body: String,
     pub proxied_to_fallback: bool,
@@ -12346,30 +12347,6 @@ fn decode_base64_quad(quad: &[u8; 4], output: &mut Vec<u8>) -> Result<(), Gatewa
     }
 }
 
-    if text.trim().is_empty() {
-        return Err(GatewayError::Validation(
-            "Manual upload content is empty".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-    }
-    let normalized = mime_type
-        .split_once(';')
-        .map(|(value, _)| value)
-        .unwrap_or(mime_type)
-        .trim()
-        .to_ascii_lowercase();
-    if normalized.starts_with("text/") || normalized == "application/json" {
-        Ok(())
-    } else {
-        Err(GatewayError::Validation(
-            "Unsupported manual upload file type; this ingestion path supports UTF-8 text only"
-                .to_string(),
-        ))
-    }
-}
 
 fn validate_safe_filename(filename: &str) -> Result<(), GatewayError> {
     if filename.contains('/')
@@ -13469,13 +13446,6 @@ fn is_supported_collection_source_type(value: &str) -> bool {
     )
 }
 
-// Back-compat alias used in a few places during transition on grok branch.
-// On grok: manual text collection is still limited to the text-oriented sources even though
-// broader collection (including media) is allowed via full-access etc.
-        value,
-        "manual_upload" | "conversation_history" | "user_observation"
-    )
-}
 
 fn is_allowed_source_operation(value: &str) -> bool {
     matches!(
