@@ -2393,7 +2393,7 @@ fn auto_bypass_header_strategies() -> Vec<(String, Vec<(String, String)>)> {
 struct AutoBypassFetchResult {
     strategy: String,
     fetched_url: String,
-    content_type: String,
+    _content_type: String,
     is_pdf: bool,
     body: String,
     pdf_bytes: Option<Vec<u8>>,
@@ -2436,7 +2436,7 @@ fn fetch_url_with_headers(
         return Some(AutoBypassFetchResult {
             strategy: String::new(),
             fetched_url: url.to_string(),
-            content_type,
+            _content_type: content_type,
             is_pdf: true,
             body: String::new(),
             pdf_bytes: Some(pdf_bytes),
@@ -2449,7 +2449,7 @@ fn fetch_url_with_headers(
     Some(AutoBypassFetchResult {
         strategy: String::new(),
         fetched_url: url.to_string(),
-        content_type,
+        _content_type: content_type,
         is_pdf: false,
         body,
         pdf_bytes: None,
@@ -2664,7 +2664,7 @@ fn apply_host_bridge_artifacts(
             fetched_url: final_url
                 .unwrap_or(original_url)
                 .to_string(),
-            content_type: "text/html".to_string(),
+            _content_type: "text/html".to_string(),
             is_pdf: false,
             body,
             pdf_bytes: None,
@@ -15901,10 +15901,8 @@ mod tests {
             "artifact-2",
         );
         assert_eq!(conversation_payload["source_type"], "conversation_history");
-        assert!(is_manual_text_collection_source_type(
-            "conversation_history"
-        ));
-        assert!(is_manual_text_collection_source_type("manual_upload"));
+        assert!(is_supported_collection_source_type("conversation_history"));
+        assert!(is_supported_collection_source_type("manual_upload"));
         let observation_source = CollectionSource {
             id: "source-observation".to_string(),
             name: "Observation".to_string(),
@@ -15921,8 +15919,11 @@ mod tests {
             "artifact-3",
         );
         assert_eq!(observation_payload["source_type"], "user_observation");
-        assert!(is_manual_text_collection_source_type("user_observation"));
-        assert!(!is_manual_text_collection_source_type("local_project"));
+        assert!(is_supported_collection_source_type("user_observation"));
+        assert!(!matches!(
+            "local_project",
+            "manual_upload" | "conversation_history" | "user_observation"
+        ));
     }
 
     #[test]
