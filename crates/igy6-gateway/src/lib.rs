@@ -211,7 +211,7 @@ pub struct GatewayRequest {
 pub struct GatewayResponse {
     pub status_code: u16,
     pub reason: String,
-    pub content_type: String,
+    
     pub body: String,
     pub proxied_to_fallback: bool,
 }
@@ -12346,12 +12346,6 @@ fn decode_base64_quad(quad: &[u8; 4], output: &mut Vec<u8>) -> Result<(), Gatewa
     }
 }
 
-fn require_utf8_text_content(content: &[u8]) -> Result<(), GatewayError> {
-    let text = std::str::from_utf8(content).map_err(|_| {
-        GatewayError::Validation(
-            "Manual upload normalization currently supports UTF-8 text artifacts only".to_string(),
-        )
-    })?;
     if text.trim().is_empty() {
         return Err(GatewayError::Validation(
             "Manual upload content is empty".to_string(),
@@ -12360,12 +12354,6 @@ fn require_utf8_text_content(content: &[u8]) -> Result<(), GatewayError> {
     Ok(())
 }
 
-fn require_supported_text_mime_type(mime_type: Option<&str>) -> Result<(), GatewayError> {
-    let Some(mime_type) = mime_type else {
-        return Ok(());
-    };
-    if mime_type.trim().is_empty() {
-        return Ok(());
     }
     let normalized = mime_type
         .split_once(';')
@@ -13484,14 +13472,6 @@ fn is_supported_collection_source_type(value: &str) -> bool {
 // Back-compat alias used in a few places during transition on grok branch.
 // On grok: manual text collection is still limited to the text-oriented sources even though
 // broader collection (including media) is allowed via full-access etc.
-fn is_manual_text_collection_source_type(value: &str) -> bool {
-    is_text_oriented_source_type(value)
-}
-
-fn is_text_oriented_source_type(value: &str) -> bool {
-    // On grok branch: text-expecting types still get strict UTF-8 + text-mime validation.
-    // Media, signals, streams, and generic browser exports can be binary or structured.
-    matches!(
         value,
         "manual_upload" | "conversation_history" | "user_observation"
     )
