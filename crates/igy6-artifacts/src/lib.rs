@@ -41,7 +41,11 @@ pub fn detect_content_kind(data: &[u8], filename: Option<&str>) -> ContentKind {
             infer::MatcherType::Audio => "audio".to_string(),
             infer::MatcherType::Archive => "archive".to_string(),
             infer::MatcherType::Doc => {
-                if mime.contains("pdf") { "pdf".to_string() } else { "document".to_string() }
+                if mime.contains("pdf") {
+                    "pdf".to_string()
+                } else {
+                    "document".to_string()
+                }
             }
             _ => "binary".to_string(),
         };
@@ -72,7 +76,11 @@ pub fn detect_content_kind(data: &[u8], filename: Option<&str>) -> ContentKind {
     }
 
     meta["size"] = serde_json::json!(data.len());
-    ContentKind { mime, kind, metadata: meta }
+    ContentKind {
+        mime,
+        kind,
+        metadata: meta,
+    }
 }
 
 /// On grok branch: deep PDF (and text) extraction.
@@ -89,14 +97,21 @@ pub fn extract_text_if_possible(data: &[u8], kind: &ContentKind) -> Option<Strin
                 // Fallback to raw if extraction fails (still better than nothing for some PDFs)
                 if let Ok(s) = std::str::from_utf8(data) {
                     if s.len() > 20 {
-                        return Some(format!("[PDF raw fallback]\n{}", s.chars().take(4000).collect::<String>()));
+                        return Some(format!(
+                            "[PDF raw fallback]\n{}",
+                            s.chars().take(4000).collect::<String>()
+                        ));
                     }
                 }
             }
         }
     }
 
-    if kind.kind == "text" || kind.mime.starts_with("text/") || kind.mime == "application/json" || kind.mime == "text/html" {
+    if kind.kind == "text"
+        || kind.mime.starts_with("text/")
+        || kind.mime == "application/json"
+        || kind.mime == "text/html"
+    {
         return std::str::from_utf8(data).ok().map(|s| s.to_string());
     }
 

@@ -101,9 +101,7 @@ where
         CommandAction::RunFixedArgv(argv) => {
             run_fixed_argv(argv, &repo_root, DEFAULT_SCRIPT_TIMEOUT)
         }
-        CommandAction::StartWithBrowser => {
-            start_stack_and_open_browser(&repo_root)
-        }
+        CommandAction::StartWithBrowser => start_stack_and_open_browser(&repo_root),
     }
 }
 
@@ -470,10 +468,7 @@ fn detect_ollama_model() -> Option<String> {
     if !command_available("ollama") {
         return None;
     }
-    let output = Command::new("ollama")
-        .arg("list")
-        .output()
-        .ok()?;
+    let output = Command::new("ollama").arg("list").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -519,13 +514,16 @@ fn ensure_ollama_env(env_file: &Path) -> Result<(), CliError> {
     }
     let model = detect_ollama_model().unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
     let mut updated = set_env_kv(&content, "LLM_PROVIDER", "ollama");
-    updated = set_env_kv(&updated, "OLLAMA_BASE_URL", "http://host.docker.internal:11434");
-    updated = set_env_kv(&updated, "OLLAMA_MODEL", &model);
-    fs::write(env_file, updated)
-        .map_err(|e| CliError::ProcessLaunch(format!("Failed to write Ollama .env settings: {e}")))?;
-    println!(
-        "Ollama detected at 127.0.0.1:11434 — enabled local LLM (OLLAMA_MODEL={model})."
+    updated = set_env_kv(
+        &updated,
+        "OLLAMA_BASE_URL",
+        "http://host.docker.internal:11434",
     );
+    updated = set_env_kv(&updated, "OLLAMA_MODEL", &model);
+    fs::write(env_file, updated).map_err(|e| {
+        CliError::ProcessLaunch(format!("Failed to write Ollama .env settings: {e}"))
+    })?;
+    println!("Ollama detected at 127.0.0.1:11434 — enabled local LLM (OLLAMA_MODEL={model}).");
     println!("Task routing uses configs/local-llm-routing.json inside the repo.");
     Ok(())
 }
@@ -534,24 +532,26 @@ fn ensure_runtime_ports(repo_root: &Path, env_file: &Path) -> Result<RuntimePort
     let mut content = fs::read_to_string(env_file)
         .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env: {e}")))?;
 
-    let mut web_port = parse_port(read_env_value(&content, "WEB_PORT").as_deref(), DEFAULT_WEB_PORT);
-    let mut api_port = parse_port(read_env_value(&content, "APP_PORT").as_deref(), DEFAULT_API_PORT);
+    let mut web_port = parse_port(
+        read_env_value(&content, "WEB_PORT").as_deref(),
+        DEFAULT_WEB_PORT,
+    );
+    let mut api_port = parse_port(
+        read_env_value(&content, "APP_PORT").as_deref(),
+        DEFAULT_API_PORT,
+    );
 
     if !is_local_port_free(web_port) {
         let next = find_free_local_port(web_port.saturating_add(1))
             .ok_or_else(|| CliError::ProcessLaunch(format!("No free web port near {web_port}")))?;
-        println!(
-            "Port {web_port} is busy; switching WEB_PORT to {next} for IGY6 UI."
-        );
+        println!("Port {web_port} is busy; switching WEB_PORT to {next} for IGY6 UI.");
         web_port = next;
     }
 
     if !is_local_port_free(api_port) {
         let next = find_free_local_port(api_port.saturating_add(1))
             .ok_or_else(|| CliError::ProcessLaunch(format!("No free API port near {api_port}")))?;
-        println!(
-            "Port {api_port} is busy; switching APP_PORT to {next} for IGY6 API."
-        );
+        println!("Port {api_port} is busy; switching APP_PORT to {next} for IGY6 API.");
         api_port = next;
     }
 
@@ -673,10 +673,17 @@ fn ensure_db_schema(repo_root: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-fn fetch_http_body(host: &str, port: u16, path: &str, timeout: Duration) -> Result<String, CliError> {
+fn fetch_http_body(
+    host: &str,
+    port: u16,
+    path: &str,
+    timeout: Duration,
+) -> Result<String, CliError> {
     let addr = format!("{host}:{port}");
     let mut stream = TcpStream::connect_timeout(
-        &addr.parse().map_err(|_| CliError::ProcessLaunch(format!("bad address {addr}")))?,
+        &addr
+            .parse()
+            .map_err(|_| CliError::ProcessLaunch(format!("bad address {addr}")))?,
         timeout,
     )
     .map_err(|e| CliError::ProcessLaunch(format!("HTTP connect failed for {addr}: {e}")))?;
@@ -696,7 +703,10 @@ fn fetch_http_body(host: &str, port: u16, path: &str, timeout: Duration) -> Resu
 }
 
 fn wait_for_igy6_ui(web_url: &str, web_port: u16, timeout: Duration) -> Result<(), CliError> {
-    println!("Waiting for IGY6 UI at {web_url} (up to {}s)...", timeout.as_secs());
+    println!(
+        "Waiting for IGY6 UI at {web_url} (up to {}s)...",
+        timeout.as_secs()
+    );
     let start = Instant::now();
 
     while start.elapsed() < timeout {
@@ -731,19 +741,23 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
     if !env_file.exists() {
         let example = repo_root.join(".env.example");
         if example.exists() {
-            fs::copy(&example, &env_file)
-                .map_err(|e| CliError::ProcessLaunch(format!("Failed to copy .env.example: {}", e)))?;
-            
+            fs::copy(&example, &env_file).map_err(|e| {
+                CliError::ProcessLaunch(format!("Failed to copy .env.example: {}", e))
+            })?;
+
             // Set grok-friendly defaults
             let data_dir = dirs::home_dir()
                 .map(|h| h.join("IGY6_Data").to_string_lossy().to_string())
                 .unwrap_or_else(|| "./IGY6_Data".to_string());
-            
+
             // Simple in-place edits for key vars
             let mut content = fs::read_to_string(&env_file)
                 .map_err(|e| CliError::ProcessLaunch(format!("Failed to read .env: {}", e)))?;
-            
-            content = content.replace("IGY6_DATA_ROOT=../IGY6_Data", &format!("IGY6_DATA_ROOT={}", data_dir));
+
+            content = content.replace(
+                "IGY6_DATA_ROOT=../IGY6_Data",
+                &format!("IGY6_DATA_ROOT={}", data_dir),
+            );
             if !content.contains("SINGLE_USER_MODE=") {
                 content.push_str("\nSINGLE_USER_MODE=true\n");
             } else {
@@ -759,11 +773,14 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
                     data_dir
                 ));
             }
-            
+
             fs::write(&env_file, content)
                 .map_err(|e| CliError::ProcessLaunch(format!("Failed to write .env: {}", e)))?;
-            
-            println!("Created .env with grok defaults (password: ThatDog123, data dir: {})", data_dir);
+
+            println!(
+                "Created .env with grok defaults (password: ThatDog123, data dir: {})",
+                data_dir
+            );
         }
     }
 
@@ -791,7 +808,9 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
         .map_err(|e| CliError::ProcessLaunch(format!("docker compose failed: {}", e)))?;
 
     if !up_status.success() {
-        return Err(CliError::ProcessLaunch("docker compose up -d failed (is Docker running?)".to_string()));
+        return Err(CliError::ProcessLaunch(
+            "docker compose up -d failed (is Docker running?)".to_string(),
+        ));
     }
 
     ensure_db_schema(repo_root)?;

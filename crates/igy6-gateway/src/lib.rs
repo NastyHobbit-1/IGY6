@@ -1,26 +1,26 @@
 use std::collections::{HashMap, HashSet};
-use std::process::Command;  // for system snapshots (ps, nmcli, ip, etc.) on grok full-access mode
-// On grok branch full power (user override: any and everything accessible, stored only locally, no exfil)
-use walkdir::WalkDir;
-use ureq;  // for web scraping / URL collection
+use std::process::Command; // for system snapshots (ps, nmcli, ip, etc.) on grok full-access mode
+                           // On grok branch full power (user override: any and everything accessible, stored only locally, no exfil)
+use base64::Engine; // for content base64 in media library (grok)
 use igy6_artifacts::detect_content_kind;
-use base64::Engine;  // for content base64 in media library (grok)
-use std::fs;
-use std::path::PathBuf;
-use totp_rs::{Algorithm, Secret, TOTP};  // for optional authenticator TOTP (grok, off by default)
 use std::env;
 use std::fmt;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use totp_rs::{Algorithm, Secret, TOTP}; // for optional authenticator TOTP (grok, off by default)
+use ureq; // for web scraping / URL collection
+use walkdir::WalkDir;
 
 use igy6_agent_api::{
     action_definition, classify_agent_intent, understand_user_request, AgentActionDefinition,
     AgentIntentRequest, ACTION_REGISTRY,
 };
-use igy6_artifacts::{ArtifactStore, StoredArtifact, extract_text_if_possible};  // grok: now does real deep PDF (and other media) text extraction
+use igy6_artifacts::{extract_text_if_possible, ArtifactStore, StoredArtifact}; // grok: now does real deep PDF (and other media) text extraction
 use igy6_evidence_answer::{
     answer_with_optional_llm, answer_with_optional_llm_for_task,
     deterministic_fallback_for_llm_config_error,
@@ -30,7 +30,8 @@ use igy6_llm::{load_local_llm_routing_config, LlmConfig, LlmProvider, StdHttpTra
 use igy6_read_only_api::summarize_manifest;
 use igy6_retrieval_preview::{
     build_hydrated_chunk_search_result, build_retrieval_preview, HydratedChunkSearchHit,
-    RetrievalChunk, RetrievalDocument, RetrievalEvidenceItem, RetrievalRawArtifact, RetrievalSource,
+    RetrievalChunk, RetrievalDocument, RetrievalEvidenceItem, RetrievalRawArtifact,
+    RetrievalSource,
 };
 use igy6_vector_memory::{
     collection_status_request, ensure_collection_request, plan_chunk_vector_point,
@@ -212,7 +213,7 @@ pub struct GatewayResponse {
     pub status_code: u16,
     pub reason: String,
     pub content_type: String,
-    
+
     pub body: String,
     pub proxied_to_fallback: bool,
 }
@@ -675,20 +676,48 @@ fn artifact_content_path(path: &str) -> Option<String> {
 fn artifact_content_response(id: &str, database_url: Option<&str>) -> GatewayResponse {
     let database_url = match database_url.filter(|v| !v.trim().is_empty()) {
         Some(u) => u,
-        None => return json_response(503, "Service Unavailable", "{\"detail\":\"DATABASE_URL required\"}".to_string(), false),
+        None => {
+            return json_response(
+                503,
+                "Service Unavailable",
+                "{\"detail\":\"DATABASE_URL required\"}".to_string(),
+                false,
+            )
+        }
     };
     let postgres_url = postgres_client_url(database_url);
     let mut client = match Client::connect(&postgres_url, NoTls) {
         Ok(c) => c,
-        Err(e) => return json_response(502, "Bad Gateway", format!("{{\"detail\":\"DB connect error: {}\"}}", e), false),
+        Err(e) => {
+            return json_response(
+                502,
+                "Bad Gateway",
+                format!("{{\"detail\":\"DB connect error: {}\"}}", e),
+                false,
+            )
+        }
     };
     let row = match client.query_opt(
         "SELECT content_hash, mime_type, size_bytes FROM raw_artifacts WHERE id = $1 LIMIT 1",
         &[&id],
     ) {
         Ok(Some(r)) => r,
-        Ok(None) => return json_response(404, "Not Found", format!("{{\"detail\":\"Artifact {} not found\"}}", id), false),
-        Err(e) => return json_response(502, "Bad Gateway", format!("{{\"detail\":\"DB query error: {}\"}}", e), false),
+        Ok(None) => {
+            return json_response(
+                404,
+                "Not Found",
+                format!("{{\"detail\":\"Artifact {} not found\"}}", id),
+                false,
+            )
+        }
+        Err(e) => {
+            return json_response(
+                502,
+                "Bad Gateway",
+                format!("{{\"detail\":\"DB query error: {}\"}}", e),
+                false,
+            )
+        }
     };
     let content_hash: String = row.get(0);
     let mime_type: Option<String> = row.get(1);
@@ -696,11 +725,25 @@ fn artifact_content_response(id: &str, database_url: Option<&str>) -> GatewayRes
     let mime = mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
     let store = match ArtifactStore::new(artifact_data_root()) {
         Ok(s) => s,
-        Err(e) => return json_response(500, "Internal Server Error", format!("{{\"detail\":\"Storage error: {}\"}}", e), false),
+        Err(e) => {
+            return json_response(
+                500,
+                "Internal Server Error",
+                format!("{{\"detail\":\"Storage error: {}\"}}", e),
+                false,
+            )
+        }
     };
     let bytes = match store.read_by_hash(&content_hash) {
         Ok(b) => b,
-        Err(e) => return json_response(500, "Internal Server Error", format!("{{\"detail\":\"Read artifact error: {}\"}}", e), false),
+        Err(e) => {
+            return json_response(
+                500,
+                "Internal Server Error",
+                format!("{{\"detail\":\"Read artifact error: {}\"}}", e),
+                false,
+            )
+        }
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let body = serde_json::json!({
@@ -1031,7 +1074,10 @@ fn retrieval_preview_response(body: &str, database_url: Option<&str>) -> Gateway
 }
 
 fn evidence_answer_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
-    if database_url.filter(|value| !value.trim().is_empty()).is_some() {
+    if database_url
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+    {
         action_route_response(live_evidence_answer(body, database_url))
     } else {
         json_response(200, "OK", evidence_answer_json(body), false)
@@ -1552,9 +1598,10 @@ fn create_manual_upload_collection(
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
     if !is_supported_collection_source_type(&source.source_type) {
-        return Err(GatewayError::Conflict(
-            format!("Source type {} is not supported for collection on this build", source.source_type),
-        ));
+        return Err(GatewayError::Conflict(format!(
+            "Source type {} is not supported for collection on this build",
+            source.source_type
+        )));
     }
     let permission =
         load_permission_for_collection(&mut transaction, &payload.source_permission_id)?;
@@ -1732,9 +1779,10 @@ fn ingest_manual_upload_collection(
         return Err(GatewayError::Conflict("Source is disabled".to_string()));
     }
     if !is_supported_collection_source_type(&source.source_type) {
-        return Err(GatewayError::Conflict(
-            format!("Source type {} is not supported for collection on this build", source.source_type),
-        ));
+        return Err(GatewayError::Conflict(format!(
+            "Source type {} is not supported for collection on this build",
+            source.source_type
+        )));
     }
 
     // grok branch: synthesize placeholder text_content for non-text or failed-utf8 media/browser/etc sources
@@ -2084,7 +2132,7 @@ fn create_local_project_collection(
 //  no info should be sent out" (except the collection fetches themselves).
 // No "no scraping", no artificial bounds, no "user-provided only".
 // Everything stays in the local IGY6 instance (artifacts + evidence + graph).
-// 
+//
 // UI-ONLY: All control via web UI forms (no cmd line required after initial launch).
 // DEEPEST EXTRACTION: Recursive crawling, full asset download (original res images/videos/PDFs),
 // PDF text + embedded, image exif-stripped full res, metadata for audio/video, aggressive
@@ -2099,10 +2147,32 @@ fn create_local_project_collection(
 // Safety blacklists - avoid anything that could get user in trouble with authorities.
 // Social media and Patreon-style are explicitly ok (personal, non-classified).
 const FORBIDDEN_DOMAINS: &[&str] = &[
-    ".gov", ".mil", "army", "navy", "airforce", "marines", "spaceforce",
-    "pentagon", "defense", "fbi", "cia", "nsa", "whitehouse", "dhs", "justice",
-    "homeland", "military", "classified", "topsecret", "intel", "secret",
-    "gov.au", "gob.mx", "gc.ca", "gov.uk", "bund.de", // common gov TLDs
+    ".gov",
+    ".mil",
+    "army",
+    "navy",
+    "airforce",
+    "marines",
+    "spaceforce",
+    "pentagon",
+    "defense",
+    "fbi",
+    "cia",
+    "nsa",
+    "whitehouse",
+    "dhs",
+    "justice",
+    "homeland",
+    "military",
+    "classified",
+    "topsecret",
+    "intel",
+    "secret",
+    "gov.au",
+    "gob.mx",
+    "gc.ca",
+    "gov.uk",
+    "bund.de", // common gov TLDs
 ];
 
 // Common browser UAs for rotation (non-traceable, looks like normal user).
@@ -2118,7 +2188,8 @@ fn random_ua() -> &'static str {
     let idx = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_nanos() % USER_AGENTS.len() as u128) as usize;
+        .as_nanos()
+        % USER_AGENTS.len() as u128) as usize;
     USER_AGENTS[idx]
 }
 
@@ -2131,10 +2202,12 @@ pub(crate) fn jitter_delay() {
     // Human-like jitter to avoid bot detection / rate limits, still deep but polite.
     use std::thread;
     use std::time::Duration;
-    let ms = 300 + (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() % 900) as u64; // 300-1200ms
+    let ms = 300
+        + (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            % 900) as u64; // 300-1200ms
     thread::sleep(Duration::from_millis(ms));
 }
 
@@ -2142,9 +2215,16 @@ pub(crate) fn jitter_delay() {
 pub(crate) fn anon_headers() -> Vec<(String, String)> {
     vec![
         ("User-Agent".to_string(), random_ua().to_string()),
-        ("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".to_string()),
+        (
+            "Accept".to_string(),
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                .to_string(),
+        ),
         ("Accept-Language".to_string(), "en-US,en;q=0.5".to_string()),
-        ("Accept-Encoding".to_string(), "gzip, deflate, br".to_string()),
+        (
+            "Accept-Encoding".to_string(),
+            "gzip, deflate, br".to_string(),
+        ),
         ("DNT".to_string(), "1".to_string()),
         ("Connection".to_string(), "keep-alive".to_string()),
         ("Upgrade-Insecure-Requests".to_string(), "1".to_string()),
@@ -2321,10 +2401,7 @@ fn auto_bypass_header_strategies() -> Vec<(String, Vec<(String, String)>)> {
         "gzip, deflate, br".to_string(),
     );
     let connection = ("Connection".to_string(), "keep-alive".to_string());
-    let upgrade = (
-        "Upgrade-Insecure-Requests".to_string(),
-        "1".to_string(),
-    );
+    let upgrade = ("Upgrade-Insecure-Requests".to_string(), "1".to_string());
 
     let mut google_referer = anon_headers();
     google_referer.push(("Referer".to_string(), "https://www.google.com/".to_string()));
@@ -2369,7 +2446,10 @@ fn auto_bypass_header_strategies() -> Vec<(String, Vec<(String, String)>)> {
         (
             "facebook_crawler".to_string(),
             vec![
-                ("User-Agent".to_string(), "facebookexternalhit/1.1".to_string()),
+                (
+                    "User-Agent".to_string(),
+                    "facebookexternalhit/1.1".to_string(),
+                ),
                 accept.clone(),
                 accept_lang.clone(),
                 accept_enc.clone(),
@@ -2428,7 +2508,8 @@ fn fetch_url_with_headers(
         let mut pdf_bytes = Vec::new();
         {
             let mut reader = response.into_reader();
-            if std::io::Read::read_to_end(&mut reader, &mut pdf_bytes).is_err() || pdf_bytes.is_empty()
+            if std::io::Read::read_to_end(&mut reader, &mut pdf_bytes).is_err()
+                || pdf_bytes.is_empty()
             {
                 return None;
             }
@@ -2473,7 +2554,11 @@ fn lookup_archive_snapshot(agent: &ureq::Agent, original_url: &str) -> Option<St
 
 fn auto_bypass_candidate_score(result: &AutoBypassFetchResult) -> i64 {
     if result.is_pdf {
-        result.pdf_bytes.as_ref().map(|b| b.len() as i64).unwrap_or(0)
+        result
+            .pdf_bytes
+            .as_ref()
+            .map(|b| b.len() as i64)
+            .unwrap_or(0)
     } else {
         auto_bypass_content_score(&result.body)
     }
@@ -2481,7 +2566,10 @@ fn auto_bypass_candidate_score(result: &AutoBypassFetchResult) -> i64 {
 
 fn auto_bypass_http_result_usable(result: &AutoBypassFetchResult) -> bool {
     if result.is_pdf {
-        result.pdf_bytes.as_ref().is_some_and(|bytes| bytes.len() >= 400)
+        result
+            .pdf_bytes
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() >= 400)
     } else {
         result.body.len() >= 400 && login_wall_score(&result.body) == 0
     }
@@ -2658,12 +2746,8 @@ fn apply_host_bridge_artifacts(
 ) {
     if let Some(body) = merge_visible_html(html, visible_text) {
         let html_result = AutoBypassFetchResult {
-            strategy: strategy
-                .clone()
-                .unwrap_or_else(|| format!("{prefix}_html")),
-            fetched_url: final_url
-                .unwrap_or(original_url)
-                .to_string(),
+            strategy: strategy.clone().unwrap_or_else(|| format!("{prefix}_html")),
+            fetched_url: final_url.unwrap_or(original_url).to_string(),
             _content_type: "text/html".to_string(),
             is_pdf: false,
             body,
@@ -2839,10 +2923,7 @@ fn signal_max_reach_ensure_request() {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(
-        &path,
-        format!("requested_at={:?}", SystemTime::now()),
-    );
+    let _ = fs::write(&path, format!("requested_at={:?}", SystemTime::now()));
 }
 
 fn wait_for_host_bridge_ready(max_wait_secs: u64) -> Result<(), GatewayError> {
@@ -2941,10 +3022,9 @@ fn is_web_only_scope(scope: Option<&serde_json::Value>) -> bool {
         return false;
     };
     !items.is_empty()
-        && items.iter().all(|item| {
-            item.as_str()
-                .is_some_and(scope_entry_is_public_url)
-        })
+        && items
+            .iter()
+            .all(|item| item.as_str().is_some_and(scope_entry_is_public_url))
 }
 
 fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
@@ -2961,7 +3041,8 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         object["auto_bypass"] = serde_json::json!(true);
         object["media_focus"] = serde_json::json!(true);
         if !bypass_fetch_has_credentials(&object) {
-            if let Some((cookie, authorization)) = bypass_intel::load_patreon_session_credentials() {
+            if let Some((cookie, authorization)) = bypass_intel::load_patreon_session_credentials()
+            {
                 object["bypass_auth"] = serde_json::json!(true);
                 object["cookie"] = serde_json::json!(cookie);
                 if let Some(authorization) = authorization {
@@ -2985,41 +3066,64 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let web_only = object
         .get("web_only")
         .and_then(|value| value.as_bool())
-        .unwrap_or_else(|| bypass_auth || auto_bypass || max_reach || is_web_only_scope(object.get("scope")));
+        .unwrap_or_else(|| {
+            bypass_auth || auto_bypass || max_reach || is_web_only_scope(object.get("scope"))
+        });
     let cfg = load_user_config();
     // Public URL-only fetch from the local UI does not require program password/TOTP.
     if !web_only {
-        let provided_pass = object.get("password").and_then(|v| v.as_str()).unwrap_or("");
+        let provided_pass = object
+            .get("password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if provided_pass != cfg.password {
             return Err(GatewayError::Forbidden("Program is password protected. Provide correct current password in payload.password.".to_string()));
         }
         if cfg.totp_enabled {
-            let totp_code = object.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+            let totp_code = object
+                .get("totp_code")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
-                return Err(GatewayError::Forbidden("TOTP code required and incorrect (authenticator is linked and enabled).".to_string()));
+                return Err(GatewayError::Forbidden(
+                    "TOTP code required and incorrect (authenticator is linked and enabled)."
+                        .to_string(),
+                ));
             }
         }
     }
 
-    let max_depth = object.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
-    let safe_mode = object.get("safe_mode").and_then(|v| v.as_bool()).unwrap_or(true);
+    let max_depth = object
+        .get("max_depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3) as usize;
+    let safe_mode = object
+        .get("safe_mode")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let media_focus = object
         .get("media_focus")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
         || paid_escalation;
-    let _anonymity = object.get("anonymity").and_then(|v| v.as_str()).unwrap_or("high");
-    let requested_by = object.get("requested_by_actor_id")
+    let _anonymity = object
+        .get("anonymity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("high");
+    let requested_by = object
+        .get("requested_by_actor_id")
         .and_then(|v| v.as_str())
         .unwrap_or("local-owner")
         .to_string();
 
-    let database_url = database_url.filter(|v| !v.trim().is_empty())
+    let database_url = database_url
+        .filter(|v| !v.trim().is_empty())
         .ok_or(GatewayError::MissingDatabaseUrl)?;
     let postgres_url = postgres_client_url(database_url);
-    let mut client = Client::connect(&postgres_url, NoTls)
-        .map_err(|e| GatewayError::Database(e.to_string()))?;
-    let mut tx = client.transaction()
+    let mut client =
+        Client::connect(&postgres_url, NoTls).map_err(|e| GatewayError::Database(e.to_string()))?;
+    let mut tx = client
+        .transaction()
         .map_err(|e| GatewayError::Database(e.to_string()))?;
 
     // Ensure a full-access source exists for tying into real pipeline (grok branch)
@@ -3078,7 +3182,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         "/proc".to_string(),
         "/sys".to_string(),
         "/etc".to_string(),
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().to_string(),
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy()
+            .to_string(),
     ];
 
     let mut local_files = 0usize;
@@ -3087,111 +3194,132 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         summary["system_snapshots"] = serde_json::json!(0);
     }
     if !web_only {
-    for root in &roots {
-        if !std::path::Path::new(root).exists() { continue; }
-        for entry in WalkDir::new(root).follow_links(false).max_depth(8) {  // depth cap to stay reasonable
-            let entry = match entry { Ok(e) => e, Err(_) => continue };
-            if !entry.file_type().is_file() { continue; }
-            let path = entry.path();
-            if let Ok(data) = std::fs::read(path) {
-                if data.len() > 50 * 1024 * 1024 { continue; } // 50MB cap per file to not explode
-                let kind = detect_content_kind(&data, path.to_str());
-                let store = ArtifactStore::new(artifact_data_root())
-                    .map_err(|e| GatewayError::Conflict(e.to_string()))?;
-                if let Ok(stored) = store.write_bytes(&data) {
-                    let art_id = generated_record_id("artifact");
-                    let meta = serde_json::json!({
-                        "full_access": true,
-                        "source_path": path.to_string_lossy(),
-                        "mime": kind.mime,
-                        "kind": kind.kind,
-                        "detected": kind.metadata
-                    });
-                    // Record artifact (simplified direct insert for speed on grok)
-                    let _ = tx.execute(
+        for root in &roots {
+            if !std::path::Path::new(root).exists() {
+                continue;
+            }
+            for entry in WalkDir::new(root).follow_links(false).max_depth(8) {
+                // depth cap to stay reasonable
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let path = entry.path();
+                if let Ok(data) = std::fs::read(path) {
+                    if data.len() > 50 * 1024 * 1024 {
+                        continue;
+                    } // 50MB cap per file to not explode
+                    let kind = detect_content_kind(&data, path.to_str());
+                    let store = ArtifactStore::new(artifact_data_root())
+                        .map_err(|e| GatewayError::Conflict(e.to_string()))?;
+                    if let Ok(stored) = store.write_bytes(&data) {
+                        let art_id = generated_record_id("artifact");
+                        let meta = serde_json::json!({
+                            "full_access": true,
+                            "source_path": path.to_string_lossy(),
+                            "mime": kind.mime,
+                            "kind": kind.kind,
+                            "detected": kind.metadata
+                        });
+                        // Record artifact (simplified direct insert for speed on grok)
+                        let _ = tx.execute(
                         "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
                         &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta]
                     );
-                    collected_artifacts.push(art_id.clone());
+                        collected_artifacts.push(art_id.clone());
 
-                    // Create evidence stub for everything
-                    let ev_id = generated_record_id("evidence");
-                    // grok branch: DEEP PDF (and similar media) collection - use real extraction instead of placeholder
-                    let extracted_text = extract_text_if_possible(&data, &kind);
-                    let text_for_doc = extracted_text.clone().unwrap_or_else(|| {
-                        if kind.kind == "text" {
-                            String::from_utf8_lossy(&data).chars().take(8000).collect()
-                        } else {
-                            format!("[binary {} - {} bytes - full content stored as artifact {}]", kind.mime, data.len(), art_id)
-                        }
-                    });
-                    let _ = tx.execute(
+                        // Create evidence stub for everything
+                        let ev_id = generated_record_id("evidence");
+                        // grok branch: DEEP PDF (and similar media) collection - use real extraction instead of placeholder
+                        let extracted_text = extract_text_if_possible(&data, &kind);
+                        let text_for_doc = extracted_text.clone().unwrap_or_else(|| {
+                            if kind.kind == "text" {
+                                String::from_utf8_lossy(&data).chars().take(8000).collect()
+                            } else {
+                                format!(
+                                    "[binary {} - {} bytes - full content stored as artifact {}]",
+                                    kind.mime,
+                                    data.len(),
+                                    art_id
+                                )
+                            }
+                        });
+                        let _ = tx.execute(
                         "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
                         &[&ev_id, &art_id, &path.file_name().unwrap_or_default().to_string_lossy().to_string(), &kind.kind, &text_for_doc, &meta]
                     );
-                    evidence_created.push(ev_id.clone());
+                        evidence_created.push(ev_id.clone());
 
-                    // Use the *real* extracted text (PDF text, image metadata, etc.) for aggressive mining
-                    let text_for_mining = extracted_text.as_deref().unwrap_or(&text_for_doc);
-                    if let Some(claim) = simple_mine_claim_from_text(text_for_mining, &path.to_string_lossy()) {
-                        graph_candidates.push(serde_json::json!({
-                            "type": "claim",
-                            "text": claim,
-                            "source_artifact": art_id,
-                            "from_full_access": true,
-                            "extracted": extracted_text.is_some()  // marks that this came from deep extraction (PDF etc.)
-                        }));
+                        // Use the *real* extracted text (PDF text, image metadata, etc.) for aggressive mining
+                        let text_for_mining = extracted_text.as_deref().unwrap_or(&text_for_doc);
+                        if let Some(claim) =
+                            simple_mine_claim_from_text(text_for_mining, &path.to_string_lossy())
+                        {
+                            graph_candidates.push(serde_json::json!({
+                                "type": "claim",
+                                "text": claim,
+                                "source_artifact": art_id,
+                                "from_full_access": true,
+                                "extracted": extracted_text.is_some()  // marks that this came from deep extraction (PDF etc.)
+                            }));
+                        }
+                        local_files += 1;
                     }
-                    local_files += 1;
                 }
+                if local_files > 500 {
+                    break;
+                } // safety valve
             }
-            if local_files > 500 { break; } // safety valve
+            if local_files > 500 {
+                break;
+            }
         }
-        if local_files > 500 { break; }
-    }
-    summary["local_files_ingested"] = serde_json::json!(local_files);
+        summary["local_files_ingested"] = serde_json::json!(local_files);
 
-    // 2. System snapshot (ps, env, network, wifi - anything we can exec)
-    let system_captures = vec![
-        ("ps_aux", "ps", vec!["aux"]),
-        ("env", "env", vec![]),
-        ("ip_addr", "ip", vec!["-o", "addr"]),
-        ("nmcli_wifi", "nmcli", vec!["-t", "device", "wifi", "list"]),
-        ("iwlist", "iwlist", vec!["scan"]),
-        ("mounts", "mount", vec![]),
-    ];
-    let mut sys_count = 0;
-    for (name, cmd, args) in system_captures {
-        if let Ok(output) = Command::new(cmd).args(&args).output() {
-            let data = output.stdout;
-            if !data.is_empty() {
-                let store = ArtifactStore::new(artifact_data_root()).unwrap();
-                if let Ok(stored) = store.write_bytes(&data) {
-                    let art_id = generated_record_id("artifact");
-                    let _ = tx.execute(
+        // 2. System snapshot (ps, env, network, wifi - anything we can exec)
+        let system_captures = vec![
+            ("ps_aux", "ps", vec!["aux"]),
+            ("env", "env", vec![]),
+            ("ip_addr", "ip", vec!["-o", "addr"]),
+            ("nmcli_wifi", "nmcli", vec!["-t", "device", "wifi", "list"]),
+            ("iwlist", "iwlist", vec!["scan"]),
+            ("mounts", "mount", vec![]),
+        ];
+        let mut sys_count = 0;
+        for (name, cmd, args) in system_captures {
+            if let Ok(output) = Command::new(cmd).args(&args).output() {
+                let data = output.stdout;
+                if !data.is_empty() {
+                    let store = ArtifactStore::new(artifact_data_root()).unwrap();
+                    if let Ok(stored) = store.write_bytes(&data) {
+                        let art_id = generated_record_id("artifact");
+                        let _ = tx.execute(
                         "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
                         &[&art_id, &stored.content_hash, &stored.storage_path, &"text/plain".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"full_access_system": name})]
                     );
-                    collected_artifacts.push(art_id.clone());
-                    sys_count += 1;
+                        collected_artifacts.push(art_id.clone());
+                        sys_count += 1;
 
-                    // Mine relationships from command output
-                    let text = String::from_utf8_lossy(&data);
-                    for line in text.lines().take(50) {
-                        if line.len() > 10 {
-                            graph_candidates.push(serde_json::json!({
-                                "type": "system_fact",
-                                "text": line.to_string(),
-                                "source": name,
-                                "from_full_access": true
-                            }));
+                        // Mine relationships from command output
+                        let text = String::from_utf8_lossy(&data);
+                        for line in text.lines().take(50) {
+                            if line.len() > 10 {
+                                graph_candidates.push(serde_json::json!({
+                                    "type": "system_fact",
+                                    "text": line.to_string(),
+                                    "source": name,
+                                    "from_full_access": true
+                                }));
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    summary["system_snapshots"] = serde_json::json!(sys_count);
+        summary["system_snapshots"] = serde_json::json!(sys_count);
     }
 
     // 3. Web scraping - DEEPEST + SAFEST on grok (UI controlled, everything from browser, no cmd line).
@@ -3207,7 +3335,8 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let mut auto_bypass_wins = 0usize;
     let mut auto_bypass_strategies: Vec<String> = vec![];
     let mut crawled_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut url_queue: std::collections::VecDeque<(String, usize)> = std::collections::VecDeque::new();
+    let mut url_queue: std::collections::VecDeque<(String, usize)> =
+        std::collections::VecDeque::new();
 
     if let Some(scope) = object.get("scope").and_then(|s| s.as_array()) {
         for item in scope {
@@ -3226,9 +3355,13 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let agent = anon_agent();
     let fetch_headers = web_fetch_headers(&object);
     while let Some((current_url, depth)) = url_queue.pop_front() {
-        if crawled_urls.contains(&current_url) || depth > max_depth { continue; }
+        if crawled_urls.contains(&current_url) || depth > max_depth {
+            continue;
+        }
         crawled_urls.insert(current_url.clone());
-        if is_forbidden(&current_url) { continue; }
+        if is_forbidden(&current_url) {
+            continue;
+        }
         jitter_delay();
 
         let mut prefetched_pdf: Option<Vec<u8>> = None;
@@ -3287,12 +3420,15 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         "depth": depth
                     });
                     let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta] );
-                    collected_artifacts.push(art_id.clone()); web_count += 1;
+                    collected_artifacts.push(art_id.clone());
+                    web_count += 1;
                     let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
                     let ev_id = generated_record_id("evidence");
                     let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &resolved_fetch_url, &"pdf".to_string(), &extracted, &meta] );
                     evidence_created.push(ev_id.clone());
-                    if let Some(claim) = simple_mine_claim_from_text(&extracted, &resolved_fetch_url) {
+                    if let Some(claim) =
+                        simple_mine_claim_from_text(&extracted, &resolved_fetch_url)
+                    {
                         graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
                     }
                     handled_fetch = true;
@@ -3313,12 +3449,17 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     "depth": depth
                 });
                 let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &page_meta] );
-                collected_artifacts.push(art_id.clone()); web_count += 1;
-                for cap in extract_simple_links_and_claims(&body, &resolved_fetch_url) { graph_candidates.push(cap); }
+                collected_artifacts.push(art_id.clone());
+                web_count += 1;
+                for cap in extract_simple_links_and_claims(&body, &resolved_fetch_url) {
+                    graph_candidates.push(cap);
+                }
 
                 let asset_urls = extract_img_and_video_srcs(&body, &resolved_fetch_url);
                 for asset_url in asset_urls {
-                    if is_forbidden(&asset_url) { continue; }
+                    if is_forbidden(&asset_url) {
+                        continue;
+                    }
                     jitter_delay();
                     let mut asset_req = agent.get(&asset_url);
                     for (k, v) in &fetch_headers {
@@ -3326,28 +3467,47 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     }
                     if let Ok(aresp) = asset_req.call() {
                         let mut abytes = Vec::new();
-                        { let mut rdr = aresp.into_reader(); let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes); }
+                        {
+                            let mut rdr = aresp.into_reader();
+                            let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes);
+                        }
                         if !abytes.is_empty() {
                             let mut final_bytes = abytes;
                             let kind = detect_content_kind(&final_bytes, None);
                             if kind.kind == "image" {
                                 if let Ok(img) = image::load_from_memory(&final_bytes) {
                                     let mut buf = Vec::new();
-                                    let _ = img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png);
+                                    let _ = img.write_to(
+                                        &mut std::io::Cursor::new(&mut buf),
+                                        image::ImageFormat::Png,
+                                    );
                                     final_bytes = buf;
                                 }
                             }
-                            if kind.kind == "image" || kind.kind == "video" || kind.kind == "pdf" || (media_focus && kind.kind != "text") {
+                            if kind.kind == "image"
+                                || kind.kind == "video"
+                                || kind.kind == "pdf"
+                                || (media_focus && kind.kind != "text")
+                            {
                                 if let Ok(stored) = store.write_bytes(&final_bytes) {
                                     let mart_id = generated_record_id("artifact");
                                     let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": resolved_fetch_url, "mime": kind.mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
                                     let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&mart_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &mmeta] );
-                                    collected_artifacts.push(mart_id.clone()); media_from_web += 1;
-                                    let stub = extract_text_if_possible(&final_bytes, &kind).unwrap_or_else(|| format!("[Deep media from {} via {}]", asset_url, resolved_fetch_url));
+                                    collected_artifacts.push(mart_id.clone());
+                                    media_from_web += 1;
+                                    let stub = extract_text_if_possible(&final_bytes, &kind)
+                                        .unwrap_or_else(|| {
+                                            format!(
+                                                "[Deep media from {} via {}]",
+                                                asset_url, resolved_fetch_url
+                                            )
+                                        });
                                     let ev_id = generated_record_id("evidence");
                                     let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &mart_id, &asset_url, &kind.kind, &stub, &mmeta] );
                                     evidence_created.push(ev_id.clone());
-                                    if let Some(claim) = simple_mine_claim_from_text(&stub, &asset_url) {
+                                    if let Some(claim) =
+                                        simple_mine_claim_from_text(&stub, &asset_url)
+                                    {
                                         graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
                                     }
                                 }
@@ -3359,7 +3519,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                 if depth < max_depth {
                     for link in extract_simple_links_and_claims(&body, &resolved_fetch_url) {
                         if let Some(to) = link.get("to").and_then(|v| v.as_str()) {
-                            if (to.starts_with("http://") || to.starts_with("https://")) && !is_forbidden(to) && !crawled_urls.contains(to) {
+                            if (to.starts_with("http://") || to.starts_with("https://"))
+                                && !is_forbidden(to)
+                                && !crawled_urls.contains(to)
+                            {
                                 url_queue.push_back((to.to_string(), depth + 1));
                             }
                         }
@@ -3380,12 +3543,16 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
 
         if let Ok(resp) = req.call() {
             let content_type = resp.header("Content-Type").unwrap_or("").to_lowercase();
-            let is_pdf = current_url.to_lowercase().ends_with(".pdf") || content_type.contains("pdf");
+            let is_pdf =
+                current_url.to_lowercase().ends_with(".pdf") || content_type.contains("pdf");
 
             if is_pdf {
                 // Deep PDF
                 let mut pdf_bytes = Vec::new();
-                { let mut rdr = resp.into_reader(); let _ = std::io::Read::read_to_end(&mut rdr, &mut pdf_bytes); }
+                {
+                    let mut rdr = resp.into_reader();
+                    let _ = std::io::Read::read_to_end(&mut rdr, &mut pdf_bytes);
+                }
                 if !pdf_bytes.is_empty() {
                     let kind = detect_content_kind(&pdf_bytes, Some(&current_url));
                     let store = ArtifactStore::new(artifact_data_root()).unwrap();
@@ -3393,8 +3560,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         let art_id = generated_record_id("artifact");
                         let meta = serde_json::json!({ "scraped_url": current_url, "full_access_web": true, "deep_scrape": true, "mime": kind.mime, "kind": kind.kind, "depth": depth });
                         let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta] );
-                        collected_artifacts.push(art_id.clone()); web_count += 1;
-                        let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
+                        collected_artifacts.push(art_id.clone());
+                        web_count += 1;
+                        let extracted =
+                            extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
                         let ev_id = generated_record_id("evidence");
                         let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &current_url, &"pdf".to_string(), &extracted, &meta] );
                         evidence_created.push(ev_id.clone());
@@ -3409,13 +3578,18 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                 if let Ok(stored) = store.write_bytes(data) {
                     let art_id = generated_record_id("artifact");
                     let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"scraped_url": current_url, "full_access_web": true, "deep_scrape": true, "depth": depth})] );
-                    collected_artifacts.push(art_id.clone()); web_count += 1;
-                    for cap in extract_simple_links_and_claims(&body, &current_url) { graph_candidates.push(cap); }
+                    collected_artifacts.push(art_id.clone());
+                    web_count += 1;
+                    for cap in extract_simple_links_and_claims(&body, &current_url) {
+                        graph_candidates.push(cap);
+                    }
 
                     // Deep assets + exif strip
                     let asset_urls = extract_img_and_video_srcs(&body, &current_url);
                     for asset_url in asset_urls {
-                        if is_forbidden(&asset_url) { continue; }
+                        if is_forbidden(&asset_url) {
+                            continue;
+                        }
                         jitter_delay();
                         let mut asset_req = agent.get(&asset_url);
                         for (k, v) in &fetch_headers {
@@ -3423,28 +3597,47 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         }
                         if let Ok(aresp) = asset_req.call() {
                             let mut abytes = Vec::new();
-                            { let mut rdr = aresp.into_reader(); let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes); }
+                            {
+                                let mut rdr = aresp.into_reader();
+                                let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes);
+                            }
                             if !abytes.is_empty() {
                                 let mut final_bytes = abytes;
                                 let kind = detect_content_kind(&final_bytes, None);
                                 if kind.kind == "image" {
                                     if let Ok(img) = image::load_from_memory(&final_bytes) {
                                         let mut buf = Vec::new();
-                                        let _ = img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png);
+                                        let _ = img.write_to(
+                                            &mut std::io::Cursor::new(&mut buf),
+                                            image::ImageFormat::Png,
+                                        );
                                         final_bytes = buf;
                                     }
                                 }
-                                if kind.kind == "image" || kind.kind == "video" || kind.kind == "pdf" || (media_focus && kind.kind != "text") {
+                                if kind.kind == "image"
+                                    || kind.kind == "video"
+                                    || kind.kind == "pdf"
+                                    || (media_focus && kind.kind != "text")
+                                {
                                     if let Ok(stored) = store.write_bytes(&final_bytes) {
                                         let mart_id = generated_record_id("artifact");
                                         let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": current_url, "mime": kind.mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
                                         let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&mart_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &mmeta] );
-                                        collected_artifacts.push(mart_id.clone()); media_from_web += 1;
-                                        let stub = extract_text_if_possible(&final_bytes, &kind).unwrap_or_else(|| format!("[Deep media from {} via {}]", asset_url, current_url));
+                                        collected_artifacts.push(mart_id.clone());
+                                        media_from_web += 1;
+                                        let stub = extract_text_if_possible(&final_bytes, &kind)
+                                            .unwrap_or_else(|| {
+                                                format!(
+                                                    "[Deep media from {} via {}]",
+                                                    asset_url, current_url
+                                                )
+                                            });
                                         let ev_id = generated_record_id("evidence");
                                         let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &mart_id, &asset_url, &kind.kind, &stub, &mmeta] );
                                         evidence_created.push(ev_id.clone());
-                                        if let Some(claim) = simple_mine_claim_from_text(&stub, &asset_url) {
+                                        if let Some(claim) =
+                                            simple_mine_claim_from_text(&stub, &asset_url)
+                                        {
                                             graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
                                         }
                                     }
@@ -3457,7 +3650,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     if depth < max_depth {
                         for link in extract_simple_links_and_claims(&body, &current_url) {
                             if let Some(to) = link.get("to").and_then(|v| v.as_str()) {
-                                if (to.starts_with("http://") || to.starts_with("https://")) && !is_forbidden(to) && !crawled_urls.contains(to) {
+                                if (to.starts_with("http://") || to.starts_with("https://"))
+                                    && !is_forbidden(to)
+                                    && !crawled_urls.contains(to)
+                                {
                                     url_queue.push_back((to.to_string(), depth + 1));
                                 }
                             }
@@ -3541,7 +3737,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     // This makes graph candidates and new sources/artifacts/docs real in the relationship memory, not just Postgres.
     let _ = ensure_graph_schema();
     // sync will pick up the new artifacts, documents, evidence created above
-    let _ = sync_graph_lineage(Some(database_url));  // pass the url we had (grok full access tying to real graph)
+    let _ = sync_graph_lineage(Some(database_url)); // pass the url we had (grok full access tying to real graph)
 
     Ok(response_body)
 }
@@ -3550,11 +3746,18 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
 fn simple_mine_claim_from_text(text: &str, source: &str) -> Option<String> {
     let lower = text.to_lowercase();
     if lower.contains("password") || lower.contains("secret") || lower.contains("token") {
-        return Some(format!("Potential secret/credential mentioned in {}", source));
+        return Some(format!(
+            "Potential secret/credential mentioned in {}",
+            source
+        ));
     }
     if let Some(pos) = lower.find(" i am ") {
         let end = (pos + 20).min(text.len());
-        return Some(format!("Self-statement from {}: {}", source, &text[pos..end]));
+        return Some(format!(
+            "Self-statement from {}: {}",
+            source,
+            &text[pos..end]
+        ));
     }
     if text.contains("http") || text.contains("www.") {
         return Some(format!("URL or link reference found in {}", source));
@@ -3568,11 +3771,11 @@ fn extract_simple_links_and_claims(html_or_text: &str, base: &str) -> Vec<serde_
     let lower = html_or_text.to_lowercase();
     let mut search = lower.as_str();
     while let Some(pos) = search.find("href=") {
-        let rest = &search[pos+5..];
+        let rest = &search[pos + 5..];
         if let Some(endq) = rest.find(|c| c == '"' || c == '\'') {
-            let quote = &rest[endq..endq+1];
-            if let Some(end) = rest[endq+1..].find(quote) {
-                let link = &rest[endq+1..endq+1+end];
+            let quote = &rest[endq..endq + 1];
+            if let Some(end) = rest[endq + 1..].find(quote) {
+                let link = &rest[endq + 1..endq + 1 + end];
                 if !link.is_empty() && link.len() < 500 {
                     out.push(serde_json::json!({
                         "type": "link",
@@ -3583,8 +3786,10 @@ fn extract_simple_links_and_claims(html_or_text: &str, base: &str) -> Vec<serde_
                 }
             }
         }
-        search = &search[pos+6..];
-        if out.len() > 20 { break; }
+        search = &search[pos + 6..];
+        if out.len() > 20 {
+            break;
+        }
     }
     if html_or_text.len() > 100 {
         out.push(serde_json::json!({
@@ -3601,22 +3806,37 @@ fn extract_img_and_video_srcs(html: &str, base_url: &str) -> Vec<String> {
     let mut srcs = Vec::new();
     let lower = html.to_lowercase();
     // simple extraction for src, data-src, data-fullsrc, poster etc for img/video/source
-    for attr in ["src=", "data-src=", "data-fullsrc=", "data-original=", "poster=", "srcset="] {
+    for attr in [
+        "src=",
+        "data-src=",
+        "data-fullsrc=",
+        "data-original=",
+        "poster=",
+        "srcset=",
+    ] {
         let mut search = &lower[..];
         while let Some(pos) = search.find(attr) {
             let rest = &search[pos + attr.len()..];
             if let Some(qpos) = rest.find(|c: char| c == '"' || c == '\'') {
-                let quote = &rest[qpos..qpos+1];
-                if let Some(end) = rest[qpos+1..].find(quote) {
-                    let raw = &rest[qpos+1..qpos+1+end];
-                    if !raw.is_empty() && raw.len() < 1000 && (raw.starts_with("http") || raw.starts_with("/") || raw.starts_with("data:") == false) {
+                let quote = &rest[qpos..qpos + 1];
+                if let Some(end) = rest[qpos + 1..].find(quote) {
+                    let raw = &rest[qpos + 1..qpos + 1 + end];
+                    if !raw.is_empty()
+                        && raw.len() < 1000
+                        && (raw.starts_with("http")
+                            || raw.starts_with("/")
+                            || raw.starts_with("data:") == false)
+                    {
                         let resolved = if raw.starts_with("http") {
                             raw.to_string()
                         } else if raw.starts_with("//") {
                             format!("https:{}", raw)
                         } else if raw.starts_with("/") {
                             // naive base
-                            let host_end = base_url[8..].find('/').map(|i| i + 8).unwrap_or(base_url.len());
+                            let host_end = base_url[8..]
+                                .find('/')
+                                .map(|i| i + 8)
+                                .unwrap_or(base_url.len());
                             if host_end > 8 {
                                 format!("{}{}", &base_url[..host_end], raw)
                             } else {
@@ -3634,7 +3854,9 @@ fn extract_img_and_video_srcs(html: &str, base_url: &str) -> Vec<String> {
                 }
             }
             search = &search[pos + 5..];
-            if srcs.len() > 50 { break; }
+            if srcs.len() > 50 {
+                break;
+            }
         }
     }
     srcs
@@ -5108,7 +5330,11 @@ fn live_evidence_answer(body: &str, database_url: Option<&str>) -> Result<String
     let collection_name = preview
         .get("collection_name")
         .and_then(Value::as_str)
-        .or_else(|| retrieval_context_value.get("collection_name").and_then(Value::as_str))
+        .or_else(|| {
+            retrieval_context_value
+                .get("collection_name")
+                .and_then(Value::as_str)
+        })
         .unwrap_or("igy6_chunks")
         .to_string();
     let collection_exists = preview
@@ -5191,7 +5417,9 @@ fn hydrated_hit_from_retrieval_value(hit: &Value) -> Option<HydratedChunkSearchH
         .map(|payload| payload.to_string())
         .unwrap_or_else(|| "{}".to_string());
     let source = hit.get("source").and_then(parse_retrieval_source);
-    let raw_artifact = hit.get("raw_artifact").and_then(parse_retrieval_raw_artifact);
+    let raw_artifact = hit
+        .get("raw_artifact")
+        .and_then(parse_retrieval_raw_artifact);
     let evidence_items = hit
         .get("evidence_items")
         .and_then(Value::as_array)
@@ -11929,7 +12157,10 @@ fn user_config_path() -> PathBuf {
     if let Ok(root) = env::var("IGY6_DATA_ROOT") {
         PathBuf::from(root).join(".grok-user.json")
     } else if let Ok(art) = env::var("ARTIFACT_STORE_PATH") {
-        Path::new(&art).parent().unwrap_or(Path::new(".")).join(".grok-user.json")
+        Path::new(&art)
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(".grok-user.json")
     } else {
         PathBuf::from(".grok-user.json")
     }
@@ -11955,24 +12186,29 @@ fn save_user_config(cfg: &UserConfig) -> Result<(), GatewayError> {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let data = serde_json::to_string_pretty(cfg).map_err(|e| GatewayError::Validation(format!("config serialize: {}", e)))?;
+    let data = serde_json::to_string_pretty(cfg)
+        .map_err(|e| GatewayError::Validation(format!("config serialize: {}", e)))?;
     fs::write(&path, data).map_err(|e| GatewayError::Validation(format!("config write: {}", e)))?;
     Ok(())
 }
 
 fn get_totp(secret: &str) -> Option<TOTP> {
     // totp-rs 5.x compatible
-    Secret::Encoded(secret.to_string()).to_bytes().ok().and_then(|bytes| {
-        TOTP::new(
-            Algorithm::SHA1,
-            6,
-            1,
-            30,
-            bytes,
-            None,
-            "grok-user".to_string(),
-        ).ok()
-    })
+    Secret::Encoded(secret.to_string())
+        .to_bytes()
+        .ok()
+        .and_then(|bytes| {
+            TOTP::new(
+                Algorithm::SHA1,
+                6,
+                1,
+                30,
+                bytes,
+                None,
+                "grok-user".to_string(),
+            )
+            .ok()
+        })
 }
 
 fn verify_totp(secret: &str, code: &str) -> bool {
@@ -11998,9 +12234,16 @@ fn user_status_json() -> String {
 }
 
 fn user_change_password(body: &str) -> Result<String, GatewayError> {
-    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
-    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
-    let new_pass = obj.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
+    let obj: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let new_pass = obj
+        .get("new_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
 
     let mut cfg = load_user_config();
@@ -12021,8 +12264,12 @@ fn user_change_password(body: &str) -> Result<String, GatewayError> {
 }
 
 fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
-    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
-    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let obj: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
 
     let mut cfg = load_user_config();
@@ -12031,7 +12278,9 @@ fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
     }
     if cfg.totp_enabled {
         if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
-            return Err(GatewayError::Forbidden("TOTP code incorrect to re-link".into()));
+            return Err(GatewayError::Forbidden(
+                "TOTP code incorrect to re-link".into(),
+            ));
         }
     }
 
@@ -12063,21 +12312,32 @@ fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
 }
 
 fn user_confirm_totp(body: &str) -> Result<String, GatewayError> {
-    let obj: serde_json::Value = serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
-    let current = obj.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
+    let obj: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
 
     let mut cfg = load_user_config();
     if current != cfg.password {
         return Err(GatewayError::Forbidden("current password incorrect".into()));
     }
-    let secret = cfg.totp_secret.clone().ok_or_else(|| GatewayError::Validation("no pending secret, call generate-totp first".into()))?;
+    let secret = cfg.totp_secret.clone().ok_or_else(|| {
+        GatewayError::Validation("no pending secret, call generate-totp first".into())
+    })?;
     if !verify_totp(&secret, code) {
-        return Err(GatewayError::Forbidden("TOTP code did not verify, try again".into()));
+        return Err(GatewayError::Forbidden(
+            "TOTP code did not verify, try again".into(),
+        ));
     }
     cfg.totp_enabled = true;
     save_user_config(&cfg)?;
-    Ok(serde_json::json!({"status": "authenticator linked and enabled", "totp_enabled": true}).to_string())
+    Ok(
+        serde_json::json!({"status": "authenticator linked and enabled", "totp_enabled": true})
+            .to_string(),
+    )
 }
 
 fn collect_local_project_files(
@@ -12346,7 +12606,6 @@ fn decode_base64_quad(quad: &[u8; 4], output: &mut Vec<u8>) -> Result<(), Gatewa
         }
     }
 }
-
 
 fn validate_safe_filename(filename: &str) -> Result<(), GatewayError> {
     if filename.contains('/')
@@ -13445,7 +13704,6 @@ fn is_supported_collection_source_type(value: &str) -> bool {
             | "stream_capture"
     )
 }
-
 
 fn is_allowed_source_operation(value: &str) -> bool {
     matches!(
@@ -14941,12 +15199,12 @@ mod tests {
             "authorization": "token-value"
         });
         let headers = web_fetch_headers(&payload);
-        assert!(headers.iter().any(|(k, v)| k == "Cookie" && v == "session=abc123"));
-        assert!(
-            headers
-                .iter()
-                .any(|(k, v)| k == "Authorization" && v == "Bearer token-value")
-        );
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "Cookie" && v == "session=abc123"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer token-value"));
         assert!(!headers.iter().any(|(k, _)| k == "DNT"));
     }
 
@@ -16013,7 +16271,8 @@ mod tests {
             external_model_policy: "blocked".to_string(),
             approval_required: true,
         };
-        let result = connector_dry_run_result(&source, &permission).expect("now supported via generic on grok");
+        let result = connector_dry_run_result(&source, &permission)
+            .expect("now supported via generic on grok");
         assert_eq!(result.connector_name, "generic_connector");
         assert!(result.allowed);
     }
@@ -16650,13 +16909,25 @@ mod tests {
             ("APP_ENV".to_string(), "local".to_string()),
             ("APP_HOST".to_string(), "127.0.0.1".to_string()),
             ("APP_PORT".to_string(), "8000".to_string()),
-            ("API_BASE_URL".to_string(), "http://127.0.0.1:8000".to_string()),
-            ("WEB_BASE_URL".to_string(), "http://127.0.0.1:3000".to_string()),
+            (
+                "API_BASE_URL".to_string(),
+                "http://127.0.0.1:8000".to_string(),
+            ),
+            (
+                "WEB_BASE_URL".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+            ),
             ("POSTGRES_HOST".to_string(), "postgres".to_string()),
             ("POSTGRES_PORT".to_string(), "5432".to_string()),
-            ("POSTGRES_DB".to_string(), "adaptive_intelligence".to_string()),
+            (
+                "POSTGRES_DB".to_string(),
+                "adaptive_intelligence".to_string(),
+            ),
             ("POSTGRES_USER".to_string(), "adaptive".to_string()),
-            ("POSTGRES_PASSWORD".to_string(), "change-me-local-only".to_string()),
+            (
+                "POSTGRES_PASSWORD".to_string(),
+                "change-me-local-only".to_string(),
+            ),
             (
                 "DATABASE_URL".to_string(),
                 "postgres://adaptive:change-me-local-only@postgres:5432/adaptive_intelligence"
@@ -16674,7 +16945,10 @@ mod tests {
             ("NEO4J_HTTP_PORT".to_string(), "7474".to_string()),
             ("NEO4J_BOLT_PORT".to_string(), "7687".to_string()),
             ("NEO4J_USER".to_string(), "neo4j".to_string()),
-            ("NEO4J_PASSWORD".to_string(), "change-me-local-only".to_string()),
+            (
+                "NEO4J_PASSWORD".to_string(),
+                "change-me-local-only".to_string(),
+            ),
             ("NEO4J_URI".to_string(), "bolt://neo4j:7687".to_string()),
             (
                 "MLFLOW_TRACKING_URI".to_string(),
@@ -16705,10 +16979,7 @@ mod tests {
             ),
             ("SINGLE_USER_MODE".to_string(), "true".to_string()),
             ("AUDIT_LOG_LEVEL".to_string(), "info".to_string()),
-            (
-                "APPROVAL_REQUIRED_DEFAULT".to_string(),
-                "true".to_string(),
-            ),
+            ("APPROVAL_REQUIRED_DEFAULT".to_string(), "true".to_string()),
         ])
     }
 

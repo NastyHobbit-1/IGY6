@@ -251,7 +251,16 @@ fn extract_snippets(html: &str) -> Vec<String> {
 fn extract_urls_from_text(text: &str) -> Vec<String> {
     let mut urls = BTreeSet::new();
     for token in text.split_whitespace() {
-        let trimmed = token.trim_matches(|ch: char| !ch.is_ascii() && ch != '.' && ch != '/' && ch != ':' && ch != '?' && ch != '&' && ch != '=' && ch != '%');
+        let trimmed = token.trim_matches(|ch: char| {
+            !ch.is_ascii()
+                && ch != '.'
+                && ch != '/'
+                && ch != ':'
+                && ch != '?'
+                && ch != '&'
+                && ch != '='
+                && ch != '%'
+        });
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             urls.insert(trimmed.to_string());
         }
@@ -492,7 +501,10 @@ pub fn run_bypass_intel_harvest(database_url: Option<&str>) -> Result<Value, Gat
 
 fn harvest_is_due() -> bool {
     let last = read_json_file(&bypass_intel_last_run_path());
-    let Some(finished_at_unix) = last.get("finished_at_unix").and_then(|value| value.as_u64()) else {
+    let Some(finished_at_unix) = last
+        .get("finished_at_unix")
+        .and_then(|value| value.as_u64())
+    else {
         return true;
     };
     let now = SystemTime::now()
@@ -615,7 +627,9 @@ pub fn playbook_url_variants_for_url(original_url: &str) -> Vec<(String, String)
     variants
 }
 
-pub fn playbook_header_strategies_for_url(original_url: &str) -> Vec<(String, Vec<(String, String)>)> {
+pub fn playbook_header_strategies_for_url(
+    original_url: &str,
+) -> Vec<(String, Vec<(String, String)>)> {
     let playbook = read_json_file(&bypass_intel_playbook_path());
     let Some(entry) = matching_playbook_domain(&playbook, original_url) else {
         return vec![];
@@ -625,7 +639,10 @@ pub fn playbook_header_strategies_for_url(original_url: &str) -> Vec<(String, Ve
     };
     let mut strategies = Vec::new();
     for technique in techniques {
-        let kind = technique.get("kind").and_then(|value| value.as_str()).unwrap_or("");
+        let kind = technique
+            .get("kind")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
         match kind {
             "referer" => {
                 let label = technique
@@ -672,7 +689,10 @@ pub fn playbook_header_strategies_for_url(original_url: &str) -> Vec<(String, Ve
     strategies
 }
 
-pub fn bypass_intel_harvest_response(body: &str, database_url: Option<&str>) -> crate::GatewayResponse {
+pub fn bypass_intel_harvest_response(
+    body: &str,
+    database_url: Option<&str>,
+) -> crate::GatewayResponse {
     let object: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let force = object
         .get("force")

@@ -314,7 +314,10 @@ fn parse_json_depth_from_body(body: &str) -> Option<u32> {
     let start = trimmed.find(key)? + key.len();
     let after_key = trimmed.get(start..)?.trim_start();
     let after_key = after_key.strip_prefix(':')?.trim_start();
-    let digits: String = after_key.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    let digits: String = after_key
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
     if digits.is_empty() {
         return None;
     }
@@ -435,7 +438,9 @@ fn handle_stream(stream: &mut TcpStream, config: &BridgeConfig) -> Result<(), St
     write_response(stream, status, &body)
 }
 
-fn parse_request(request: &str) -> Result<(String, String, HashMap<String, String>, String), String> {
+fn parse_request(
+    request: &str,
+) -> Result<(String, String, HashMap<String, String>, String), String> {
     let mut header_lines = request.lines();
     let request_line = header_lines
         .next()
