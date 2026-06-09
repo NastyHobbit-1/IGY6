@@ -1,14 +1,52 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, "..");
-const apiDir = join(appDir, "src/app/api");
-const page = readFileSync(join(appDir, "src/app/page.tsx"), "utf8");
-const styles = readFileSync(join(appDir, "src/app/globals.css"), "utf8");
+const appRoot = join(appDir, "src/app");
+const apiDir = join(appRoot, "api");
+const componentsDir = join(appRoot, "components");
 
 const failures = [];
+
+function walkSourceFiles(dir) {
+  const files = [];
+  for (const entry of readdirSync(dir)) {
+    const fullPath = join(dir, entry);
+    if (statSync(fullPath).isDirectory()) {
+      files.push(...walkSourceFiles(fullPath));
+      continue;
+    }
+    if (/\.(tsx?|jsx?)$/.test(entry)) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function loadUiSources() {
+  const pagePath = join(appRoot, "page.tsx");
+  const page = readFileSync(pagePath, "utf8");
+  const componentPaths = walkSourceFiles(componentsDir).sort((left, right) => {
+    const leftRelative = relative(componentsDir, left);
+    const rightRelative = relative(componentsDir, right);
+    if (leftRelative === "HomePage.tsx") return -1;
+    if (rightRelative === "HomePage.tsx") return 1;
+    return leftRelative.localeCompare(rightRelative);
+  });
+
+  const componentFiles = componentPaths.map((filePath) => ({
+    path: relative(appRoot, filePath).replace(/\\/g, "/"),
+    content: readFileSync(filePath, "utf8")
+  }));
+
+  const uiCorpus = [page, ...componentFiles.map((file) => file.content)].join("\n");
+  return { page, componentFiles, uiCorpus };
+}
+
+const { page, componentFiles, uiCorpus } = loadUiSources();
+const styles = readFileSync(join(appRoot, "globals.css"), "utf8");
 
 function check(name, condition) {
   if (!condition) {
@@ -22,13 +60,21 @@ function includesAll(name, text, values) {
   }
 }
 
-function appearsAfter(name, text, earlier, later) {
-  const earlierIndex = text.indexOf(earlier);
-  const laterIndex = text.indexOf(later);
-  check(`${name}: ${later} appears after ${earlier}`, earlierIndex >= 0 && laterIndex > earlierIndex);
+function appearsAfterInSomeFile(name, earlier, later) {
+  const matched = componentFiles.some((file) => {
+    const earlierIndex = file.content.indexOf(earlier);
+    const laterIndex = file.content.indexOf(later);
+    return earlierIndex >= 0 && laterIndex > earlierIndex;
+  });
+  check(`${name}: ${later} appears after ${earlier} in a component file`, matched);
 }
 
-includesAll("top-level tabs", page, [
+check("page entry re-exports HomePage", page.includes('import { HomePage } from "./components/HomePage";'));
+check("page entry exports HomePage default", page.includes("export default HomePage;"));
+check("HomePage component exists", existsSync(join(componentsDir, "HomePage.tsx")));
+check("components directory is populated", componentFiles.length >= 40);
+
+includesAll("top-level tabs", uiCorpus, [
   'htmlFor="tab-results">Chat',
   'htmlFor="tab-add-data">Data',
   'htmlFor="tab-work">Work',
@@ -36,7 +82,7 @@ includesAll("top-level tabs", page, [
   'htmlFor="tab-advanced">More'
 ]);
 
-includesAll("chat-first shell", page, [
+includesAll("chat-first shell", uiCorpus, [
   "data-unified-chat",
   "data-chat-input",
   "data-chat-send",
@@ -50,7 +96,7 @@ includesAll("chat-first shell", page, [
   "Ask a question or request an action..."
 ]);
 
-includesAll("browser api proxies", page, [
+includesAll("browser api proxies", uiCorpus, [
   "/api/user/status",
   "/api/user/change-password",
   "/api/artifacts",
@@ -73,14 +119,14 @@ const requiredApiRoutes = [
   "chat/retrieval-preview/route.ts",
   "settings/env/route.ts",
   "settings/env/verify/route.ts",
-  "settings/env/apply/route.ts",
+  "settings/env/apply/route.ts"
 ];
 
 for (const route of requiredApiRoutes) {
   check(`api route file: ${route}`, existsSync(join(apiDir, route)));
 }
 
-includesAll("chat web fetch dock", page, [
+includesAll("chat web fetch dock", uiCorpus, [
   "ChatWebFetchDock",
   'id="chat-web-fetch"',
   "data-chat-web-fetch",
@@ -106,7 +152,7 @@ includesAll("chat web fetch dock", page, [
   'data-chat-chip="max reach https://example.com"'
 ]);
 
-includesAll("minimal ui mode", page, [
+includesAll("minimal ui mode", uiCorpus, [
   "data-minimal-ui-root",
   "data-minimal-ui-toggle",
   "MINIMAL_UI_TOGGLE_SCRIPT",
@@ -118,7 +164,7 @@ includesAll("minimal ui mode", page, [
   "Simple mode"
 ]);
 
-includesAll("implemented collection panels", page, [
+includesAll("implemented collection panels", uiCorpus, [
   "data-bwr-collect",
   "Collect pasted text",
   "data-lp-collect",
@@ -133,7 +179,7 @@ includesAll("implemented collection panels", page, [
   "agent_action"
 ]);
 
-includesAll("workflow section anchors", page, [
+includesAll("workflow section anchors", uiCorpus, [
   'id="home"',
   'id="assistant"',
   'id="chat-web-fetch"',
@@ -152,7 +198,7 @@ includesAll("workflow section anchors", page, [
   'id="user-security"'
 ]);
 
-includesAll("settings hub navigation", page, [
+includesAll("settings hub navigation", uiCorpus, [
   "SettingsHubNav",
   "settingsHubNav",
   "UserSecurityPanel",
@@ -162,7 +208,7 @@ includesAll("settings hub navigation", page, [
   "Safety & Audit"
 ]);
 
-includesAll("tab panel mapping", page, [
+includesAll("tab panel mapping", uiCorpus, [
   'data-tab-panel="home"',
   'data-tab-panel="add-data"',
   'data-tab-panel="work"',
@@ -173,10 +219,10 @@ includesAll("tab panel mapping", page, [
 
 check(
   "old navigation array is not restored",
-  !page.includes('["Chat", "Agent Command", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit", "Settings"]')
+  !uiCorpus.includes('["Chat", "Agent Command", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit", "Settings"]')
 );
 
-includesAll("assistant action labels", page, [
+includesAll("assistant action labels", uiCorpus, [
   "Show project health",
   "Show git status",
   "Show latest DIFF",
@@ -187,7 +233,7 @@ includesAll("assistant action labels", page, [
   "Run last healthy stack"
 ]);
 
-includesAll("assistant action gating controls", page, [
+includesAll("assistant action gating controls", uiCorpus, [
   "data-agent-preview",
   "data-agent-execute disabled",
   "data-agent-request-approval disabled",
@@ -198,7 +244,7 @@ includesAll("assistant action gating controls", page, [
   "Run with approval"
 ]);
 
-includesAll("assistant evidence controls", page, [
+includesAll("assistant evidence controls", uiCorpus, [
   "Ask a question or request an action...",
   "Ask over evidence",
   "What does this document say about my bill?",
@@ -208,7 +254,7 @@ includesAll("assistant evidence controls", page, [
   "unavailable until model is selected"
 ]);
 
-includesAll("local llm status copy", page, [
+includesAll("local llm status copy", uiCorpus, [
   "Local LLM Status",
   "Provider",
   "Health status",
@@ -220,7 +266,7 @@ includesAll("local llm status copy", page, [
   "No model calls are made while LLM_PROVIDER is none"
 ]);
 
-includesAll("advanced panels", page, [
+includesAll("advanced panels", uiCorpus, [
   "<details",
   "Advanced: raw parameters, approval ID, response JSON, and route details",
   "Advanced: source IDs, permission IDs, and raw source data",
@@ -231,28 +277,25 @@ includesAll("advanced panels", page, [
   "Advanced Route Console"
 ]);
 
-appearsAfter(
+appearsAfterInSomeFile(
   "raw parameters hidden behind advanced",
-  page,
   "Advanced: raw parameters, approval ID, response JSON, and route details",
   "Raw parameters JSON"
 );
 
-appearsAfter(
+appearsAfterInSomeFile(
   "approval id hidden behind advanced",
-  page,
   "Advanced: raw parameters, approval ID, response JSON, and route details",
   "Approval ID for approved action"
 );
 
-appearsAfter(
+appearsAfterInSomeFile(
   "legacy route console hidden behind advanced",
-  page,
   "Advanced Route Console",
   "<MvpActionConsole />"
 );
 
-includesAll("manual upload guided workflow", page, [
+includesAll("manual upload guided workflow", uiCorpus, [
   "Guided Upload",
   "Step 1: Select or create source.",
   "Step 2: Check approval status.",
@@ -266,7 +309,7 @@ includesAll("manual upload guided workflow", page, [
   "Approve processing this local build log for evidence extraction."
 ]);
 
-includesAll("empty and next-step guidance states", page, [
+includesAll("empty and next-step guidance states", uiCorpus, [
   "No sources registered yet.",
   "No collection runs recorded yet.",
   "No evidence items recorded yet.",
@@ -278,7 +321,7 @@ includesAll("empty and next-step guidance states", page, [
   "Ask a question over local evidence."
 ]);
 
-includesAll("safety posture", page, [
+includesAll("safety posture", uiCorpus, [
   "local-first",
   "System ready",
   "Background worker ready",
@@ -290,6 +333,15 @@ includesAll("safety posture", page, [
   "approval-gated",
   "Background processing is ready",
   "Old Python services"
+]);
+
+includesAll("split component structure", uiCorpus, [
+  "export async function HomePage",
+  "export function UnifiedChatHub",
+  "export function GuidedManualTextUpload",
+  "export function LifecycleAuditStatusPanel",
+  "export function SettingsPanel",
+  "export function PipelineOperationsPanel"
 ]);
 
 includesAll("supporting styles", styles, [
@@ -323,4 +375,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("UI smoke checks passed.");
+console.log(`UI smoke checks passed (${componentFiles.length} component files scanned).`);

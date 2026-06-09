@@ -66,14 +66,14 @@ export async function HomePage() {
     predictions,
     recommendations,
     calibrationSummary,
-	    workItems,
-	    approvals,
-	    feedback,
-	    outcomes,
-	    improvements,
-	    experiments,
-	    reports,
-	    agentTaskPlans,
+    workItems,
+    approvals,
+    feedback,
+    outcomes,
+    improvements,
+    experiments,
+    reports,
+    agentTaskPlans,
     auditEvents,
     envSettings,
     agentCapabilities
@@ -122,14 +122,14 @@ export async function HomePage() {
       auto_execute_recommendations: false,
       advanced_calibration: false
     }),
-	    getJson<WorkItemRecord[]>("/work-items", []),
-	    getJson<ApprovalRecord[]>("/approvals", []),
-	    getJson<FeedbackRecord[]>("/feedback", []),
-	    getJson<OutcomeRecord[]>("/outcomes", []),
-	    getJson<ImprovementRecord[]>("/improvements", []),
-	    getJson<ExperimentRecord[]>("/experiments", []),
-	    getJson<ReportRecord[]>("/reports", []),
-	    getJson<AgentTaskPlanRecord[]>("/agent/task-plans", []),
+    getJson<WorkItemRecord[]>("/work-items", []),
+    getJson<ApprovalRecord[]>("/approvals", []),
+    getJson<FeedbackRecord[]>("/feedback", []),
+    getJson<OutcomeRecord[]>("/outcomes", []),
+    getJson<ImprovementRecord[]>("/improvements", []),
+    getJson<ExperimentRecord[]>("/experiments", []),
+    getJson<ReportRecord[]>("/reports", []),
+    getJson<AgentTaskPlanRecord[]>("/agent/task-plans", []),
     getJson<AuditEventRecord[]>("/audit-events", []),
     getJson<EnvSettingsResponse>("/settings/env", {
       file_status: {
@@ -356,12 +356,12 @@ export async function HomePage() {
             <summary>Context panels (LLM status, evidence gaps, history)</summary>
             <LocalLlmStatusPanel envSettings={envSettings} context="assistant" />
             <MissingEvidencePromptPanel
-            evidenceItems={evidenceItems}
-            chunks={chunks}
-            sources={sources}
-            evidenceAnswers={evidenceAnswers}
-            taskPlans={agentTaskPlans}
-          />
+              evidenceItems={evidenceItems}
+              chunks={chunks}
+              sources={sources}
+              evidenceAnswers={evidenceAnswers}
+              taskPlans={agentTaskPlans}
+            />
             <EvidenceAnswerHistory evidenceAnswers={evidenceAnswers} feedback={feedback} />
             <AgentCommandPanel capabilities={agentCapabilities} approvals={approvals} taskPlans={agentTaskPlans} />
             <AgentTaskHistoryReview
@@ -747,7 +747,7 @@ export async function HomePage() {
               outcomes={outcomes}
               feedback={feedback}
             />
-	            <section className="quad analysisGrid" id="analysis-panel">
+            <section className="quad analysisGrid" id="analysis-panel">
               <div>
                 <div className="subHeader"><h3><HelpHeading term="pattern">Patterns</HelpHeading></h3>{patterns.error ? <span className="errorText">{patterns.error}</span> : null}</div>
                 <div className="stack">
@@ -830,9 +830,9 @@ export async function HomePage() {
                 </div>
                 {recentRecommendations.length === 0 ? <EmptyState label="No recommendations recorded yet." /> : null}
               </div>
-	            </section>
-	            <ImprovementExperimentReview improvements={improvements} experiments={experiments} />
-	            <PipelineOperationsPanel workItems={workItems} />
+            </section>
+            <ImprovementExperimentReview improvements={improvements} experiments={experiments} />
+            <PipelineOperationsPanel workItems={workItems} />
           </section>
 
           <section className="panel workflowSection tabContent" id="work-processing" data-tab-panel="work">
@@ -861,26 +861,26 @@ export async function HomePage() {
               <div>
                 <div className="subHeader"><h3><HelpHeading term="workItem">Work Items</HelpHeading></h3>{workItems.error ? <span className="errorText">{workItems.error}</span> : null}</div>
                 <div className="stack">
-	                  {recentWorkItems.map((workItem) => {
-	                    const guidance = workItemGuidance(workItem);
-	                    const relatedIds = workItemRelatedIds(workItem);
-	                    const dispatchVisibility = workItemDispatchVisibility(workItem);
-	                    return (
-	                      <article className="item evidenceItem workStatusItem" key={workItem.id} data-work-status-item>
-	                        <div>
-	                          <strong>{workItem.work_type}</strong>
-	                          <span>Work item: {workItem.id}</span>
-	                          <span>{guidance.outcome}</span>
-	                          <dl className="workStatusIds" aria-label={`Dispatch visibility for ${workItem.id}`} data-work-dispatch-visibility>
-	                            {dispatchVisibility.map((detail) => (
-	                              <div key={`${workItem.id}-dispatch-${detail.label}`}>
-	                                <dt>{detail.label}</dt>
-	                                <dd>{detail.value}</dd>
-	                              </div>
-	                            ))}
-	                          </dl>
-	                          {relatedIds.length > 0 ? (
-	                            <dl className="workStatusIds" aria-label={`Related records for ${workItem.id}`}>
+                  {recentWorkItems.map((workItem) => {
+                    const guidance = workItemGuidance(workItem);
+                    const relatedIds = workItemRelatedIds(workItem);
+                    const dispatchVisibility = workItemDispatchVisibility(workItem);
+                    return (
+                      <article className="item evidenceItem workStatusItem" key={workItem.id} data-work-status-item>
+                        <div>
+                          <strong>{workItem.work_type}</strong>
+                          <span>Work item: {workItem.id}</span>
+                          <span>{guidance.outcome}</span>
+                          <dl className="workStatusIds" aria-label={`Dispatch visibility for ${workItem.id}`} data-work-dispatch-visibility>
+                            {dispatchVisibility.map((detail) => (
+                              <div key={`${workItem.id}-dispatch-${detail.label}`}>
+                                <dt>{detail.label}</dt>
+                                <dd>{detail.value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                          {relatedIds.length > 0 ? (
+                            <dl className="workStatusIds" aria-label={`Related records for ${workItem.id}`}>
                               {relatedIds.map((related) => (
                                 <div key={`${workItem.id}-${related.label}`}>
                                   <dt>{related.label}</dt>
