@@ -133,7 +133,7 @@ Sources:
   must satisfy before becoming active product paths: scope validation, dry-run
   preview, bounded collection, normalization, sensitivity classification, safe
   metadata, cleanup posture, and audit.
-- Connector status in the UI reflects the verified table from DIFF-249: manual text paths (manual_upload, conversation_history, user_observation) are implemented; browser_export/web_public/router_network/local_pc_diagnostics/media_import have real full-access + host-bridge support on the `grok` branch (crawl, authorized bypass, binary media collection, WiFi/system snapshots) with host-bridge/approval/scope requirements. Some guided panels remain more paste/preview oriented.
+- Connector status in the UI reflects the verified table from DIFF-249: manual text paths (manual_upload, conversation_history, user_observation) are implemented; browser_export/web_public/router_network/local_pc_diagnostics/media_import have real full-access + host-bridge support on the `grok` branch (crawl, Deep Fetch / Session Fetch, binary media collection, WiFi/system snapshots) with host-bridge/approval/scope requirements. Some guided panels remain more paste/preview oriented.
 - The contract view is a source policy + status view. Actual deep collection for supported types on grok uses the full-access routes + host bridge (see constants.ts and gateway full-access implementation). It does not perform silent external account scraping.
 
 Guided Upload:
@@ -187,11 +187,11 @@ User Observation Ingestion:
 
 Browser / Web / Router Import (grok full-access paths):
 
-- On the `grok` branch, "Deep scan", "Max reach", "Auto bypass", "Bypass fetch", and "Fetch public" panels (and Advanced full-access) call the real `/collection-runs/full-access` Rust endpoint (with web_only, auto_bypass, max_reach, bypass_auth flags) + host bridge / Playwright for live URL crawling, authorized session bypass, and content harvesting.
+- On the `grok` branch, "Deep Fetch", "Public Fetch", "Session Fetch", and "Fetch public" panels (and Advanced full-access) call the real `/collection-runs/full-access` Rust endpoint (with web_only, auto_bypass, max_reach, bypass_auth flags) + host bridge / Playwright for live URL crawling, authorized Session Fetch, and content capture.
 - Guided "paste" surfaces accept user-provided browser export text, page text, or router status text and treat them as manual_upload / reviewed extract.
 - Dry-run / preview panels summarize scope/exclusions/sensitivity before real collection.
-- Full paths can crawl, fetch full-res media from sources, and store artifacts + evidence with provenance.
-- Requirements and limits (honest): host bridge often needed for advanced tiers; approval may be required; user must supply their own session cookie/token for authenticated bypass (no silent account scraping); treat all fetched content as sensitive until reviewed; no router writes or credential capture.
+- Full paths can crawl, fetch full-res media from sources using Deep Fetch / Public Fetch / Session Fetch, and store artifacts + evidence with provenance.
+- Requirements and limits (honest): host bridge often needed for advanced tiers; approval may be required; user must supply their own session header (Cookie or Authorization) for Session Fetch (no silent account scraping or credential harvesting); treat all fetched content as sensitive until reviewed; no router writes or credential capture.
 - See constants.ts SOURCE_CONNECTOR_STATUS (browser_export, web_public, router_network) and the full-access implementation in crates/igy6-gateway.
 
 PDF / Image / Audio / Video Import (grok foundation + deep scan):
@@ -909,10 +909,10 @@ operator docs or scripts.
 ## Current Limitations (aligned to DIFF-249 verified table)
 
 - Core manual UTF-8 text paths (manual_upload, conversation_history, user_observation) are the most mature implemented flows.
-- On the `grok` branch, web/public URL, browser export, authorized bypass, media binary, and system/WiFi collection are implemented via full-access + host bridge (crawl, full-res media artifacts, Media Library viewing, system snapshots). See constants.ts and gateway full-access code.
-- Guided "paste/preview" panels for media/browser/router are often partial (metadata + user-provided extracted text) or status entries; the "Deep scan" / full-access buttons deliver the deeper implemented paths.
+- On the `grok` branch, web/public URL, browser export, authorized Session Fetch, media binary, and system/WiFi collection are implemented via full-access + host bridge (crawl, full-res media artifacts, Media Library viewing, system snapshots). See constants.ts and gateway full-access code.
+- Guided "paste/preview" panels for media/browser/router are often partial (metadata + user-provided extracted text) or status entries; the "Deep Fetch" / full-access buttons deliver the deeper implemented paths.
 - Automatic OCR / vision / audio transcription in guided panels is partial; full extraction is available on some deep paths and via provided text + library.
-- Host bridge is a dependency for the most aggressive web tiers (max reach, advanced auto bypass, Playwright).
+- Host bridge is a dependency for the most aggressive web tiers (Deep Fetch, advanced Session Fetch, Playwright).
 - All collection remains local-only, scope-bounded where configured, approval-aware, and sensitive-by-default. No external exfil.
 - Empty states are real. Advanced requires exact IDs/approvals.
 - Report/graph/prediction/improvement are implemented to the extent of their current records + pipelines (see verified table). Advanced autonomous reasoning/forecasting not claimed.

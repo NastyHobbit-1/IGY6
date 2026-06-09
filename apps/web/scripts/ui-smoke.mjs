@@ -139,17 +139,17 @@ includesAll("chat web fetch dock", uiCorpus, [
   "/api/bypass-intel/harvest",
   "BypassIntelPanel",
   "data-bypass-intel-panel",
-  "Bypass research (automatic)",
-  "/ensure-max-reach",
-  "Max reach bypass",
-  "data-max-reach-url-fetch",
-  "max_reach: true",
-  "max reach https://",
-  "auto bypass https://",
-  "fetch public https://",
+  "Deep fetch · Public fetch · Session fetch",  /* visible em text */
+  "/ensure-max-reach",  /* internal route kept */
+  "Deep fetch",
+  "data-max-reach-url-fetch",  /* data attr kept for behavior */
+  "max_reach: true",  /* payload field kept */
+  "deep fetch https://example.com",
+  "session fetch https://...",
+  "public fetch https://...",
   'data-chat-chip="open web fetch"',
   'data-chat-chip="help"',
-  'data-chat-chip="max reach https://example.com"'
+  "deep fetch https://example.com"  /* visible command example now present in ChatWebFetchDock help text */
 ]);
 
 includesAll("minimal ui mode", uiCorpus, [

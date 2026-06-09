@@ -8,10 +8,10 @@ export function ChatWebFetchDock() {
       <details open>
         <summary>
           <strong>Web fetch tools</strong>
-          <em>Auto bypass · public fetch · session bypass — also runnable from Chat</em>
+          <em>Deep fetch · Public fetch · Session fetch — also runnable from Chat</em>
         </summary>
         <p className="actionHint">
-          Say <code>max reach https://example.com</code>, <code>auto bypass https://...</code>, or <code>fetch public https://...</code> in Chat. Max reach auto-starts host bridge and Playwright on your PC.
+          Say <code>deep fetch https://example.com</code>, <code>session fetch https://...</code>, or <code>public fetch https://...</code> in Chat. Deep fetch starts host bridge and collection on your PC when needed.
         </p>
         <WebFetchToolsPanels />
       </details>

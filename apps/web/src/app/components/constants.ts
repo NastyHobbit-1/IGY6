@@ -410,7 +410,7 @@ export const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
     status: "implemented",
     defaultScope: "User-provided browser export or pasted page text only.",
     dryRun: "Preview in Web fetch paste panel or collection dry-run API.",
-    collect: "Paste via manual_upload or deep live collection (crawl, authorized bypass, media) via full-access + host bridge on grok branch.",
+    collect: "Paste via manual_upload or deep live collection (crawl, authorized session fetch, media) via full-access + host bridge on grok branch.",
     sensitivity: "Treat as sensitive until reviewed.",
     cleanupAudit: "Collection runs, artifacts, and audit records apply; credentials excluded by policy."
   },
@@ -418,7 +418,7 @@ export const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
     sourceType: "web_public",
     status: "implemented",
     defaultScope: "User-provided URL or manually pasted page text.",
-    dryRun: "Fetch public / auto bypass / max reach panels preview scope before collection.",
+    dryRun: "Public fetch / Deep fetch panels preview scope before collection.",
     collect: "Live URL fetch via full-access; paste via manual_upload in Web fetch tools.",
     sensitivity: "Public page does not mean safe to export externally.",
     cleanupAudit: "External fetch audit and collection run records are written locally."
@@ -606,9 +606,9 @@ export const WEB_FETCH_MAX_REACH_SCRIPT = `
       return;
     }
     button.disabled = true;
-    button.textContent = "Max reach running...";
+    button.textContent = "Deep fetch running...";
     writeResult(
-      "Preparing max reach",
+      "Preparing deep fetch",
       "Starting host bridge and Playwright on your PC if needed, then running strongest tier collection.",
       [{ label: "url", value: url }],
       ["First run may install Playwright browsers and take a few minutes."]
@@ -616,8 +616,8 @@ export const WEB_FETCH_MAX_REACH_SCRIPT = `
     try {
       await ensureMaxReachInfrastructure();
       writeResult(
-        "Max reach running",
-        "Infrastructure ready. Running all auto bypass tricks plus headed/CDP Playwright, multi-profile passes, scroll/expand harvest, and session re-fetch.",
+        "Deep fetch running",
+        "Infrastructure ready. Running deep collection with authorized techniques, Playwright, and session-assisted fetch.",
         [{ label: "url", value: url }],
         ["This can take several minutes."]
       );
@@ -643,10 +643,10 @@ export const WEB_FETCH_MAX_REACH_SCRIPT = `
         ? summary.auto_bypass_strategies.join(", ")
         : String(summary?.auto_bypass_strategies || "unknown");
       writeResult(
-        "Max reach complete",
+        "Deep fetch complete",
         "Best available content is stored locally. Open Chat and ask a question over evidence.",
         [
-          { label: "mode", value: String(summary?.mode || "web_max_reach_fetch") },
+          { label: "mode", value: String(summary?.mode || "web_deep_fetch") },
           { label: "winning strategies", value: strategies || "none recorded" },
           { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
           { label: "evidence items", value: String(summary?.total_evidence ?? "unknown") },
@@ -655,19 +655,19 @@ export const WEB_FETCH_MAX_REACH_SCRIPT = `
         [
           "Open the Work tab to confirm processing finished.",
           "Open Chat and ask questions over the fetched page.",
-          "For CDP attach, start Chrome with --remote-debugging-port=9222 and set MAX_REACH_CDP_PORT=9222."
+          "For advanced attach, start Chrome with --remote-debugging-port=9222."
         ]
       );
     } catch (error) {
       writeResult(
-        "Max reach failed",
+        "Deep fetch failed",
         error instanceof Error ? error.message : "Unknown error",
         [],
-        ["Run once if needed: pwsh -File scripts\\\\start-stack.ps1", "Try bypass fetch with a fresh cookie if the site requires your account."]
+        ["Run once if needed: pwsh -File scripts\\\\start-stack.ps1", "Try session fetch with a fresh session header if the site requires your account."]
       );
     } finally {
       button.disabled = false;
-      button.textContent = "Max reach fetch";
+      button.textContent = "Deep fetch";
     }
   });
   };
@@ -741,18 +741,18 @@ export const WEB_FETCH_AUTO_BYPASS_SCRIPT = `
       return;
     }
     button.disabled = true;
-    button.textContent = "Auto bypassing...";
+    button.textContent = "Deep fetching...";
     writeResult(
-      "Preparing auto bypass",
-      "Starting host bridge on your PC if needed, then running full automatic bypass.",
+      "Preparing deep fetch",
+      "Starting host bridge on your PC if needed, then running deep collection.",
       [{ label: "url", value: url }],
       []
     );
     try {
       await ensureHostBridgeInfrastructure();
       writeResult(
-        "Auto bypass running",
-        "Running HTTP tricks, devtools cookie harvest, Playwright, and session bypass fetch.",
+        "Deep fetch running",
+        "Running authorized collection techniques, Playwright, and session-assisted fetch.",
         [{ label: "url", value: url }],
         []
       );
@@ -777,7 +777,7 @@ export const WEB_FETCH_AUTO_BYPASS_SCRIPT = `
         ? summary.auto_bypass_strategies.join(", ")
         : String(summary?.auto_bypass_strategies || "unknown");
       writeResult(
-        "Auto bypass complete",
+        "Deep fetch complete",
         "Best available page content is stored locally. Open Chat and ask a question over evidence.",
         [
           { label: "winning strategies", value: strategies || "none recorded" },
@@ -788,19 +788,19 @@ export const WEB_FETCH_AUTO_BYPASS_SCRIPT = `
         [
           "Open the Work tab to confirm processing finished.",
           "Open Chat and ask questions over the fetched page.",
-          "Hard account walls may still need Bypass fetch with your own cookie below."
+          "Hard account walls may still need Session fetch with your own session header below."
         ]
       );
     } catch (error) {
       writeResult(
-        "Auto bypass failed",
+        "Deep fetch failed",
         error instanceof Error ? error.message : "Unknown error",
         [],
-        ["Try a different URL.", "If the site requires your account, use Bypass fetch with a cookie header."]
+        ["Try a different URL.", "If the site requires your account, use Session fetch with a session header."]
       );
     } finally {
       button.disabled = false;
-      button.textContent = "Auto bypass fetch";
+      button.textContent = "Deep fetch";
     }
   });
   };
@@ -869,11 +869,10 @@ export const WEB_FETCH_BYPASS_SCRIPT = `
       return;
     }
     button.disabled = true;
-    button.textContent = "Bypass fetching...";
-    writeResult("Bypass fetching", "Using your authorized session to fetch and store the page locally.", [
+    button.textContent = "Session fetching...";
+    writeResult("Session fetching", "Using your provided session header to fetch and store the page locally.", [
       { label: "url", value: url },
-      { label: "cookie", value: cookie ? "provided" : "not provided" },
-      { label: "authorization", value: authorization ? "provided" : "not provided" }
+      { label: "session header", value: cookie || authorization ? "provided" : "not provided" }
     ], []);
     try {
       const body = {
@@ -898,7 +897,7 @@ export const WEB_FETCH_BYPASS_SCRIPT = `
       }
       const summary = payload?.summary_json || payload?.summary || payload;
       writeResult(
-        "Bypass fetch complete",
+        "Session fetch complete",
         "Authorized page content is stored locally. Open Chat and ask a question over evidence.",
         [
           { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
@@ -908,19 +907,19 @@ export const WEB_FETCH_BYPASS_SCRIPT = `
         [
           "Open the Work tab to confirm processing finished.",
           "Open Chat and ask questions over the fetched page.",
-          "If the session expired, copy a fresh Cookie header and try again."
+          "If the session expired, provide a fresh session header and try again."
         ]
       );
     } catch (error) {
       writeResult(
-        "Bypass fetch failed",
+        "Session fetch failed",
         error instanceof Error ? error.message : "Unknown error",
         [],
-        ["Refresh your browser session cookie and retry.", "Heavy JavaScript sites may still need manual paste below."]
+        ["Refresh your browser session header and retry.", "Heavy JavaScript sites may still need manual paste below."]
       );
     } finally {
       button.disabled = false;
-      button.textContent = "Bypass fetch";
+      button.textContent = "Session fetch";
     }
   });
   };
@@ -973,8 +972,8 @@ export const WEB_FETCH_PUBLIC_SCRIPT = `
       return;
     }
     button.disabled = true;
-    button.textContent = "Fetching...";
-    writeResult("Fetching", "Downloading the public page and storing it locally. This can take up to a minute.", [
+    button.textContent = "Public fetching...";
+    writeResult("Public fetching", "Downloading the public page and storing it locally. This can take up to a minute.", [
       { label: "url", value: url }
     ], []);
     try {
@@ -995,7 +994,7 @@ export const WEB_FETCH_PUBLIC_SCRIPT = `
       }
       const summary = payload?.summary_json || payload?.summary || payload;
       writeResult(
-        "Page fetched",
+        "Public page captured",
         "Public page content is stored locally. Open Chat and ask a question over evidence.",
         [
           { label: "pages crawled", value: String(summary?.crawled_pages ?? summary?.web_scraped ?? "unknown") },
@@ -1005,7 +1004,7 @@ export const WEB_FETCH_PUBLIC_SCRIPT = `
         [
           "Open the Work tab to confirm processing finished.",
           "Open Chat and ask: What does this page say about ...?",
-          "Login-only pages still need copy/paste into Guided Upload below."
+          "Account-only pages still need Session fetch or copy/paste into Guided Upload below."
         ]
       );
     } catch (error) {
