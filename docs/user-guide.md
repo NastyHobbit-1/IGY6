@@ -212,9 +212,12 @@ Run the focused UI workflow smoke check with:
 
 ```bash
 npm --prefix apps/web run test:ui-smoke
+npm --prefix apps/web run test:ui-runtime-smoke
+npm --prefix apps/web run typecheck
+# combined: npm --prefix apps/web run check
 ```
 
-The check verifies the Home, Assistant, Data & Knowledge, Work & Processing,
+The (static + runtime) checks verify the Home, Assistant, Data & Knowledge, Work & Processing,
 Reports, Safety & Audit, and Settings workflow contract. It also checks that
 Assistant action buttons start gated, Advanced panels preserve raw/debug
 controls, and manual upload guidance remains visible.

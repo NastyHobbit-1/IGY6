@@ -200,7 +200,10 @@ cargo test --workspace
 
 # 5. Web build + UI contract
 npm --prefix apps/web run build
+npm --prefix apps/web run typecheck
 npm --prefix apps/web run test:ui-smoke
+npm --prefix apps/web run test:ui-runtime-smoke
+# (or the combined) npm --prefix apps/web run check
 
 # 6. Evidence answer (expect insufficient_evidence if no data yet)
 $body = '{"message":"test","limit":5}'
