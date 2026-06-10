@@ -31,14 +31,14 @@ function loadUiSources() {
   const componentPaths = walkSourceFiles(componentsDir).sort((left, right) => {
     const leftRelative = relative(componentsDir, left);
     const rightRelative = relative(componentsDir, right);
-    if (leftRelative === "HomePage.tsx") return -1;
-    if (rightRelative === "HomePage.tsx") return 1;
+    if (leftRelative === "ProductApp.tsx") return -1;
+    if (rightRelative === "ProductApp.tsx") return 1;
     return leftRelative.localeCompare(rightRelative);
   });
 
   const componentFiles = componentPaths.map((filePath) => ({
     path: relative(appRoot, filePath).replace(/\\/g, "/"),
-    content: readFileSync(filePath, "utf8")
+    content: readFileSync(filePath, "utf8"),
   }));
 
   const uiCorpus = [page, ...componentFiles.map((file) => file.content)].join("\n");
@@ -60,311 +60,136 @@ function includesAll(name, text, values) {
   }
 }
 
-function appearsAfterInSomeFile(name, earlier, later) {
-  const matched = componentFiles.some((file) => {
-    const earlierIndex = file.content.indexOf(earlier);
-    const laterIndex = file.content.indexOf(later);
-    return earlierIndex >= 0 && laterIndex > earlierIndex;
-  });
-  check(`${name}: ${later} appears after ${earlier} in a component file`, matched);
-}
+const { page: pageContent, uiCorpus: corpus } = { page, uiCorpus };
 
-check("page entry re-exports HomePage", page.includes('import { HomePage } from "./components/HomePage";'));
-check("page entry exports HomePage default", page.includes("export default HomePage;"));
-check("HomePage component exists", existsSync(join(componentsDir, "HomePage.tsx")));
+check("page entry imports ProductApp", pageContent.includes('import { ProductApp } from "./components/ProductApp";'));
+check("page entry exports ProductApp default", pageContent.includes("export default ProductApp;"));
+check("ProductApp component exists", existsSync(join(componentsDir, "ProductApp.tsx")));
 check("components directory is populated", componentFiles.length >= 40);
 
-includesAll("top-level tabs", uiCorpus, [
-  'htmlFor="tab-results">Chat',
-  'htmlFor="tab-add-data">Data',
-  'htmlFor="tab-work">Work',
-  'htmlFor="tab-settings">Settings',
-  'htmlFor="tab-advanced">More'
+includesAll("product navigation", corpus, [
+  "data-product-app",
+  "data-product-nav",
+  "data-product-section",
+  "Command Center",
+  "Add Information",
+  "Evidence",
+  "Activity",
+  "System",
+  "Settings",
+  "igy6SwitchSection",
 ]);
 
-includesAll("chat-first shell", uiCorpus, [
+includesAll("chat command center", corpus, [
   "data-unified-chat",
   "data-chat-input",
   "data-chat-send",
   "data-chat-chip",
   "data-chat-wired",
   "UnifiedChatHub",
-  "OnboardingJourney",
-  "journeyStrip",
-  "chatFirstShell",
   "ClientScript",
-  "Ask a question or request an action..."
+  "Ask a question or request an action...",
+  "data-chat-preview-form",
 ]);
 
-includesAll("browser api proxies", uiCorpus, [
+includesAll("add information flow", corpus, [
+  "data-add-information",
+  "Add text",
+  "Add a website",
+  "Add a local folder",
+  "data-add-submit",
+  "/api/collection-runs/full-access",
+]);
+
+includesAll("browser api proxies", corpus, [
   "/api/user/status",
   "/api/user/change-password",
   "/api/artifacts",
   "/api/collection-runs/full-access",
-  "/api/chat/evidence-answer"
+  "/api/chat/evidence-answer",
+  "/api/memory/vector/chunks/ensure",
 ]);
 
 const requiredApiRoutes = [
   "user/status/route.ts",
   "user/change-password/route.ts",
-  "user/generate-totp/route.ts",
-  "user/confirm-totp/route.ts",
   "artifacts/route.ts",
   "artifacts/[artifact_id]/content/route.ts",
   "collection-runs/full-access/route.ts",
   "host-bridge/ensure-max-reach/route.ts",
-  "bypass-intel/status/route.ts",
-  "bypass-intel/harvest/route.ts",
   "chat/evidence-answer/route.ts",
   "chat/retrieval-preview/route.ts",
+  "memory/vector/chunks/ensure/route.ts",
   "settings/env/route.ts",
   "settings/env/verify/route.ts",
-  "settings/env/apply/route.ts"
+  "settings/env/apply/route.ts",
+  "work-items/[work_item_id]/status/route.ts",
 ];
 
 for (const route of requiredApiRoutes) {
   check(`api route file: ${route}`, existsSync(join(apiDir, route)));
 }
 
-includesAll("chat web fetch dock", uiCorpus, [
-  "ChatWebFetchDock",
-  'id="chat-web-fetch"',
-  "data-chat-web-fetch",
-  "Web fetch tools",
-  "executeChatCommand",
-  "ensureMaxReachInfrastructure",
-  "ensureHostBridgeInfrastructure",
-  "/api/host-bridge/ensure-max-reach",
-  "/api/bypass-intel/status",
-  "/api/bypass-intel/harvest",
-  "BypassIntelPanel",
-  "data-bypass-intel-panel",
-  "Deep fetch · Public fetch · Session fetch",  /* visible em text */
-  "/ensure-max-reach",  /* internal route kept */
-  "Deep fetch",
-  "data-max-reach-url-fetch",  /* data attr kept for behavior */
-  "max_reach: true",  /* payload field kept */
-  "deep fetch https://example.com",
-  "session fetch https://...",
-  "public fetch https://...",
-  'data-chat-chip="open web fetch"',
-  'data-chat-chip="help"',
-  "deep fetch https://example.com"  /* visible command example now present in ChatWebFetchDock help text */
-]);
-
-includesAll("minimal ui mode", uiCorpus, [
-  "data-minimal-ui-root",
-  "data-minimal-ui-toggle",
-  "MINIMAL_UI_TOGGLE_SCRIPT",
-  "MinimalWorkspacePanel",
-  "data-minimal-workspace",
-  "interpretFetchIntent",
-  "pendingClarification",
-  "Do you want me to try and get the paid or locked content from",
-  "Simple mode"
-]);
-
-includesAll("implemented collection panels", uiCorpus, [
-  "data-bwr-collect",
-  "Collect pasted text",
-  "data-lp-collect",
-  "Collect scoped import",
-  "data-media-collect-text",
-  "Collect extracted text",
+includesAll("evidence and activity sections", corpus, [
+  'id="evidence-panel"',
+  "productEvidenceCard",
+  'id="work-processing"',
+  "productActivityCard",
   "PipelineOperationsPanel",
   "data-pipeline-operations",
-  "data-hypothesis-create-form",
-  "data-experiment-status-button",
-  "data-graph-lineage-ops",
-  "agent_action"
 ]);
 
-includesAll("workflow section anchors", uiCorpus, [
-  'id="home"',
-  'id="assistant"',
-  'id="chat-web-fetch"',
-  'id="data-knowledge"',
-  'id="sources-panel"',
-  'id="uploads-collection"',
-  '#browser-web-router-import">Web fetch',
-  'id="evidence-panel"',
-  'id="memory-panel"',
-  'id="analysis-panel"',
-  'id="data-search"',
-  'id="work-processing"',
-  'id="reports"',
-  'id="safety-audit"',
-  'id="settings"',
-  'id="user-security"'
-]);
-
-includesAll("settings hub navigation", uiCorpus, [
-  "SettingsHubNav",
-  "settingsHubNav",
+includesAll("system and settings", corpus, [
+  'id="advanced-diagnostics"',
+  "productServiceGrid",
+  "StackRestartPanel",
+  "data-stack-restart",
+  "SettingsPanel",
+  "data-settings-env",
   "UserSecurityPanel",
-  "data-settings-wired",
-  "Configuration",
-  "User &amp; Security",
-  "Safety & Audit"
 ]);
 
-includesAll("tab panel mapping", uiCorpus, [
-  'data-tab-panel="home"',
-  'data-tab-panel="add-data"',
-  'data-tab-panel="work"',
-  'data-tab-panel="results"',
-  'data-tab-panel="settings"',
-  'data-tab-panel="advanced"'
+includesAll("plain language policy", corpus, [
+  "Technical details",
+  "What IGY6 found",
+  "Ask IGY6",
+  "Bring information into IGY6",
 ]);
 
-check(
-  "old navigation array is not restored",
-  !uiCorpus.includes('["Chat", "Agent Command", "Sources", "Evidence", "Memory", "Work Queue", "Approvals", "Reports", "Audit", "Settings"]')
-);
-
-includesAll("assistant action labels", uiCorpus, [
-  "Show project health",
-  "Show git status",
-  "Show latest DIFF",
-  "Show work items",
-  "Run retrieval preview",
-  "Start stack",
-  "Stop stack",
-  "Run last healthy stack"
+includesAll("legacy tab sync for chat navigation", corpus, [
+  'id="tab-results"',
+  'id="tab-add-data"',
+  'id="tab-work"',
+  'id="tab-settings"',
+  'id="tab-advanced"',
+  "legacySectionMap",
 ]);
 
-includesAll("assistant action gating controls", uiCorpus, [
-  "data-agent-preview",
-  "data-agent-execute disabled",
-  "data-agent-request-approval disabled",
-  "data-agent-execute-approved disabled",
-  "Preview action",
-  "Run safe action",
-  "Request approval",
-  "Run with approval"
-]);
-
-includesAll("assistant evidence controls", uiCorpus, [
-  "Ask a question or request an action...",
-  "Ask over evidence",
-  "What does this document say about my bill?",
-  "What failed in this build log? Cite the evidence.",
-  "deterministic evidence",
-  "local LLM evidence-grounded",
-  "unavailable until model is selected"
-]);
-
-includesAll("local llm status copy", uiCorpus, [
-  "Local LLM Status",
-  "Provider",
-  "Health status",
-  "Answer mode",
-  "Evidence required",
-  "Use local model to summarize uploaded warranty note using only evidence.",
-  "Use local model to explain build log failure with citations.",
-  "Advanced: raw provider diagnostics",
-  "No model calls are made while LLM_PROVIDER is none"
-]);
-
-includesAll("advanced panels", uiCorpus, [
-  "<details",
-  "Advanced: raw parameters, approval ID, response JSON, and route details",
-  "Advanced: source IDs, permission IDs, and raw source data",
-  "Advanced: raw artifact IDs, collection run IDs, and upload JSON",
-  "Advanced: dispatch controls, work item IDs, and raw queue JSON",
-  "Advanced: approval IDs, audit JSON, route filters, and raw safety records",
-  "Advanced: report render route, report IDs, output JSON, and export details",
-  "Advanced Route Console"
-]);
-
-appearsAfterInSomeFile(
-  "raw parameters hidden behind advanced",
-  "Advanced: raw parameters, approval ID, response JSON, and route details",
-  "Raw parameters JSON"
-);
-
-appearsAfterInSomeFile(
-  "approval id hidden behind advanced",
-  "Advanced: raw parameters, approval ID, response JSON, and route details",
-  "Approval ID for approved action"
-);
-
-appearsAfterInSomeFile(
-  "legacy route console hidden behind advanced",
-  "Advanced Route Console",
-  "<MvpActionConsole />"
-);
-
-includesAll("manual upload guided workflow", uiCorpus, [
-  "Guided Upload",
-  "Step 1: Select or create source.",
-  "Step 2: Check approval status.",
-  "Step 3: Request approval if required.",
-  "Step 4: Upload text or a safe file extract.",
-  "Step 5: Review created records.",
-  "Step 6: Next action.",
-  "Router Troubleshooting Notes",
-  "IGY6 Build Logs",
-  "Allow IGY6 to process this uploaded troubleshooting note.",
-  "Approve processing this local build log for evidence extraction."
-]);
-
-includesAll("empty and next-step guidance states", uiCorpus, [
-  "No sources registered yet.",
-  "No collection runs recorded yet.",
-  "No evidence items recorded yet.",
-  "No work items recorded yet.",
-  "No approvals recorded yet.",
-  "No reports recorded yet.",
-  "Add a data source first.",
-  "Add approved text and check processing.",
-  "Ask a question over local evidence."
-]);
-
-includesAll("safety posture", uiCorpus, [
-  "local-first",
-  "System ready",
-  "Background worker ready",
-  "Rust API",
-  "Rust worker",
-  "Legacy API",
-  "inactive / archived",
-  "Legacy scheduler",
-  "approval-gated",
-  "Background processing is ready",
-  "Old Python services"
-]);
-
-includesAll("split component structure", uiCorpus, [
-  "export async function HomePage",
+includesAll("split component structure", corpus, [
+  "export async function ProductApp",
   "export function UnifiedChatHub",
-  "export function GuidedManualTextUpload",
-  "export function LifecycleAuditStatusPanel",
+  "export function AddInformationFlow",
   "export function SettingsPanel",
-  "export function PipelineOperationsPanel"
+  "export function PipelineOperationsPanel",
+  "export function StackRestartPanel",
 ]);
 
 includesAll("supporting styles", styles, [
-  ".productTabs",
-  ".tabList",
-  ".tabContent",
-  ".readinessStrip",
-  ".runtimePosture",
-  ".primaryWorkflowGrid",
-  ".advancedPanel",
-  ".workflowSteps",
-  ".workflowTabs",
-  ".lifecycleFlow",
-  ".fieldGuide",
-  ".quickStartGrid",
+  ".igy6-app",
+  ".productSidebar",
+  ".productNavButton",
+  ".productSection",
+  ".productEvidenceCard",
+  ".productServiceGrid",
   ".unifiedChatHub",
   ".chatComposer",
   ".chatQuickChips",
-  ".chatEnginePanel",
-  ".chatFirstShell",
-  ".journeyStrip",
-  ".journeyCard",
-  ".chatWebFetchDock"
+]);
+
+includesAll("safety posture", corpus, [
+  "local-first",
+  "approval",
+  "Technical details",
 ]);
 
 if (failures.length > 0) {

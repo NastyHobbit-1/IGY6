@@ -1,3 +1,3 @@
-import { HomePage } from "./components/HomePage";
+import { ProductApp } from "./components/ProductApp";
 
-export default HomePage;
+export default ProductApp;

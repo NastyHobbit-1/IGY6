@@ -48,7 +48,26 @@ export function UnifiedChatHub({
 
   const tabFor = (id) => document.getElementById(id);
 
+  const legacySectionMap = {
+    "tab-results": "command",
+    "tab-add-data": "add",
+    "tab-work": "activity",
+    "tab-settings": "settings",
+    "tab-advanced": "system",
+    "tab-home": "command"
+  };
+
   const switchTab = (tabId) => {
+    const productSection = legacySectionMap[tabId];
+    if (productSection && typeof window.igy6SwitchSection === "function") {
+      window.igy6SwitchSection(productSection, null);
+      const tab = tabFor(tabId);
+      if (tab) {
+        tab.checked = true;
+        tab.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return true;
+    }
     const tab = tabFor(tabId);
     if (!tab) return false;
     tab.checked = true;
@@ -58,6 +77,22 @@ export function UnifiedChatHub({
 
   const scrollToSection = (sectionId) => {
     if (!sectionId) return;
+    const sectionMap = {
+      "evidence-panel": "evidence",
+      "work-processing": "activity",
+      "uploads-collection": "add",
+      "settings": "settings",
+      "safety-audit": "settings",
+      "advanced-diagnostics": "system",
+      "assistant": "command",
+      "chat-web-fetch": "command",
+      "browser-web-router-import": "add"
+    };
+    const productSection = sectionMap[sectionId];
+    if (productSection && typeof window.igy6Navigate === "function") {
+      window.igy6Navigate(productSection, sectionId);
+      return;
+    }
     requestAnimationFrame(() => {
       document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });

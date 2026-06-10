@@ -19,17 +19,18 @@ Evidence Workspace**.
 
 Stop with `igy6 stop` or the matching stop/restart scripts.
 
-## Main Areas (Easy to Use on This Branch)
+## Main Areas (DIFF-256 product shell)
 
-- Home: quick readiness and recent activity.
-- Add Data / Collector: deep thorough collection controls. Point at URLs, local paths, or "everything". It extracts complete info and full/original-res images & videos directly from their sources.
-- Media Library: simple grid of collected images and videos. Click any for full-res viewer (real original bytes via the content endpoint). Refresh after scans.
-- Work / Results / Evidence: processing state, evidence, answers, reports, graph.
-- Settings / User & Security (user section):
-  - Change password (enter current + new).
-  - Generate secret + otpauth URL (any authenticator app), then confirm a code from the app to enable TOTP (off by default).
-  - Check status.
-- Advanced: diagnostics only when needed.
+The default UI uses six clear sections:
+
+- **Command Center** — central chat, quick actions, runtime snapshot, recent activity.
+- **Add Information** — one flow for text, websites, and local folders (supported routes only).
+- **Evidence** — readable evidence cards; technical IDs under expandable details.
+- **Activity** — processing, collections, approvals, and pipeline status in plain language.
+- **System** — service health with honest Running / Needs attention / Not configured labels.
+- **Settings** — ports, storage, local model, restart stack, user security; raw env JSON only in Advanced.
+
+Legacy `HomePage.tsx` remains in the repo for reference but is no longer the page entrypoint.
 
 Use the collector for aggressive local/web/system collection (password + optional totp_code required for protected calls). View results in the Media Library and Results areas. Manage your password and optional authenticator in User & Security. Everything is tied into real local artifacts, evidence, graph, and audit.
 
