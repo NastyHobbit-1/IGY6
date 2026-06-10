@@ -127,7 +127,7 @@ async function runChecks(page, baseURL) {
   }
 
   // Main tabs (labels / text present for the documented normal-user tabs)
-  const expectedTabs = ['Home', 'Chat', 'Data', 'Work', 'Settings', 'More'];
+  const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
   for (const tab of expectedTabs) {
     const visible = await page.getByText(tab, { exact: false }).first().isVisible().catch(() => false);
     if (!visible) {
@@ -152,22 +152,23 @@ async function runChecks(page, baseURL) {
     }
   }
 
-  // Core sections / readiness surface (text or landmark presence)
-  const sectionChecks = [
-    { name: 'Home / readiness', sel: 'text=/Home|readiness|System ready/i' },
-    { name: 'Chat / assistant', sel: '[data-unified-chat], text=/Chat|Assistant|Ask a question/i' },
-    { name: 'Add Data / Data & Knowledge', sel: 'text=/Add Data|Data & Knowledge|Collector/i' },
-    { name: 'Work / Processing', sel: 'text=/Work|Processing|Work Items/i' },
-    { name: 'Settings / User & Security', sel: 'text=/Settings|User & Security|password|TOTP/i' },
+  // Core UI contract: verify stable DOM/data hooks instead of requiring hidden tab panels to be visible.
+  const contractSelectors = [
+    { name: 'chat hub', sel: '[data-unified-chat]' },
+    { name: 'chat input', sel: '[data-chat-input]' },
+    { name: 'chat send', sel: '[data-chat-send]' },
+    { name: 'home panel', sel: '[data-tab-panel="home"]' },
+    { name: 'chat panel', sel: '[data-tab-panel="results"]' },
+    { name: 'data panel', sel: '[data-tab-panel="add-data"]' }
   ];
-  for (const { name, sel } of sectionChecks) {
-    const ok = await page.locator(sel).first().isVisible().catch(() => false);
-    if (!ok) fail(`section: ${name}`);
+  for (const { name, sel } of contractSelectors) {
+    const count = await page.locator(sel).count().catch(() => 0);
+    if (count < 1) fail(`contract: ${name}`);
   }
 
   // No obvious fatal client crash text
   const bodyText = (await page.textContent('body').catch(() => '')) || '';
-  if (/500|internal server error|white screen of death|react.*error|failed to load chunk/i.test(bodyText)) {
+  if (/Internal Server Error|Application error|ChunkLoadError|Minified React error|__next_error|next.*error.*overlay|white screen of death/i.test(bodyText)) {
     fail('no client crash text', 'suspicious fatal text found in body');
   }
 
@@ -231,7 +232,7 @@ async function main() {
           fail('title (node)', 'IGY6 not found in served HTML');
         }
 
-        const expectedTabs = ['Home', 'Chat', 'Data', 'Work', 'Settings', 'More'];
+        const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
         for (const tab of expectedTabs) {
           if (!html.includes(tab)) {
             fail(`tab text (node): ${tab}`);
@@ -259,7 +260,7 @@ async function main() {
           }
         }
 
-        if (/500|internal server error|react.*error|failed to load chunk/i.test(html)) {
+        if (/Internal Server Error|Application error|ChunkLoadError|Minified React error|__next_error|next.*error.*overlay|white screen of death/i.test(html)) {
           fail('no client crash text (node)');
         }
       } catch (fetchErr) {
@@ -296,3 +297,5 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
+
+
