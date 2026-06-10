@@ -209,6 +209,7 @@ pub struct GatewayRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct GatewayResponse {
     pub status_code: u16,
     pub reason: String,
