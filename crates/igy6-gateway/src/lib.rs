@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::process::Command; // for system snapshots (ps, nmcli, ip, etc.) on grok full-access mode
-                           // On grok branch full power (user override: any and everything accessible, stored only locally, no exfil)
-use base64::Engine; // for content base64 in media library (grok)
+use std::process::Command; // for system snapshots (ps, nmcli, ip, etc.) on IGY6 full-access mode
+                           // On IGY6 full power (user override: any and everything accessible, stored only locally, no exfil)
+use base64::Engine; // for content base64 in media library (IGY6)
 use igy6_artifacts::detect_content_kind;
 use std::env;
 use std::fmt;
@@ -10,9 +10,12 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use totp_rs::{Algorithm, Secret, TOTP}; // for optional authenticator TOTP (grok, off by default)
+
+static FULL_ACCESS_COLLECT_ACTIVE: AtomicBool = AtomicBool::new(false);
+use totp_rs::{Algorithm, Secret, TOTP}; // for optional authenticator TOTP (off by default)
 use ureq; // for web scraping / URL collection
 use walkdir::WalkDir;
 
@@ -20,7 +23,7 @@ use igy6_agent_api::{
     action_definition, classify_agent_intent, understand_user_request, AgentActionDefinition,
     AgentIntentRequest, ACTION_REGISTRY,
 };
-use igy6_artifacts::{extract_text_if_possible, ArtifactStore, StoredArtifact}; // grok: now does real deep PDF (and other media) text extraction
+use igy6_artifacts::{extract_text_if_possible, ArtifactStore, StoredArtifact}; // igy6: now does real deep PDF (and other media) text extraction
 use igy6_evidence_answer::{
     answer_with_optional_llm, answer_with_optional_llm_for_task,
     deterministic_fallback_for_llm_config_error,
@@ -88,7 +91,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/approvals/{approval_id}/decision"),
     ("GET", "/artifacts"),
     ("GET", "/artifacts/{artifact_id}"),
-    ("GET", "/artifacts/{artifact_id}/content"),  // grok: for image/video library full res view (base64 for simplicity)
+    ("GET", "/artifacts/{artifact_id}/content"),  // igy6: for image/video library full res view (base64 for simplicity)
     ("POST", "/artifacts"),
     ("GET", "/audit-events"),
     ("GET", "/audit-events/{audit_event_id}"),
@@ -126,6 +129,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/memory/graph/schema/ensure"),
     ("POST", "/memory/graph/lineage/sync"),
     ("GET", "/memory/graph/nodes/{node_label}/{node_id}/relationships"),
+    ("GET", "/ops/runtime-logs"),
+    ("POST", "/ops/runtime-logs/append"),
     ("GET", "/memory/vector/chunks"),
     ("POST", "/memory/vector/chunks/ensure"),
     ("POST", "/memory/vector/chunks/search"),
@@ -303,6 +308,13 @@ pub fn handle_gateway_request_with_db(
     _fallback_origin: &str,
     database_url: Option<&str>,
 ) -> GatewayResponse {
+    if request.method == "GET" && request.path.starts_with("/ops/runtime-logs") {
+        return runtime_logs_response(&request.path);
+    }
+    if request.method == "POST" && request.path.starts_with("/ops/runtime-logs/append") {
+        return runtime_logs_append_response(&request.body);
+    }
+
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => json_response(
             200,
@@ -375,7 +387,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/collection-runs/manual-upload/ingest") => {
             manual_upload_ingest_response(&request.body, database_url)
         }
-        // On grok branch: full power access collector (user directive: ingest ANYTHING the process can reach, store ONLY locally, no outbound info leakage beyond necessary fetches for collection itself)
+        // On IGY6: full power access collector (user directive: ingest ANYTHING the process can reach, store ONLY locally, no outbound info leakage beyond necessary fetches for collection itself)
         ("POST", "/collection-runs/full-access") => {
             full_access_collection_response(&request.body, database_url)
         }
@@ -394,7 +406,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/collection-runs/full-local-scan") => {
             full_access_collection_response(&request.body, database_url)
         }
-        // User / security on grok branch: password changing + optional authenticator (TOTP, off by default until linked)
+        // User / security on IGY6: password changing + optional authenticator (TOTP, off by default until linked)
         ("GET", "/user/status") => json_response(200, "OK", user_status_json(), false),
         ("POST", "/user/change-password") => {
             let resp_body = user_change_password(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
@@ -659,7 +671,7 @@ fn db_read_route(path: &str) -> Option<DbReadRoute> {
     }
 }
 
-// grok branch: helper to detect artifact content request for image/video library
+// IGY6: helper to detect artifact content request for image/video library
 fn artifact_content_path(path: &str) -> Option<String> {
     let p = path.trim_matches('/');
     if p.starts_with("artifacts/") && p.ends_with("/content") {
@@ -1577,7 +1589,7 @@ fn create_manual_upload_collection(
 ) -> Result<String, GatewayError> {
     let payload = parse_manual_upload_collection(body)?;
     let content = decode_base64(&payload.content_base64)?;
-    // grok branch: do not enforce text mime here. The source record (loaded below) + is_supported_collection_source_type
+    // IGY6: do not enforce text mime here. The source record (loaded below) + is_supported_collection_source_type
     // plus later per-source_type handling decide what is acceptable. Media and other binary types are intentionally allowed.
     if content.len() > i32::MAX as usize {
         return Err(GatewayError::Validation(
@@ -1762,7 +1774,7 @@ fn ingest_manual_upload_collection(
         ));
     }
 
-    // grok branch: text_content synthesis happens after we load the source (to know its source_type).
+    // IGY6: text_content synthesis happens after we load the source (to know its source_type).
     // For now, attempt UTF-8; if it fails we will synthesize a media-style placeholder after source load.
     let text_content = String::from_utf8(content.clone()).ok();
 
@@ -1786,16 +1798,16 @@ fn ingest_manual_upload_collection(
         )));
     }
 
-    // grok branch: synthesize placeholder text_content for non-text or failed-utf8 media/browser/etc sources
+    // IGY6: synthesize placeholder text_content for non-text or failed-utf8 media/browser/etc sources
     // so the rest of the pipeline (normalized document + chunks + evidence) still runs and produces traceable records.
-    // grok branch: use real deep extraction for PDF/media when possible (even in manual paths)
+    // IGY6: use real deep extraction for PDF/media when possible (even in manual paths)
     let kind_for_extract = detect_content_kind(&content, upload.filename.as_deref());
     let extracted = extract_text_if_possible(&content, &kind_for_extract);
     let text_content: String = extracted.unwrap_or_else(|| {
         text_content.unwrap_or_else(|| {
             let mime = upload.mime_type.as_deref().unwrap_or("application/octet-stream");
             format!(
-                "[Non-text / binary content registered via grok branch collector foundations]\nsource_type: {}\nMIME: {}\noriginal_size_bytes: {}\nfilename: {}\n\nThis document acts as a provenance stub. (Deep PDF/media extraction attempted.)",
+                "[Non-text / binary content registered via IGY6 collector foundations]\nsource_type: {}\nMIME: {}\noriginal_size_bytes: {}\nfilename: {}\n\nThis document acts as a provenance stub. (Deep PDF/media extraction attempted.)",
                 source.source_type,
                 mime,
                 content.len(),
@@ -2128,7 +2140,7 @@ fn create_local_project_collection(
 }
 
 // ============================================================================
-// GROK BRANCH FULL-ACCESS COLLECTOR (per user directive on this branch only)
+// IGY6 FULL-ACCESS COLLECTOR
 // "get any and everything that it has access to and store it only in itself
 //  no info should be sent out" (except the collection fetches themselves).
 // No "no scraping", no artificial bounds, no "user-provided only".
@@ -2581,16 +2593,21 @@ fn auto_bypass_resolve(
     original_url: &str,
     max_reach: bool,
     max_depth: u32,
+    crawl_depth: usize,
 ) -> Option<AutoBypassFetchResult> {
+    let original_url = normalize_crawl_url(original_url);
+    if is_static_asset_url(&original_url) || is_direct_media_cdn_url(&original_url) {
+        return None;
+    }
     let mut best: Option<AutoBypassFetchResult> = None;
     let mut best_score = i64::MIN;
 
     // Fast path: one direct fetch is enough for most public pages.
-    if let Some(mut direct) = fetch_url_with_headers(agent, original_url, &anon_headers()) {
+    if let Some(mut direct) = fetch_url_with_headers(agent, &original_url, &anon_headers()) {
         direct.strategy = "direct+fast_path".to_string();
         if auto_bypass_http_result_usable(&direct)
             && !max_reach
-            && !bypass_intel::is_paid_content_platform_url(original_url)
+            && !bypass_intel::is_paid_content_platform_url(&original_url)
         {
             return Some(direct);
         }
@@ -2601,8 +2618,8 @@ fn auto_bypass_resolve(
         }
     }
 
-    let playbook_headers = bypass_intel::playbook_header_strategies_for_url(original_url);
-    for (url_variant, candidate_url) in bypass_intel::playbook_url_variants_for_url(original_url) {
+    let playbook_headers = bypass_intel::playbook_header_strategies_for_url(&original_url);
+    for (url_variant, candidate_url) in bypass_intel::playbook_url_variants_for_url(&original_url) {
         if is_forbidden(&candidate_url) {
             continue;
         }
@@ -2619,7 +2636,7 @@ fn auto_bypass_resolve(
             result.strategy = format!("{url_variant}+{header_variant}");
             if auto_bypass_http_result_usable(&result)
                 && !max_reach
-                && !bypass_intel::is_paid_content_platform_url(original_url)
+                && !bypass_intel::is_paid_content_platform_url(&original_url)
             {
                 return Some(result);
             }
@@ -2631,7 +2648,7 @@ fn auto_bypass_resolve(
         }
     }
 
-    for (url_variant, candidate_url) in auto_bypass_url_variants(original_url) {
+    for (url_variant, candidate_url) in auto_bypass_url_variants(&original_url) {
         if is_forbidden(&candidate_url) {
             continue;
         }
@@ -2643,7 +2660,7 @@ fn auto_bypass_resolve(
             result.strategy = format!("{url_variant}+{header_variant}");
             if auto_bypass_http_result_usable(&result)
                 && !max_reach
-                && !bypass_intel::is_paid_content_platform_url(original_url)
+                && !bypass_intel::is_paid_content_platform_url(&original_url)
             {
                 return Some(result);
             }
@@ -2655,7 +2672,7 @@ fn auto_bypass_resolve(
         }
     }
 
-    if let Some(archive_url) = lookup_archive_snapshot(agent, original_url) {
+    if let Some(archive_url) = lookup_archive_snapshot(agent, &original_url) {
         if !is_forbidden(&archive_url) {
             jitter_delay();
             if let Some(mut result) = fetch_url_with_headers(agent, &archive_url, &anon_headers()) {
@@ -2671,20 +2688,44 @@ fn auto_bypass_resolve(
     // Host bridge phase: deep bypass or max reach (strongest tier).
     // Skip Playwright when HTTP tricks already returned usable content (auto bypass only).
     let http_result_usable = best.as_ref().is_some_and(auto_bypass_http_result_usable);
-    let try_host_bridge = if max_reach || bypass_intel::is_paid_content_platform_url(original_url) {
-        host_bridge_tcp_probe()
-    } else if http_result_usable {
+    let try_host_bridge = if crawl_depth > 0 || http_result_usable || !host_bridge_tcp_probe() {
         false
+    } else if bypass_intel::is_paid_content_platform_url(&original_url) {
+        // Paid platforms: AMP/googlebot HTTP playbooks are faster and more reliable than Playwright here.
+        false
+    } else if max_reach {
+        true
     } else {
-        host_bridge_tcp_probe()
+        true
     };
     if try_host_bridge {
         if max_reach {
-            let _ = invoke_host_bridge_max_reach(original_url, max_depth);
+            println!(
+                "[igy6-collector] host_bridge max_reach_collect start url={original_url} depth={max_depth}"
+            );
+            match invoke_host_bridge_max_reach(&original_url, max_depth) {
+                Ok(()) => println!(
+                    "[igy6-collector] host_bridge max_reach_collect finished url={original_url}"
+                ),
+                Err(error) => println!(
+                    "[igy6-collector] host_bridge max_reach_collect failed url={original_url} error={error}"
+                ),
+            }
             if let Some(artifacts) = read_max_reach_artifacts() {
+                let media_count = artifacts.media_urls.len();
+                let link_count = artifacts.discovered_links.len();
+                let has_html = artifacts
+                    .html
+                    .as_ref()
+                    .is_some_and(|html| html.len() >= 200);
+                println!(
+                    "[igy6-collector] max_reach artifacts strategy={:?} has_html={has_html} media={media_count} links={link_count} has_cookie={}",
+                    artifacts.strategy,
+                    artifacts.cookie.is_some()
+                );
                 apply_host_bridge_artifacts(
                     agent,
-                    original_url,
+                    &original_url,
                     &mut best,
                     &mut best_score,
                     &artifacts.strategy,
@@ -2695,13 +2736,26 @@ fn auto_bypass_resolve(
                     artifacts.authorization.as_deref(),
                     "max_reach",
                 );
+            } else {
+                println!(
+                    "[igy6-collector] max_reach artifacts missing path={}",
+                    max_reach_result_path().display()
+                );
             }
         } else {
-            let _ = invoke_host_bridge_deep_bypass(original_url);
+            println!("[igy6-collector] host_bridge deep_bypass_collect start url={original_url}");
+            match invoke_host_bridge_deep_bypass(&original_url) {
+                Ok(()) => println!(
+                    "[igy6-collector] host_bridge deep_bypass_collect finished url={original_url}"
+                ),
+                Err(error) => println!(
+                    "[igy6-collector] host_bridge deep_bypass_collect failed url={original_url} error={error}"
+                ),
+            }
             if let Some(artifacts) = read_deep_bypass_artifacts() {
                 apply_host_bridge_artifacts(
                     agent,
-                    original_url,
+                    &original_url,
                     &mut best,
                     &mut best_score,
                     &artifacts.strategy,
@@ -2714,6 +2768,8 @@ fn auto_bypass_resolve(
                 );
             }
         }
+    } else if max_reach || bypass_intel::is_paid_content_platform_url(&original_url) {
+        println!("[igy6-collector] host_bridge skipped (unreachable) url={original_url}");
     }
 
     best
@@ -3010,6 +3066,213 @@ fn invoke_host_bridge_max_reach(url: &str, max_depth: u32) -> Result<(), Gateway
     )
 }
 
+fn full_access_collector_record_id(prefix: &str, seq: u64) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{prefix}-{nanos:x}{seq:02x}")
+}
+
+fn insert_collected_artifact_and_document(
+    tx: &mut postgres::Transaction<'_>,
+    source_id: &str,
+    collection_run_id: &str,
+    artifact_id: &str,
+    stored: &StoredArtifact,
+    mime_type: &str,
+    artifact_metadata: &serde_json::Value,
+    document_id: &str,
+    title: &str,
+    document_type: &str,
+    text_content: &str,
+    document_metadata: &serde_json::Value,
+) -> Result<(), postgres::Error> {
+    tx.execute(
+        "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::jsonb) ON CONFLICT (id) DO NOTHING",
+        &[
+            &artifact_id,
+            &source_id,
+            &collection_run_id,
+            &stored.content_hash,
+            &stored.storage_path,
+            &mime_type,
+            &(stored.size_bytes.min(i32::MAX as u64) as i32),
+            &artifact_metadata,
+        ],
+    )?;
+    let safe_text = sanitize_postgres_text(text_content);
+    tx.execute(
+        "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (id) DO NOTHING",
+        &[
+            &document_id,
+            &artifact_id,
+            &title,
+            &document_type,
+            &safe_text,
+            &document_metadata,
+        ],
+    )?;
+    Ok(())
+}
+
+fn persist_collected_artifact_and_document(
+    tx: &mut postgres::Transaction<'_>,
+    source_id: &str,
+    collection_run_id: &str,
+    artifact_id: &str,
+    stored: &StoredArtifact,
+    mime_type: &str,
+    artifact_metadata: &serde_json::Value,
+    document_id: &str,
+    title: &str,
+    document_type: &str,
+    text_content: &str,
+    document_metadata: &serde_json::Value,
+) -> bool {
+    if tx.batch_execute("SAVEPOINT collect_item").is_err() {
+        return false;
+    }
+    let persisted = insert_collected_artifact_and_document(
+        tx,
+        source_id,
+        collection_run_id,
+        artifact_id,
+        stored,
+        mime_type,
+        artifact_metadata,
+        document_id,
+        title,
+        document_type,
+        &sanitize_postgres_text(text_content),
+        document_metadata,
+    )
+    .is_ok();
+    if persisted {
+        let _ = tx.batch_execute("RELEASE SAVEPOINT collect_item");
+    } else {
+        let _ = tx.batch_execute("ROLLBACK TO SAVEPOINT collect_item");
+    }
+    persisted
+}
+
+fn persist_collected_raw_artifact(
+    tx: &mut postgres::Transaction<'_>,
+    source_id: &str,
+    collection_run_id: &str,
+    artifact_id: &str,
+    stored: &StoredArtifact,
+    mime_type: &str,
+    artifact_metadata: &serde_json::Value,
+) -> bool {
+    if tx.batch_execute("SAVEPOINT collect_item").is_err() {
+        return false;
+    }
+    let persisted = tx
+        .execute(
+            "INSERT INTO raw_artifacts (id, source_id, collection_run_id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7::integer, $8::jsonb) ON CONFLICT (id) DO NOTHING",
+            &[
+                &artifact_id,
+                &source_id,
+                &collection_run_id,
+                &stored.content_hash,
+                &stored.storage_path,
+                &mime_type,
+                &(stored.size_bytes.min(i32::MAX as u64) as i32),
+                &artifact_metadata,
+            ],
+        )
+        .is_ok();
+    if persisted {
+        let _ = tx.batch_execute("RELEASE SAVEPOINT collect_item");
+    } else {
+        let _ = tx.batch_execute("ROLLBACK TO SAVEPOINT collect_item");
+    }
+    persisted
+}
+
+fn persist_collected_raw_artifact_client(
+    client: &mut Client,
+    source_id: &str,
+    collection_run_id: &str,
+    artifact_id: &str,
+    stored: &StoredArtifact,
+    mime_type: &str,
+    artifact_metadata: &serde_json::Value,
+) -> bool {
+    let Ok(mut tx) = client.transaction() else {
+        return false;
+    };
+    let persisted = persist_collected_raw_artifact(
+        &mut tx,
+        source_id,
+        collection_run_id,
+        artifact_id,
+        stored,
+        mime_type,
+        artifact_metadata,
+    );
+    if persisted {
+        let _ = tx.commit();
+    }
+    persisted
+}
+
+fn persist_collected_artifact_and_document_client(
+    client: &mut Client,
+    source_id: &str,
+    collection_run_id: &str,
+    artifact_id: &str,
+    stored: &StoredArtifact,
+    mime_type: &str,
+    artifact_metadata: &serde_json::Value,
+    document_id: &str,
+    title: &str,
+    document_type: &str,
+    text_content: &str,
+    document_metadata: &serde_json::Value,
+) -> bool {
+    let Ok(mut tx) = client.transaction() else {
+        return false;
+    };
+    let persisted = persist_collected_artifact_and_document(
+        &mut tx,
+        source_id,
+        collection_run_id,
+        artifact_id,
+        stored,
+        mime_type,
+        artifact_metadata,
+        document_id,
+        title,
+        document_type,
+        text_content,
+        document_metadata,
+    );
+    if persisted {
+        let _ = tx.commit();
+    }
+    persisted
+}
+
+fn recover_stale_full_access_collection_runs(client: &mut Client) -> Result<(), GatewayError> {
+    client
+        .execute(
+            "UPDATE collection_runs SET status = 'failed', error_message = COALESCE(NULLIF(error_message, ''), 'collection interrupted before finalize'), updated_at = now() WHERE status = 'running' AND source_id IN ('full-access-igy6', 'full-access-grok')",
+            &[],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    Ok(())
+}
+
+struct FullAccessCollectGuard;
+
+impl Drop for FullAccessCollectGuard {
+    fn drop(&mut self) {
+        FULL_ACCESS_COLLECT_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
 fn full_access_collection_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(full_access_collect(body, database_url))
 }
@@ -3041,10 +3304,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         object["max_reach"] = serde_json::json!(true);
         object["auto_bypass"] = serde_json::json!(true);
         object["media_focus"] = serde_json::json!(true);
+        object["bypass_auth"] = serde_json::json!(true);
         if !bypass_fetch_has_credentials(&object) {
             if let Some((cookie, authorization)) = bypass_intel::load_patreon_session_credentials()
             {
-                object["bypass_auth"] = serde_json::json!(true);
                 object["cookie"] = serde_json::json!(cookie);
                 if let Some(authorization) = authorization {
                     object["authorization"] = serde_json::json!(authorization);
@@ -3058,7 +3321,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     if max_reach || paid_escalation {
         wait_for_host_bridge_ready(45)?;
     }
-    if bypass_auth && !bypass_fetch_has_credentials(&object) {
+    if bypass_auth && !bypass_fetch_has_credentials(&object) && !paid_escalation && !max_reach {
         return Err(GatewayError::Validation(
             "Bypass fetch requires cookie or authorization for an authorized session you already own."
                 .to_string(),
@@ -3070,6 +3333,30 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         .unwrap_or_else(|| {
             bypass_auth || auto_bypass || max_reach || is_web_only_scope(object.get("scope"))
         });
+    let scope_preview = object
+        .get("scope")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    println!(
+        "[igy6-collector] start web_only={web_only} max_reach={max_reach} auto_bypass={auto_bypass} bypass_auth={bypass_auth} scope={scope_preview}"
+    );
+    if max_reach || paid_escalation {
+        let bridge_host =
+            env::var("IGY6_HOST_BRIDGE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let bridge_ready = host_bridge_tcp_probe();
+        let token_ready = host_bridge_token().is_ok();
+        println!(
+            "[igy6-collector] host_bridge status host={bridge_host} reachable={bridge_ready} token_ready={token_ready}"
+        );
+    }
     let cfg = load_user_config();
     // Public URL-only fetch from the local UI does not require program password/TOTP.
     if !web_only {
@@ -3094,10 +3381,13 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         }
     }
 
-    let max_depth = object
+    let mut max_depth = object
         .get("max_depth")
         .and_then(|v| v.as_u64())
         .unwrap_or(3) as usize;
+    if paid_escalation {
+        max_depth = max_depth.min(1);
+    }
     let safe_mode = object
         .get("safe_mode")
         .and_then(|v| v.as_bool())
@@ -3120,21 +3410,69 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let database_url = database_url
         .filter(|v| !v.trim().is_empty())
         .ok_or(GatewayError::MissingDatabaseUrl)?;
+    if FULL_ACCESS_COLLECT_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err(GatewayError::Conflict(
+            "A full-access collection is already running. Wait for it to finish before starting another."
+                .to_string(),
+        ));
+    }
+    let _collect_guard = FullAccessCollectGuard;
+
     let postgres_url = postgres_client_url(database_url);
     let mut client =
         Client::connect(&postgres_url, NoTls).map_err(|e| GatewayError::Database(e.to_string()))?;
+    recover_stale_full_access_collection_runs(&mut client)?;
     let mut tx = client
         .transaction()
         .map_err(|e| GatewayError::Database(e.to_string()))?;
 
-    // Ensure a full-access source exists for tying into real pipeline (grok branch)
-    let full_source_id = "full-access-grok";
+    // Ensure a full-access source exists for tying into real pipeline (IGY6)
+    let full_source_id = "full-access-igy6";
     let _ = tx.execute(
         "INSERT INTO sources (id, name, source_type, location, owner_actor_id, sensitivity, trust_level, enabled, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8::jsonb) ON CONFLICT (id) DO NOTHING",
-        &[&full_source_id, &"Grok Full Access Collector", &"full_access", &"local-system-and-reachable", &requested_by, &"internal", &"trusted", &serde_json::json!({"grok_branch": true, "full_access": true})]
+        &[&full_source_id, &"IGY6 Full Access Collector", &"full_access", &"local-system-and-reachable", &requested_by, &"internal", &"trusted", &serde_json::json!({"igy6": true, "full_access": true})]
     );
 
     let collection_run_id = generated_record_id("collection");
+    tx.execute(
+        "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'running', false, $3, $4::jsonb, NULL)",
+        &[
+            &collection_run_id,
+            &full_source_id,
+            &requested_by,
+            &serde_json::json!({
+                "phase": "collecting",
+                "paid_escalation": paid_escalation,
+                "max_reach": max_reach,
+                "auto_bypass": auto_bypass,
+                "bypass_auth": bypass_auth,
+            }),
+        ],
+    )
+    .map_err(|error| GatewayError::Database(error.to_string()))?;
+    println!(
+        "[igy6-collector] collection_run created id={collection_run_id} paid_escalation={paid_escalation}"
+    );
+    let _ = tx.execute(
+        "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'collection_run.created', 'running', 'collection_run', $2, NULL, $3::jsonb)",
+        &[
+            &requested_by,
+            &collection_run_id,
+            &serde_json::json!({
+                "source_id": full_source_id,
+                "paid_escalation": paid_escalation,
+                "bypass_auth": bypass_auth,
+            }),
+        ],
+    );
+    tx.commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    println!(
+        "[igy6-collector] collection_run committed early id={collection_run_id} (per-artifact incremental saves enabled)"
+    );
     let mut collected_artifacts: Vec<String> = vec![];
     let mut evidence_created: Vec<String> = vec![];
     let mut graph_candidates: Vec<serde_json::Value> = vec![];
@@ -3150,7 +3488,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         } else if web_only {
             "web_only_public_fetch"
         } else {
-            "full_access_grok"
+            "full_access_igy6"
         },
         "web_only": web_only,
         "max_reach": max_reach,
@@ -3172,7 +3510,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         } else if web_only {
             "Public URL fetch only. No local filesystem scan. Data stored locally only."
         } else {
-            "Full access collector active on grok branch. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
+            "Full access collector active on IGY6. Ingests anything the process uid/gid can read. All data stored locally only. Tied into real normalization/evidence/graph pipelines."
         }
     });
 
@@ -3190,6 +3528,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     ];
 
     let mut local_files = 0usize;
+    let mut collector_seq: u64 = 0;
     if web_only {
         summary["local_files_ingested"] = serde_json::json!(0);
         summary["system_snapshots"] = serde_json::json!(0);
@@ -3217,7 +3556,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     let store = ArtifactStore::new(artifact_data_root())
                         .map_err(|e| GatewayError::Conflict(e.to_string()))?;
                     if let Ok(stored) = store.write_bytes(&data) {
-                        let art_id = generated_record_id("artifact");
+                        collector_seq += 1;
+                        let art_id = full_access_collector_record_id("artifact", collector_seq);
+                        collector_seq += 1;
+                        let ev_id = full_access_collector_record_id("evidence", collector_seq);
                         let meta = serde_json::json!({
                             "full_access": true,
                             "source_path": path.to_string_lossy(),
@@ -3225,16 +3567,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                             "kind": kind.kind,
                             "detected": kind.metadata
                         });
-                        // Record artifact (simplified direct insert for speed on grok)
-                        let _ = tx.execute(
-                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                        &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta]
-                    );
-                        collected_artifacts.push(art_id.clone());
-
-                        // Create evidence stub for everything
-                        let ev_id = generated_record_id("evidence");
-                        // grok branch: DEEP PDF (and similar media) collection - use real extraction instead of placeholder
+                        // IGY6: DEEP PDF (and similar media) collection - use real extraction instead of placeholder
                         let extracted_text = extract_text_if_possible(&data, &kind);
                         let text_for_doc = extracted_text.clone().unwrap_or_else(|| {
                             if kind.kind == "text" {
@@ -3248,26 +3581,43 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 )
                             }
                         });
-                        let _ = tx.execute(
-                        "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                        &[&ev_id, &art_id, &path.file_name().unwrap_or_default().to_string_lossy().to_string(), &kind.kind, &text_for_doc, &meta]
-                    );
-                        evidence_created.push(ev_id.clone());
-
-                        // Use the *real* extracted text (PDF text, image metadata, etc.) for aggressive mining
-                        let text_for_mining = extracted_text.as_deref().unwrap_or(&text_for_doc);
-                        if let Some(claim) =
-                            simple_mine_claim_from_text(text_for_mining, &path.to_string_lossy())
-                        {
-                            graph_candidates.push(serde_json::json!({
-                                "type": "claim",
-                                "text": claim,
-                                "source_artifact": art_id,
-                                "from_full_access": true,
-                                "extracted": extracted_text.is_some()  // marks that this came from deep extraction (PDF etc.)
-                            }));
+                        if persist_collected_artifact_and_document_client(
+                            &mut client,
+                            full_source_id,
+                            &collection_run_id,
+                            &art_id,
+                            &stored,
+                            &kind.mime,
+                            &meta,
+                            &ev_id,
+                            &path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string(),
+                            &kind.kind,
+                            &text_for_doc,
+                            &meta,
+                        ) {
+                            collected_artifacts.push(art_id.clone());
+                            evidence_created.push(ev_id.clone());
+                            // Use the *real* extracted text (PDF text, image metadata, etc.) for aggressive mining
+                            let text_for_mining =
+                                extracted_text.as_deref().unwrap_or(&text_for_doc);
+                            if let Some(claim) = simple_mine_claim_from_text(
+                                text_for_mining,
+                                &path.to_string_lossy(),
+                            ) {
+                                graph_candidates.push(serde_json::json!({
+                                    "type": "claim",
+                                    "text": claim,
+                                    "source_artifact": art_id,
+                                    "from_full_access": true,
+                                    "extracted": extracted_text.is_some()  // marks that this came from deep extraction (PDF etc.)
+                                }));
+                            }
+                            local_files += 1;
                         }
-                        local_files += 1;
                     }
                 }
                 if local_files > 500 {
@@ -3296,13 +3646,21 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                 if !data.is_empty() {
                     let store = ArtifactStore::new(artifact_data_root()).unwrap();
                     if let Ok(stored) = store.write_bytes(&data) {
-                        let art_id = generated_record_id("artifact");
-                        let _ = tx.execute(
-                        "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING",
-                        &[&art_id, &stored.content_hash, &stored.storage_path, &"text/plain".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"full_access_system": name})]
-                    );
-                        collected_artifacts.push(art_id.clone());
-                        sys_count += 1;
+                        collector_seq += 1;
+                        let art_id = full_access_collector_record_id("artifact", collector_seq);
+                        let meta = serde_json::json!({"full_access_system": name});
+                        if persist_collected_raw_artifact_client(
+                            &mut client,
+                            full_source_id,
+                            &collection_run_id,
+                            &art_id,
+                            &stored,
+                            "text/plain",
+                            &meta,
+                        ) {
+                            collected_artifacts.push(art_id.clone());
+                            sys_count += 1;
+                        }
 
                         // Mine relationships from command output
                         let text = String::from_utf8_lossy(&data);
@@ -3323,7 +3681,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         summary["system_snapshots"] = serde_json::json!(sys_count);
     }
 
-    // 3. Web scraping - DEEPEST + SAFEST on grok (UI controlled, everything from browser, no cmd line).
+    // 3. Web scraping - DEEPEST + SAFEST in IGY6 (UI controlled, everything from browser, no cmd line).
     // Recursive crawler (BFS up to max_depth), full asset download (original res images/videos/PDFs),
     // PDF deep text + images if present, image exif strip for non-traceability,
     // aggressive mining on all extracted content.
@@ -3346,7 +3704,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     if !is_forbidden(s) {
                         url_queue.push_back((s.to_string(), 0));
                     } else {
-                        println!("[grok-collector] SKIPPED forbidden/sensitive domain for legal safety: {}", s);
+                        println!("[igy6-collector] SKIPPED forbidden/sensitive domain for legal safety: {}", s);
                     }
                 }
             }
@@ -3356,6 +3714,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     let agent = anon_agent();
     let fetch_headers = web_fetch_headers(&object);
     while let Some((current_url, depth)) = url_queue.pop_front() {
+        let current_url = normalize_crawl_url(&current_url);
         if crawled_urls.contains(&current_url) || depth > max_depth {
             continue;
         }
@@ -3363,18 +3722,38 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
         if is_forbidden(&current_url) {
             continue;
         }
+        if is_static_asset_url(&current_url) {
+            println!("[igy6-collector] skip static asset url={current_url}");
+            continue;
+        }
+        println!(
+            "[igy6-collector] crawl url={current_url} depth={depth} queue_remaining={}",
+            url_queue.len()
+        );
         jitter_delay();
 
         let mut prefetched_pdf: Option<Vec<u8>> = None;
         let mut prefetched_html: Option<String> = None;
         let mut auto_bypass_strategy: Option<String> = None;
         let mut resolved_fetch_url = current_url.clone();
-        if auto_bypass {
+        let skip_auto_bypass =
+            is_direct_media_cdn_url(&current_url) || is_static_asset_url(&current_url);
+        if auto_bypass && !skip_auto_bypass {
             auto_bypass_attempts += 1;
+            let run_max_reach = max_reach && depth == 0;
             if let Some(resolved) =
-                auto_bypass_resolve(&agent, &current_url, max_reach, max_depth as u32)
+                auto_bypass_resolve(&agent, &current_url, run_max_reach, max_depth as u32, depth)
             {
                 auto_bypass_wins += 1;
+                let bypass_body_bytes = if resolved.is_pdf {
+                    resolved.pdf_bytes.as_ref().map(|b| b.len()).unwrap_or(0)
+                } else {
+                    resolved.body.len()
+                };
+                println!(
+                    "[igy6-collector] bypass win url={current_url} strategy={} body_bytes={bypass_body_bytes}",
+                    resolved.strategy
+                );
                 auto_bypass_strategy = Some(resolved.strategy.clone());
                 auto_bypass_strategies.push(resolved.strategy);
                 resolved_fetch_url = resolved.fetched_url;
@@ -3383,22 +3762,41 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                 } else {
                     prefetched_html = Some(resolved.body);
                 }
-                if max_reach {
+                if run_max_reach {
                     if let Some(artifacts) = read_max_reach_artifacts() {
-                        for link in artifacts
-                            .media_urls
-                            .iter()
-                            .chain(artifacts.discovered_links.iter())
+                        if let Some(cookie) =
+                            artifacts.cookie.as_ref().filter(|value| !value.is_empty())
                         {
+                            object["cookie"] = serde_json::json!(cookie);
+                            summary["had_cookie"] = serde_json::json!(true);
+                        }
+                        if let Some(authorization) = artifacts
+                            .authorization
+                            .as_ref()
+                            .filter(|value| !value.is_empty())
+                        {
+                            object["authorization"] = serde_json::json!(authorization);
+                            summary["had_authorization"] = serde_json::json!(true);
+                        }
+                        for link in artifacts.discovered_links.iter() {
+                            let link = normalize_crawl_url(link);
                             if depth < max_depth
-                                && !crawled_urls.contains(link)
-                                && !is_forbidden(link)
+                                && should_queue_for_depth_crawl(&link)
+                                && !crawled_urls.contains(&link)
                             {
-                                url_queue.push_back((link.clone(), depth + 1));
+                                url_queue.push_back((link, depth + 1));
+                            }
+                        }
+                        for media_url in artifacts.media_urls.iter() {
+                            let media_url = normalize_crawl_url(media_url);
+                            if !is_forbidden(&media_url) && !crawled_urls.contains(&media_url) {
+                                url_queue.push_front((media_url, depth));
                             }
                         }
                     }
                 }
+            } else if auto_bypass {
+                println!("[igy6-collector] bypass miss url={current_url} (no usable content yet)");
             }
         }
 
@@ -3408,7 +3806,10 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                 let kind = detect_content_kind(&pdf_bytes, Some(&resolved_fetch_url));
                 let store = ArtifactStore::new(artifact_data_root()).unwrap();
                 if let Ok(stored) = store.write_bytes(&pdf_bytes) {
-                    let art_id = generated_record_id("artifact");
+                    collector_seq += 1;
+                    let art_id = full_access_collector_record_id("artifact", collector_seq);
+                    collector_seq += 1;
+                    let ev_id = full_access_collector_record_id("evidence", collector_seq);
                     let meta = serde_json::json!({
                         "scraped_url": resolved_fetch_url,
                         "requested_url": current_url,
@@ -3420,26 +3821,41 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         "kind": kind.kind,
                         "depth": depth
                     });
-                    let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta] );
-                    collected_artifacts.push(art_id.clone());
-                    web_count += 1;
                     let extracted = extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
-                    let ev_id = generated_record_id("evidence");
-                    let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &resolved_fetch_url, &"pdf".to_string(), &extracted, &meta] );
-                    evidence_created.push(ev_id.clone());
-                    if let Some(claim) =
-                        simple_mine_claim_from_text(&extracted, &resolved_fetch_url)
-                    {
-                        graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
+                    if persist_collected_artifact_and_document_client(
+                        &mut client,
+                        full_source_id,
+                        &collection_run_id,
+                        &art_id,
+                        &stored,
+                        &kind.mime,
+                        &meta,
+                        &ev_id,
+                        &resolved_fetch_url,
+                        "pdf",
+                        &extracted,
+                        &meta,
+                    ) {
+                        collected_artifacts.push(art_id.clone());
+                        evidence_created.push(ev_id.clone());
+                        web_count += 1;
+                        if let Some(claim) =
+                            simple_mine_claim_from_text(&extracted, &resolved_fetch_url)
+                        {
+                            graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
+                        }
                     }
                     handled_fetch = true;
                 }
             }
         } else if let Some(body) = prefetched_html {
-            let data = body.as_bytes();
+            let body = sanitize_postgres_text(&body);
+            let body_bytes = strip_null_bytes(body.as_bytes());
+            let data = body_bytes.as_slice();
             let store = ArtifactStore::new(artifact_data_root()).unwrap();
             if let Ok(stored) = store.write_bytes(data) {
-                let art_id = generated_record_id("artifact");
+                collector_seq += 1;
+                let art_id = full_access_collector_record_id("artifact", collector_seq);
                 let page_meta = serde_json::json!({
                     "scraped_url": resolved_fetch_url,
                     "requested_url": current_url,
@@ -3449,14 +3865,31 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     "auto_bypass_strategy": auto_bypass_strategy,
                     "depth": depth
                 });
-                let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &page_meta] );
-                collected_artifacts.push(art_id.clone());
-                web_count += 1;
+                if persist_collected_raw_artifact_client(
+                    &mut client,
+                    full_source_id,
+                    &collection_run_id,
+                    &art_id,
+                    &stored,
+                    "text/html",
+                    &page_meta,
+                ) {
+                    collected_artifacts.push(art_id.clone());
+                    web_count += 1;
+                    println!(
+                        "[igy6-collector] saved page artifact={art_id} url={resolved_fetch_url} bytes={}",
+                        data.len()
+                    );
+                }
                 for cap in extract_simple_links_and_claims(&body, &resolved_fetch_url) {
                     graph_candidates.push(cap);
                 }
 
-                let asset_urls = extract_img_and_video_srcs(&body, &resolved_fetch_url);
+                let asset_urls = extract_all_media_urls_from_html(&body, &resolved_fetch_url);
+                println!(
+                    "[igy6-collector] extracted {} media url(s) from page url={resolved_fetch_url}",
+                    asset_urls.len()
+                );
                 for asset_url in asset_urls {
                     if is_forbidden(&asset_url) {
                         continue;
@@ -3466,6 +3899,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     for (k, v) in &fetch_headers {
                         asset_req = asset_req.set(k, v);
                     }
+                    asset_req = asset_req.set("Referer", &resolved_fetch_url);
                     if let Ok(aresp) = asset_req.call() {
                         let mut abytes = Vec::new();
                         {
@@ -3473,29 +3907,22 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                             let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes);
                         }
                         if !abytes.is_empty() {
-                            let mut final_bytes = abytes;
-                            let kind = detect_content_kind(&final_bytes, None);
-                            if kind.kind == "image" {
-                                if let Ok(img) = image::load_from_memory(&final_bytes) {
-                                    let mut buf = Vec::new();
-                                    let _ = img.write_to(
-                                        &mut std::io::Cursor::new(&mut buf),
-                                        image::ImageFormat::Png,
-                                    );
-                                    final_bytes = buf;
-                                }
-                            }
+                            let kind = detect_content_kind(&abytes, asset_url.rsplit('/').next());
+                            let (final_bytes, stored_mime) =
+                                prepare_image_bytes_for_storage(abytes, &kind);
                             if kind.kind == "image"
                                 || kind.kind == "video"
                                 || kind.kind == "pdf"
                                 || (media_focus && kind.kind != "text")
                             {
                                 if let Ok(stored) = store.write_bytes(&final_bytes) {
-                                    let mart_id = generated_record_id("artifact");
-                                    let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": resolved_fetch_url, "mime": kind.mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
-                                    let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&mart_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &mmeta] );
-                                    collected_artifacts.push(mart_id.clone());
-                                    media_from_web += 1;
+                                    collector_seq += 1;
+                                    let mart_id =
+                                        full_access_collector_record_id("artifact", collector_seq);
+                                    collector_seq += 1;
+                                    let ev_id =
+                                        full_access_collector_record_id("evidence", collector_seq);
+                                    let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": resolved_fetch_url, "mime": stored_mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
                                     let stub = extract_text_if_possible(&final_bytes, &kind)
                                         .unwrap_or_else(|| {
                                             format!(
@@ -3503,28 +3930,50 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                                 asset_url, resolved_fetch_url
                                             )
                                         });
-                                    let ev_id = generated_record_id("evidence");
-                                    let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &mart_id, &asset_url, &kind.kind, &stub, &mmeta] );
-                                    evidence_created.push(ev_id.clone());
-                                    if let Some(claim) =
-                                        simple_mine_claim_from_text(&stub, &asset_url)
-                                    {
-                                        graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                    if persist_collected_artifact_and_document_client(
+                                        &mut client,
+                                        full_source_id,
+                                        &collection_run_id,
+                                        &mart_id,
+                                        &stored,
+                                        &stored_mime,
+                                        &mmeta,
+                                        &ev_id,
+                                        &asset_url,
+                                        &kind.kind,
+                                        &stub,
+                                        &mmeta,
+                                    ) {
+                                        collected_artifacts.push(mart_id.clone());
+                                        evidence_created.push(ev_id.clone());
+                                        media_from_web += 1;
+                                        println!(
+                                            "[igy6-collector] saved media artifact={mart_id} url={asset_url} mime={stored_mime} bytes={}",
+                                            final_bytes.len()
+                                        );
+                                        if let Some(claim) =
+                                            simple_mine_claim_from_text(&stub, &asset_url)
+                                        {
+                                            graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else {
+                        println!("[igy6-collector] media fetch failed url={asset_url}");
                     }
                 }
 
                 if depth < max_depth {
                     for link in extract_simple_links_and_claims(&body, &resolved_fetch_url) {
                         if let Some(to) = link.get("to").and_then(|v| v.as_str()) {
+                            let to = normalize_crawl_url(to);
                             if (to.starts_with("http://") || to.starts_with("https://"))
-                                && !is_forbidden(to)
-                                && !crawled_urls.contains(to)
+                                && should_queue_for_depth_crawl(&to)
+                                && !crawled_urls.contains(&to)
                             {
-                                url_queue.push_back((to.to_string(), depth + 1));
+                                url_queue.push_back((to, depth + 1));
                             }
                         }
                     }
@@ -3558,35 +4007,131 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     let kind = detect_content_kind(&pdf_bytes, Some(&current_url));
                     let store = ArtifactStore::new(artifact_data_root()).unwrap();
                     if let Ok(stored) = store.write_bytes(&pdf_bytes) {
-                        let art_id = generated_record_id("artifact");
+                        collector_seq += 1;
+                        let art_id = full_access_collector_record_id("artifact", collector_seq);
+                        collector_seq += 1;
+                        let ev_id = full_access_collector_record_id("evidence", collector_seq);
                         let meta = serde_json::json!({ "scraped_url": current_url, "full_access_web": true, "deep_scrape": true, "mime": kind.mime, "kind": kind.kind, "depth": depth });
-                        let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &meta] );
-                        collected_artifacts.push(art_id.clone());
-                        web_count += 1;
                         let extracted =
                             extract_text_if_possible(&pdf_bytes, &kind).unwrap_or_default();
-                        let ev_id = generated_record_id("evidence");
-                        let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &art_id, &current_url, &"pdf".to_string(), &extracted, &meta] );
-                        evidence_created.push(ev_id.clone());
-                        if let Some(claim) = simple_mine_claim_from_text(&extracted, &current_url) {
-                            graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
+                        if persist_collected_artifact_and_document_client(
+                            &mut client,
+                            full_source_id,
+                            &collection_run_id,
+                            &art_id,
+                            &stored,
+                            &kind.mime,
+                            &meta,
+                            &ev_id,
+                            &current_url,
+                            "pdf",
+                            &extracted,
+                            &meta,
+                        ) {
+                            collected_artifacts.push(art_id.clone());
+                            evidence_created.push(ev_id.clone());
+                            web_count += 1;
+                            if let Some(claim) =
+                                simple_mine_claim_from_text(&extracted, &current_url)
+                            {
+                                graph_candidates.push(serde_json::json!({ "type": "deep_web_pdf_claim", "text": claim, "source_artifact": art_id, "from_full_access": true, "depth": depth }));
+                            }
                         }
                     }
                 }
-            } else if let Ok(body) = resp.into_string() {
-                let data = body.as_bytes();
+            } else if url_looks_like_binary_media(&current_url, &content_type) {
+                let mut media_bytes = Vec::new();
+                {
+                    let mut rdr = resp.into_reader();
+                    let _ = std::io::Read::read_to_end(&mut rdr, &mut media_bytes);
+                }
+                if !media_bytes.is_empty() {
+                    let kind = detect_content_kind(&media_bytes, current_url.rsplit('/').next());
+                    let (final_bytes, stored_mime) =
+                        prepare_image_bytes_for_storage(media_bytes, &kind);
+                    let store = ArtifactStore::new(artifact_data_root()).unwrap();
+                    if let Ok(stored) = store.write_bytes(&final_bytes) {
+                        collector_seq += 1;
+                        let art_id = full_access_collector_record_id("artifact", collector_seq);
+                        collector_seq += 1;
+                        let ev_id = full_access_collector_record_id("evidence", collector_seq);
+                        let meta = serde_json::json!({
+                            "scraped_url": current_url,
+                            "full_access_web": true,
+                            "deep_scrape": true,
+                            "full_res_from_source": true,
+                            "mime": stored_mime,
+                            "kind": kind.kind,
+                            "depth": depth
+                        });
+                        let stub =
+                            extract_text_if_possible(&final_bytes, &kind).unwrap_or_else(|| {
+                                format!("[Direct binary fetch] {} ({})", current_url, stored_mime)
+                            });
+                        if persist_collected_artifact_and_document_client(
+                            &mut client,
+                            full_source_id,
+                            &collection_run_id,
+                            &art_id,
+                            &stored,
+                            &stored_mime,
+                            &meta,
+                            &ev_id,
+                            &current_url,
+                            &kind.kind,
+                            &stub,
+                            &meta,
+                        ) {
+                            collected_artifacts.push(art_id.clone());
+                            evidence_created.push(ev_id.clone());
+                            web_count += 1;
+                            media_from_web += 1;
+                            println!(
+                                "[igy6-collector] saved direct binary artifact={art_id} url={current_url} mime={stored_mime} bytes={}",
+                                final_bytes.len()
+                            );
+                        }
+                    }
+                }
+            } else {
+                let content_encoding = resp.header("Content-Encoding").unwrap_or("").to_lowercase();
+                let raw_bytes = read_http_response_bytes(resp);
+                if raw_bytes.is_empty() {
+                    continue;
+                }
+                let body_bytes = strip_null_bytes(&decompress_http_body_if_needed(
+                    &raw_bytes,
+                    &content_encoding,
+                ));
+                let body = http_body_to_text(&body_bytes);
+                let data = body_bytes.as_slice();
                 let store = ArtifactStore::new(artifact_data_root()).unwrap();
                 if let Ok(stored) = store.write_bytes(data) {
-                    let art_id = generated_record_id("artifact");
-                    let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&art_id, &stored.content_hash, &stored.storage_path, &"text/html".to_string(), &(stored.size_bytes as i64), &serde_json::json!({"scraped_url": current_url, "full_access_web": true, "deep_scrape": true, "depth": depth})] );
-                    collected_artifacts.push(art_id.clone());
-                    web_count += 1;
+                    collector_seq += 1;
+                    let art_id = full_access_collector_record_id("artifact", collector_seq);
+                    let page_meta = serde_json::json!({"scraped_url": current_url, "full_access_web": true, "deep_scrape": true, "depth": depth});
+                    if persist_collected_raw_artifact_client(
+                        &mut client,
+                        full_source_id,
+                        &collection_run_id,
+                        &art_id,
+                        &stored,
+                        "text/html",
+                        &page_meta,
+                    ) {
+                        collected_artifacts.push(art_id.clone());
+                        web_count += 1;
+                    }
                     for cap in extract_simple_links_and_claims(&body, &current_url) {
                         graph_candidates.push(cap);
                     }
 
                     // Deep assets + exif strip
-                    let asset_urls = extract_img_and_video_srcs(&body, &current_url);
+                    let asset_urls = extract_all_media_urls_from_html(&body, &current_url);
+                    println!(
+                        "[igy6-collector] extracted {} media url(s) from page url={current_url}",
+                        asset_urls.len()
+                    );
                     for asset_url in asset_urls {
                         if is_forbidden(&asset_url) {
                             continue;
@@ -3596,6 +4141,7 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                         for (k, v) in &fetch_headers {
                             asset_req = asset_req.set(k, v);
                         }
+                        asset_req = asset_req.set("Referer", &current_url);
                         if let Ok(aresp) = asset_req.call() {
                             let mut abytes = Vec::new();
                             {
@@ -3603,29 +4149,27 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                 let _ = std::io::Read::read_to_end(&mut rdr, &mut abytes);
                             }
                             if !abytes.is_empty() {
-                                let mut final_bytes = abytes;
-                                let kind = detect_content_kind(&final_bytes, None);
-                                if kind.kind == "image" {
-                                    if let Ok(img) = image::load_from_memory(&final_bytes) {
-                                        let mut buf = Vec::new();
-                                        let _ = img.write_to(
-                                            &mut std::io::Cursor::new(&mut buf),
-                                            image::ImageFormat::Png,
-                                        );
-                                        final_bytes = buf;
-                                    }
-                                }
+                                let kind =
+                                    detect_content_kind(&abytes, asset_url.rsplit('/').next());
+                                let (final_bytes, stored_mime) =
+                                    prepare_image_bytes_for_storage(abytes, &kind);
                                 if kind.kind == "image"
                                     || kind.kind == "video"
                                     || kind.kind == "pdf"
                                     || (media_focus && kind.kind != "text")
                                 {
                                     if let Ok(stored) = store.write_bytes(&final_bytes) {
-                                        let mart_id = generated_record_id("artifact");
-                                        let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": current_url, "mime": kind.mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
-                                        let _ = tx.execute( "INSERT INTO raw_artifacts (id, content_hash, storage_path, mime_type, size_bytes, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&mart_id, &stored.content_hash, &stored.storage_path, &kind.mime, &(stored.size_bytes as i64), &mmeta] );
-                                        collected_artifacts.push(mart_id.clone());
-                                        media_from_web += 1;
+                                        collector_seq += 1;
+                                        let mart_id = full_access_collector_record_id(
+                                            "artifact",
+                                            collector_seq,
+                                        );
+                                        collector_seq += 1;
+                                        let ev_id = full_access_collector_record_id(
+                                            "evidence",
+                                            collector_seq,
+                                        );
+                                        let mmeta = serde_json::json!({ "full_res_from_source": true, "original_url": asset_url, "parent_page": current_url, "mime": stored_mime, "kind": kind.kind, "deep_scraped": true, "depth": depth, "exif_stripped": kind.kind == "image" });
                                         let stub = extract_text_if_possible(&final_bytes, &kind)
                                             .unwrap_or_else(|| {
                                                 format!(
@@ -3633,17 +4177,38 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                                                     asset_url, current_url
                                                 )
                                             });
-                                        let ev_id = generated_record_id("evidence");
-                                        let _ = tx.execute( "INSERT INTO normalized_documents (id, raw_artifact_id, title, document_type, text_content, metadata_json) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT DO NOTHING", &[&ev_id, &mart_id, &asset_url, &kind.kind, &stub, &mmeta] );
-                                        evidence_created.push(ev_id.clone());
-                                        if let Some(claim) =
-                                            simple_mine_claim_from_text(&stub, &asset_url)
-                                        {
-                                            graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                        if persist_collected_artifact_and_document_client(
+                                            &mut client,
+                                            full_source_id,
+                                            &collection_run_id,
+                                            &mart_id,
+                                            &stored,
+                                            &stored_mime,
+                                            &mmeta,
+                                            &ev_id,
+                                            &asset_url,
+                                            &kind.kind,
+                                            &stub,
+                                            &mmeta,
+                                        ) {
+                                            collected_artifacts.push(mart_id.clone());
+                                            evidence_created.push(ev_id.clone());
+                                            media_from_web += 1;
+                                            println!(
+                                                "[igy6-collector] saved media artifact={mart_id} url={asset_url} mime={stored_mime} bytes={}",
+                                                final_bytes.len()
+                                            );
+                                            if let Some(claim) =
+                                                simple_mine_claim_from_text(&stub, &asset_url)
+                                            {
+                                                graph_candidates.push(serde_json::json!({"type": "deep_asset_claim", "text": claim, "source_artifact": mart_id, "from_full_access": true}));
+                                            }
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            println!("[igy6-collector] media fetch failed url={asset_url}");
                         }
                     }
 
@@ -3651,17 +4216,20 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
                     if depth < max_depth {
                         for link in extract_simple_links_and_claims(&body, &current_url) {
                             if let Some(to) = link.get("to").and_then(|v| v.as_str()) {
+                                let to = normalize_crawl_url(to);
                                 if (to.starts_with("http://") || to.starts_with("https://"))
-                                    && !is_forbidden(to)
-                                    && !crawled_urls.contains(to)
+                                    && should_queue_for_depth_crawl(&to)
+                                    && !crawled_urls.contains(&to)
                                 {
-                                    url_queue.push_back((to.to_string(), depth + 1));
+                                    url_queue.push_back((to, depth + 1));
                                 }
                             }
                         }
                     }
                 }
             }
+        } else {
+            println!("[igy6-collector] direct fetch failed url={current_url}");
         }
     }
     summary["web_scraped"] = serde_json::json!(web_count);
@@ -3682,46 +4250,76 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     summary["total_artifacts"] = serde_json::json!(collected_artifacts.len());
     summary["total_evidence"] = serde_json::json!(evidence_created.len());
 
-    // Tie into real worker pipeline (grok full access - not scaffolded)
+    // Tie into real worker pipeline (IGY6 full access - not scaffolded)
     let work_item_id = generated_record_id("work");
-    let work_payload = serde_json::json!({
-        "collection_run_id": collection_run_id,
-        "source_id": full_source_id,
-        "mode": "full_access_grok",
-        "artifact_count": collected_artifacts.len(),
-        "evidence_count": evidence_created.len(),
-        "grok_full_access": true,
-        "graph_candidates": graph_candidates.len()
-    });
-    let _ = tx.execute(
-        "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'collection_normalization', 'queued', $2, $3::jsonb, NULL)",
-        &[&work_item_id, &requested_by, &work_payload]
+    let collection_mode = summary
+        .get("mode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("full_access_igy6");
+    let work_payload = full_access_normalization_work_payload(
+        &collection_run_id,
+        full_source_id,
+        &collected_artifacts,
+        collection_mode,
     );
-    let _ = tx.execute(
-        "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, correlation_id, details_json) VALUES ($1, 'work_item.created', 'queued', 'work_item', $2, $3, $4::jsonb)",
-        &[&requested_by, &work_item_id, &collection_run_id, &serde_json::json!({"full_access": true})]
-    );
+    let mut finalize_tx = client
+        .transaction()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    finalize_tx
+        .execute(
+            "INSERT INTO work_items (id, work_type, status, requested_by_actor_id, payload_json, error_message) VALUES ($1, 'collection_normalization', 'queued', $2, $3::jsonb, NULL)",
+            &[&work_item_id, &requested_by, &work_payload],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    insert_work_item_created_audit_for_collection(
+        &mut finalize_tx,
+        &requested_by,
+        &work_item_id,
+        &collection_run_id,
+        &collected_artifacts,
+    )?;
     summary["normalization_work_item_queued"] = serde_json::json!(work_item_id);
+    summary["auto_pipeline"] = serde_json::json!({
+        "queued_automatically": true,
+        "requires_manual_evidence_review": false,
+        "worker_chain": ["collection_normalization", "document_chunking", "chunk_vector_upsert"],
+        "ai_review_summary_pending": true
+    });
 
-    // Record the big collection run
-    tx.execute(
-        "INSERT INTO collection_runs (id, source_id, status, dry_run, requested_by_actor_id, summary_json, error_message) VALUES ($1, $2, 'completed', false, $3, $4::jsonb, NULL)",
-        &[&collection_run_id, &"full-access-grok", &requested_by, &summary]
-    ).ok();
+    finalize_tx
+        .execute(
+            "UPDATE collection_runs SET status = 'completed', summary_json = $2::jsonb, updated_at = now() WHERE id = $1",
+            &[&collection_run_id, &summary],
+        )
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
 
-    // Audit the full capture
     let audit_details = serde_json::json!({ "full_access": true, "artifacts": collected_artifacts.len(), "evidence": evidence_created.len() });
-    tx.execute(
-        "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, details_json) VALUES ($1, 'collection_run.full_access', 'recorded', 'collection_run', $2, $3::jsonb)",
-        &[&requested_by, &collection_run_id, &audit_details]
-    ).ok();
+    finalize_tx
+        .execute(
+            "INSERT INTO audit_events (actor_id, event_type, decision, resource_type, resource_id, details_json) VALUES ($1, 'collection_run.full_access', 'recorded', 'collection_run', $2, $3::jsonb)",
+            &[&requested_by, &collection_run_id, &audit_details],
+        )
+        .ok();
 
-    let response_body = tx.query_one(
-        "SELECT row_to_json(t)::text FROM (SELECT id, status, summary_json, created_at FROM collection_runs WHERE id = $1) t",
-        &[&collection_run_id]
-    ).map(|r| r.get::<_, String>(0)).unwrap_or_else(|_| summary.to_string());
+    let response_body = finalize_tx
+        .query_one(
+            "SELECT row_to_json(t)::text FROM (SELECT id, status, summary_json, created_at FROM collection_runs WHERE id = $1) t",
+            &[&collection_run_id],
+        )
+        .map(|r| r.get::<_, String>(0))
+        .unwrap_or_else(|_| summary.to_string());
 
-    tx.commit().ok();
+    finalize_tx
+        .commit()
+        .map_err(|error| GatewayError::Database(error.to_string()))?;
+    println!(
+        "[igy6-collector] complete collection_run={collection_run_id} artifacts={} media={} work_item={work_item_id}",
+        collected_artifacts.len(),
+        summary
+            .get("media_from_deep_scrape")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0)
+    );
 
     let mut tracked_urls = Vec::new();
     if let Some(scope) = object.get("scope").and_then(|value| value.as_array()) {
@@ -3734,16 +4332,27 @@ fn full_access_collect(body: &str, database_url: Option<&str>) -> Result<String,
     bypass_intel::record_bypass_intel_domains(&tracked_urls);
     bypass_intel::maybe_background_bypass_intel_harvest(Some(database_url.to_string()));
 
-    // Tie the collected evidence/artifacts into the real graph (Neo4j via existing pipeline)
-    // This makes graph candidates and new sources/artifacts/docs real in the relationship memory, not just Postgres.
-    let _ = ensure_graph_schema();
-    // sync will pick up the new artifacts, documents, evidence created above
-    let _ = sync_graph_lineage(Some(database_url)); // pass the url we had (grok full access tying to real graph)
+    // Graph sync can take a while; do not block the HTTP response on Neo4j work.
+    let database_url_for_graph = database_url.to_string();
+    thread::spawn(move || {
+        if let Err(error) = ensure_graph_schema() {
+            println!("[igy6-collector] graph schema sync failed: {error}");
+        }
+        if let Err(error) = sync_graph_lineage(Some(&database_url_for_graph)) {
+            println!("[igy6-collector] graph lineage sync failed: {error}");
+        }
+    });
+
+    println!(
+        "[igy6-collector] complete collection_run_id={collection_run_id} artifacts={} evidence={} web_scraped={web_count}",
+        collected_artifacts.len(),
+        evidence_created.len()
+    );
 
     Ok(response_body)
 }
 
-// Simple claim miner (aggressive on grok full access)
+// Simple claim miner (aggressive on IGY6 full access)
 fn simple_mine_claim_from_text(text: &str, source: &str) -> Option<String> {
     let lower = text.to_lowercase();
     if lower.contains("password") || lower.contains("secret") || lower.contains("token") {
@@ -3768,26 +4377,16 @@ fn simple_mine_claim_from_text(text: &str, source: &str) -> Option<String> {
 
 fn extract_simple_links_and_claims(html_or_text: &str, base: &str) -> Vec<serde_json::Value> {
     let mut out = vec![];
-    // simple non-regex link extraction (grok full access - no external deps for this)
-    let lower = html_or_text.to_lowercase();
-    let mut search = lower.as_str();
-    while let Some(pos) = search.find("href=") {
-        let rest = &search[pos + 5..];
-        if let Some(endq) = rest.find(|c| c == '"' || c == '\'') {
-            let quote = &rest[endq..endq + 1];
-            if let Some(end) = rest[endq + 1..].find(quote) {
-                let link = &rest[endq + 1..endq + 1 + end];
-                if !link.is_empty() && link.len() < 500 {
-                    out.push(serde_json::json!({
-                        "type": "link",
-                        "from": base,
-                        "to": link,
-                        "from_full_access_web": true
-                    }));
-                }
-            }
+    for link in extract_quoted_attribute_values(html_or_text, "href=") {
+        let link = normalize_crawl_url(&link);
+        if !link.is_empty() && link.len() < 500 {
+            out.push(serde_json::json!({
+                "type": "link",
+                "from": base,
+                "to": link,
+                "from_full_access_web": true
+            }));
         }
-        search = &search[pos + 6..];
         if out.len() > 20 {
             break;
         }
@@ -3802,61 +4401,292 @@ fn extract_simple_links_and_claims(html_or_text: &str, base: &str) -> Vec<serde_
     out
 }
 
-// grok branch deep scrape: extract image/video srcs from HTML for full res original from source
+fn sanitize_postgres_text(value: &str) -> String {
+    value.chars().filter(|ch| *ch != '\0').collect()
+}
+
+fn strip_null_bytes(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().copied().filter(|byte| *byte != 0).collect()
+}
+
+fn read_http_response_bytes(response: ureq::Response) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut reader = response.into_reader();
+    let _ = std::io::Read::read_to_end(&mut reader, &mut bytes);
+    bytes
+}
+
+fn decompress_http_body_if_needed(bytes: &[u8], content_encoding: &str) -> Vec<u8> {
+    let encoding = content_encoding.to_lowercase();
+    let looks_gzip = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+    if encoding.contains("gzip") || looks_gzip {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(bytes);
+        let mut out = Vec::new();
+        if decoder.read_to_end(&mut out).is_ok() && !out.is_empty() {
+            return out;
+        }
+    }
+    bytes.to_vec()
+}
+
+fn http_body_to_text(bytes: &[u8]) -> String {
+    sanitize_postgres_text(&String::from_utf8_lossy(bytes))
+}
+
+fn decode_html_entities_in_url(url: &str) -> String {
+    url.replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&")
+        .replace("&quot;", "\"")
+}
+
+fn normalize_crawl_url(url: &str) -> String {
+    decode_html_entities_in_url(url.trim())
+}
+
+fn is_static_asset_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    let path = lower.split('?').next().unwrap_or(&lower);
+    [
+        ".css", ".js", ".mjs", ".map", ".woff", ".woff2", ".ttf", ".ico", ".svg",
+    ]
+    .iter()
+    .any(|ext| path.ends_with(ext))
+}
+
+fn is_direct_media_cdn_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("patreonusercontent.com") || url_looks_like_binary_media(url, "")
+}
+
+fn should_queue_for_depth_crawl(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    if lower.contains("?l=") || lower.contains("&l=") {
+        return false;
+    }
+    !is_forbidden(url) && !is_static_asset_url(url) && !is_direct_media_cdn_url(url)
+}
+
+fn extract_quoted_attribute_values(html: &str, attr: &str) -> Vec<String> {
+    let lower = html.to_lowercase();
+    let attr_lower = attr.to_lowercase();
+    let mut out = Vec::new();
+    let mut search_start = 0usize;
+    while let Some(rel_pos) = lower[search_start..].find(&attr_lower) {
+        let pos = search_start + rel_pos;
+        let value_area = pos + attr.len();
+        if value_area >= html.len() {
+            break;
+        }
+        let first = html.as_bytes().get(value_area).copied().unwrap_or(b' ');
+        let (quote_byte, value_start) = if first == b'"' || first == b'\'' {
+            (first, value_area + 1)
+        } else {
+            search_start = pos + attr.len();
+            continue;
+        };
+        let mut value_end = value_start;
+        while value_end < html.len() && html.as_bytes()[value_end] != quote_byte {
+            value_end += 1;
+        }
+        if value_end > value_start {
+            out.push(html[value_start..value_end].to_string());
+        }
+        search_start = value_end.saturating_add(1);
+        if out.len() > 120 {
+            break;
+        }
+    }
+    out
+}
+
+fn clean_media_asset_url(resolved: &str) -> String {
+    let resolved = normalize_crawl_url(resolved);
+    let lower = resolved.to_lowercase();
+    if lower.contains("patreonusercontent")
+        || lower.contains("token-hash")
+        || lower.contains("token-time")
+        || lower.contains("signature=")
+        || lower.contains("x-amz-signature")
+    {
+        resolved
+    } else {
+        resolved.split('?').next().unwrap_or(&resolved).to_string()
+    }
+}
+
+fn url_looks_like_binary_media(url: &str, content_type: &str) -> bool {
+    let lower = url.to_lowercase();
+    let ct = content_type.to_lowercase();
+    ct.starts_with("image/")
+        || ct.starts_with("video/")
+        || ct.starts_with("audio/")
+        || ct.contains("pdf")
+        || ct.contains("octet-stream")
+        || [
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".m4v",
+            ".pdf",
+        ]
+        .iter()
+        .any(|ext| lower.contains(ext))
+}
+
+fn prepare_image_bytes_for_storage(
+    bytes: Vec<u8>,
+    kind: &igy6_artifacts::ContentKind,
+) -> (Vec<u8>, String) {
+    let mut final_bytes = bytes;
+    let mut mime = kind.mime.clone();
+    if kind.kind == "image" {
+        if let Ok(img) = image::load_from_memory(&final_bytes) {
+            let mut buf = Vec::new();
+            if img
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .is_ok()
+            {
+                final_bytes = buf;
+                mime = "image/png".to_string();
+            }
+        }
+    }
+    (final_bytes, mime)
+}
+
+fn push_unique_media_url(urls: &mut Vec<String>, url: String) {
+    if url.is_empty() || urls.contains(&url) {
+        return;
+    }
+    urls.push(url);
+}
+
+fn parse_srcset_urls(value: &str, base_url: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in value.split(',') {
+        let Some(candidate) = part.trim().split_whitespace().next() else {
+            continue;
+        };
+        if candidate.starts_with("data:") {
+            continue;
+        }
+        let resolved = if candidate.starts_with("http") {
+            candidate.to_string()
+        } else if candidate.starts_with("//") {
+            format!("https:{candidate}")
+        } else if candidate.starts_with('/') {
+            let host_end = base_url[8..]
+                .find('/')
+                .map(|i| i + 8)
+                .unwrap_or(base_url.len());
+            if host_end > 8 {
+                format!("{}{}", &base_url[..host_end], candidate)
+            } else {
+                format!("{base_url}{candidate}")
+            }
+        } else {
+            continue;
+        };
+        push_unique_media_url(&mut out, clean_media_asset_url(&resolved));
+        if out.len() > 120 {
+            break;
+        }
+    }
+    out
+}
+
+fn extract_embedded_cdn_urls(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let normalized = html.replace("\\/", "/");
+    let mut search_start = 0usize;
+    while let Some(rel) = normalized[search_start..].find("patreonusercontent.com") {
+        let pos = search_start + rel;
+        let before = &normalized[..pos];
+        let start = before
+            .rfind("https://")
+            .or_else(|| before.rfind("http://"))
+            .unwrap_or(pos.saturating_sub(8));
+        let tail = &normalized[start..];
+        let end = tail
+            .find(|c: char| {
+                c == '"'
+                    || c == '\''
+                    || c == '<'
+                    || c.is_whitespace()
+                    || c == ')'
+                    || c == ','
+                    || c == ']'
+            })
+            .unwrap_or(tail.len().min(2000));
+        let url = normalize_crawl_url(&tail[..end]);
+        if url.contains("patreonusercontent.com") {
+            push_unique_media_url(&mut out, clean_media_asset_url(&url));
+        }
+        search_start = pos + 1;
+        if out.len() > 120 {
+            break;
+        }
+    }
+    out
+}
+
+fn extract_all_media_urls_from_html(html: &str, base_url: &str) -> Vec<String> {
+    let mut urls = extract_img_and_video_srcs(html, base_url);
+    for embedded in extract_embedded_cdn_urls(html) {
+        push_unique_media_url(&mut urls, embedded);
+    }
+    for raw in extract_quoted_attribute_values(html, "srcset=") {
+        for url in parse_srcset_urls(&raw, base_url) {
+            push_unique_media_url(&mut urls, url);
+        }
+        if urls.len() > 120 {
+            break;
+        }
+    }
+    urls
+}
+
+// IGY6 deep scrape: extract image/video srcs from HTML for full res original from source
 fn extract_img_and_video_srcs(html: &str, base_url: &str) -> Vec<String> {
     let mut srcs = Vec::new();
-    let lower = html.to_lowercase();
-    // simple extraction for src, data-src, data-fullsrc, poster etc for img/video/source
     for attr in [
         "src=",
         "data-src=",
         "data-fullsrc=",
         "data-original=",
         "poster=",
-        "srcset=",
     ] {
-        let mut search = &lower[..];
-        while let Some(pos) = search.find(attr) {
-            let rest = &search[pos + attr.len()..];
-            if let Some(qpos) = rest.find(|c: char| c == '"' || c == '\'') {
-                let quote = &rest[qpos..qpos + 1];
-                if let Some(end) = rest[qpos + 1..].find(quote) {
-                    let raw = &rest[qpos + 1..qpos + 1 + end];
-                    if !raw.is_empty()
-                        && raw.len() < 1000
-                        && (raw.starts_with("http")
-                            || raw.starts_with("/")
-                            || raw.starts_with("data:") == false)
-                    {
-                        let resolved = if raw.starts_with("http") {
-                            raw.to_string()
-                        } else if raw.starts_with("//") {
-                            format!("https:{}", raw)
-                        } else if raw.starts_with("/") {
-                            // naive base
-                            let host_end = base_url[8..]
-                                .find('/')
-                                .map(|i| i + 8)
-                                .unwrap_or(base_url.len());
-                            if host_end > 8 {
-                                format!("{}{}", &base_url[..host_end], raw)
-                            } else {
-                                format!("{}{}", base_url, raw)
-                            }
-                        } else {
-                            raw.to_string()
-                        };
-                        // clean common resize params for full res
-                        let clean = resolved.split('?').next().unwrap_or(&resolved).to_string();
-                        if !srcs.contains(&clean) {
-                            srcs.push(clean);
-                        }
-                    }
-                }
+        for raw in extract_quoted_attribute_values(html, attr) {
+            if raw.is_empty()
+                || raw.len() >= 1000
+                || raw.starts_with("data:")
+                || !(raw.starts_with("http") || raw.starts_with("/") || raw.starts_with("//"))
+            {
+                continue;
             }
-            search = &search[pos + 5..];
-            if srcs.len() > 50 {
-                break;
+            let resolved = if raw.starts_with("http") {
+                raw
+            } else if raw.starts_with("//") {
+                format!("https:{raw}")
+            } else if raw.starts_with("/") {
+                let host_end = base_url[8..]
+                    .find('/')
+                    .map(|i| i + 8)
+                    .unwrap_or(base_url.len());
+                if host_end > 8 {
+                    format!("{}{}", &base_url[..host_end], raw)
+                } else {
+                    format!("{base_url}{raw}")
+                }
+            } else {
+                raw
+            };
+            let clean = clean_media_asset_url(&resolved);
+            if !srcs.contains(&clean) {
+                srcs.push(clean);
+            }
+            if srcs.len() > 120 {
+                return srcs;
             }
         }
     }
@@ -5140,7 +5970,8 @@ fn require_valid_work_item_status_transition(
         "pending_intent_verification" => matches!(new_status, "queued" | "canceled"),
         "queued" => matches!(new_status, "running" | "canceled"),
         "running" => matches!(new_status, "completed" | "failed" | "canceled"),
-        "completed" | "failed" | "canceled" => false,
+        "failed" => matches!(new_status, "queued" | "canceled"),
+        "completed" | "canceled" => false,
         _ => false,
     };
     if !allowed {
@@ -11971,7 +12802,7 @@ fn connector_dry_run_result(
             "generic_connector"
         }
         _ => {
-            // On grok branch we treat unknown declared types as generic (still create run + artifact).
+            // On IGY6 we treat unknown declared types as generic (still create run + artifact).
             "generic_connector"
         }
     };
@@ -12031,7 +12862,7 @@ fn connector_dry_run_result(
             "external_model_policy": permission.external_model_policy.clone(),
             "approval_required": permission.approval_required,
             "preview_only": true,
-            "grok_branch_note": "Dry-run now type-aware for expected collector capabilities"
+            "igy6_note": "Dry-run now type-aware for expected collector capabilities"
         }),
     })
 }
@@ -12079,6 +12910,40 @@ fn collection_dry_run_summary(
     })
 }
 
+fn full_access_normalization_work_payload(
+    collection_run_id: &str,
+    source_id: &str,
+    raw_artifact_ids: &[String],
+    collection_mode: &str,
+) -> Value {
+    serde_json::json!({
+        "collection_run_id": collection_run_id,
+        "source_id": source_id,
+        "raw_artifact_ids": raw_artifact_ids,
+        "artifact_count": raw_artifact_ids.len(),
+        "collection_mode": collection_mode,
+        "scaffold_only": false,
+        "executes_normalization": true,
+        "worker_task_name": "collection.normalize_collection_run",
+        "normalization_input_type": "utf_8_text",
+        "intent_verification_recorded": true,
+        "intent_verification": {
+            "original_request": format!("Queue normalization after {collection_mode}"),
+            "interpretation": "Create a queued worker item to normalize UTF-8 artifacts collected by the IGY6 full-access collector.",
+            "proposed_work_type": "collection_normalization",
+            "sources_likely_used": [source_id],
+            "expected_output": "Normalized document records for the collected raw artifacts.",
+            "safety_requirements": [
+                "Use only stored local artifacts linked to this collection run.",
+                "Do not perform external model calls or system-changing actions."
+            ],
+            "assumptions": ["Collected artifacts are UTF-8 text artifacts supported by the current worker."],
+            "missing_information": [],
+            "recorded_by": "IGY6 full-access collector"
+        }
+    })
+}
+
 fn collection_normalization_work_payload(
     collection_run_id: &str,
     source: &CollectionSource,
@@ -12115,6 +12980,188 @@ fn collection_normalization_work_payload(
     })
 }
 
+const OPS_LOG_MAX_BYTES: usize = 512 * 1024;
+const OPS_LOG_MAX_LINE_CHARS: usize = 2_000;
+const OPS_LOG_MAX_RETURN_LINES: usize = 200;
+
+fn ops_log_timestamp() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}.{:03}Z", elapsed.as_secs(), elapsed.subsec_millis())
+}
+
+fn redact_ops_log_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    if [
+        "password",
+        "token",
+        "secret",
+        "key=",
+        "database_url",
+        "cookie",
+        "credential",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return "[REDACTED sensitive-looking log line]".to_string();
+    }
+    line.to_string()
+}
+
+fn truncate_ops_log_file(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= OPS_LOG_MAX_BYTES as u64 {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let keep_from = content
+        .len()
+        .saturating_sub(OPS_LOG_MAX_BYTES / 2)
+        .min(content.len());
+    let trimmed = &content[content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= keep_from)
+        .unwrap_or(keep_from)..];
+    let _ = fs::write(path, trimmed);
+}
+
+pub fn append_runtime_ops_log(kind: &str, component: &str, level: &str, message: &str) {
+    let file_name = if kind == "error" {
+        "error.log"
+    } else {
+        "startup.log"
+    };
+    let ops_dir = artifact_data_root().join("ops");
+    if fs::create_dir_all(&ops_dir).is_err() {
+        return;
+    }
+    let path = ops_dir.join(file_name);
+    let sanitized = redact_ops_log_line(
+        &message
+            .replace('\r', " ")
+            .replace('\n', " ")
+            .chars()
+            .take(OPS_LOG_MAX_LINE_CHARS)
+            .collect::<String>(),
+    );
+    let line = format!(
+        "{} [{component}] [{level}] {sanitized}\n",
+        ops_log_timestamp()
+    );
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+    truncate_ops_log_file(&path);
+}
+
+fn tail_ops_log_lines(path: &Path, limit: usize) -> (bool, Vec<String>) {
+    if !path.is_file() {
+        return (false, Vec::new());
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return (true, Vec::new());
+    };
+    let lines = content
+        .lines()
+        .map(redact_ops_log_line)
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(limit);
+    (true, lines[start..].to_vec())
+}
+
+fn runtime_logs_query_limit(path: &str) -> usize {
+    path.split('?')
+        .nth(1)
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                if key == "limit" {
+                    value.parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(120)
+        .clamp(1, OPS_LOG_MAX_RETURN_LINES)
+}
+
+fn runtime_logs_response(path: &str) -> GatewayResponse {
+    let limit = runtime_logs_query_limit(path);
+    let ops_dir = artifact_data_root().join("ops");
+    let startup_path = ops_dir.join("startup.log");
+    let error_path = ops_dir.join("error.log");
+    let (startup_exists, startup_lines) = tail_ops_log_lines(&startup_path, limit);
+    let (error_exists, error_lines) = tail_ops_log_lines(&error_path, limit);
+    let payload = serde_json::json!({
+        "limit": limit,
+        "startup_log": {
+            "path": "ops/startup.log",
+            "exists": startup_exists,
+            "lines": startup_lines,
+        },
+        "error_log": {
+            "path": "ops/error.log",
+            "exists": error_exists,
+            "lines": error_lines,
+        },
+    });
+    json_response(200, "OK", payload.to_string(), false)
+}
+
+fn runtime_logs_append_response(body: &str) -> GatewayResponse {
+    let parsed = serde_json::from_str::<Value>(body).unwrap_or(Value::Null);
+    let component = parsed
+        .get("component")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .chars()
+        .take(64)
+        .collect::<String>();
+    let level = parsed
+        .get("level")
+        .and_then(Value::as_str)
+        .unwrap_or("error")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    let message = parsed
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("missing message")
+        .chars()
+        .take(OPS_LOG_MAX_LINE_CHARS)
+        .collect::<String>();
+    if message.trim().is_empty() || message == "missing message" {
+        return json_response(
+            422,
+            "Unprocessable Entity",
+            "{\"detail\":\"message is required\"}".to_string(),
+            false,
+        );
+    }
+    let kind = if level.eq_ignore_ascii_case("error") {
+        "error"
+    } else {
+        "startup"
+    };
+    append_runtime_ops_log(kind, &component, &level, &message);
+    json_response(
+        200,
+        "OK",
+        "{\"status\":\"recorded\"}".to_string(),
+        false,
+    )
+}
+
 pub(crate) fn artifact_data_root() -> PathBuf {
     if let Ok(artifact_store_path) = env::var("ARTIFACT_STORE_PATH") {
         let path = PathBuf::from(artifact_store_path);
@@ -12141,7 +13188,7 @@ pub(crate) fn artifact_data_root() -> PathBuf {
     PathBuf::from("/workspace/storage")
 }
 
-// === Grok branch user / password / authenticator support (off by default for TOTP) ===
+// === IGY6 user / password / authenticator support (off by default for TOTP) ===
 // Config stored in a simple JSON next to data root for persistence across runs.
 // Default password "ThatDog123". TOTP off until linked with any standard authenticator app (Google Authenticator, Authy, etc.).
 // All protected operations (full access collector, etc.) require the current password (and TOTP code if enabled).
@@ -12156,25 +13203,30 @@ struct UserConfig {
 
 fn user_config_path() -> PathBuf {
     if let Ok(root) = env::var("IGY6_DATA_ROOT") {
-        PathBuf::from(root).join(".grok-user.json")
+        PathBuf::from(root).join(".igy6-user.json")
     } else if let Ok(art) = env::var("ARTIFACT_STORE_PATH") {
         Path::new(&art)
             .parent()
             .unwrap_or(Path::new("."))
-            .join(".grok-user.json")
+            .join(".igy6-user.json")
     } else {
-        PathBuf::from(".grok-user.json")
+        PathBuf::from(".igy6-user.json")
     }
 }
 
+fn legacy_user_config_path() -> PathBuf {
+    user_config_path().with_file_name(".grok-user.json")
+}
+
 fn load_user_config() -> UserConfig {
-    let path = user_config_path();
-    if let Ok(data) = fs::read_to_string(&path) {
-        if let Ok(cfg) = serde_json::from_str::<UserConfig>(&data) {
-            return cfg;
+    for path in [user_config_path(), legacy_user_config_path()] {
+        if let Ok(data) = fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str::<UserConfig>(&data) {
+                return cfg;
+            }
         }
     }
-    // Default for first run / grok branch
+    // Default for first run
     UserConfig {
         password: "ThatDog123".to_string(),
         totp_secret: None,
@@ -12206,7 +13258,7 @@ fn get_totp(secret: &str) -> Option<TOTP> {
                 30,
                 bytes,
                 None,
-                "grok-user".to_string(),
+                "igy6-user".to_string(),
             )
             .ok()
         })
@@ -12294,7 +13346,7 @@ fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
         30,
         Secret::Encoded(secret.clone()).to_bytes().unwrap(),
         None,
-        "grok-user".to_string(),
+        "igy6-user".to_string(),
     ) {
         Ok(t) => t,
         Err(_) => return Err(GatewayError::Validation("failed to create TOTP".into())),
@@ -13063,7 +14115,7 @@ fn execute_known_agent_action(
                 exit_code: None,
             })
         }
-        "start_stack" | "stop_stack" | "run_last_healthy_stack" => {
+        "start_stack" | "stop_stack" | "run_last_healthy_stack" | "restart_stack" => {
             execute_host_bridge_action(definition.name)
         }
         _ => Err(GatewayError::NotFound("Unknown agent action".to_string())),
@@ -13369,16 +14421,28 @@ fn host_bridge_token() -> Result<String, GatewayError> {
             return Ok(trimmed.to_string());
         }
     }
-    if let Ok(path) = env::var("IGY6_HOST_BRIDGE_TOKEN_FILE") {
-        let token = fs::read_to_string(&path)
-            .map_err(|_| GatewayError::Conflict("Host bridge token is unavailable".to_string()))?;
-        let trimmed = token.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+    let token_paths = [
+        env::var("IGY6_HOST_BRIDGE_TOKEN_FILE").ok(),
+        Some(
+            artifact_data_root()
+                .join("ops/host-bridge.token")
+                .to_string_lossy()
+                .to_string(),
+        ),
+    ];
+    for path in token_paths.into_iter().flatten() {
+        if path.trim().is_empty() {
+            continue;
+        }
+        if let Ok(token) = fs::read_to_string(&path) {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                return Ok(trimmed.to_string());
+            }
         }
     }
     Err(GatewayError::Conflict(
-        "Host bridge token is unavailable".to_string(),
+        "Host bridge token is unavailable (set IGY6_HOST_BRIDGE_TOKEN_FILE or create ops/host-bridge.token under IGY6_DATA_ROOT)".to_string(),
     ))
 }
 
@@ -13686,7 +14750,7 @@ fn is_source_type(value: &str) -> bool {
 }
 
 fn is_supported_collection_source_type(value: &str) -> bool {
-    // On grok branch: broadened to reflect full expected collector capabilities from specs.
+    // On IGY6: broadened to reflect full expected collector capabilities from specs.
     // All declared source types in SourceType enum + web UI should be supportable for
     // registration, dry-run, permissioned collection, artifact creation, and evidence flow.
     matches!(
@@ -14632,6 +15696,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalize_crawl_url_decodes_amp_entities() {
+        let url = "https://cdn.example/4.jpg?token-hash=AbC&amp;token-time=123";
+        assert_eq!(
+            normalize_crawl_url(url),
+            "https://cdn.example/4.jpg?token-hash=AbC&token-time=123"
+        );
+    }
+
+    #[test]
+    fn extract_quoted_attribute_values_preserves_url_case() {
+        let html = r#"<a href="https://cdn.example/TokenHash=AbCdEfG">x</a>"#;
+        let values = extract_quoted_attribute_values(html, "href=");
+        assert_eq!(
+            values,
+            vec!["https://cdn.example/TokenHash=AbCdEfG".to_string()]
+        );
+    }
+
+    #[test]
+    fn should_queue_for_depth_crawl_skips_signed_media_urls() {
+        let media = "https://c10.patreonusercontent.com/4/patreon-media/p/campaign/1/photo.jpg?token-hash=AbC&token-time=1";
+        assert!(!should_queue_for_depth_crawl(media));
+        assert!(is_direct_media_cdn_url(media));
+    }
+
+    #[test]
+    fn extract_embedded_cdn_urls_finds_json_escaped_patreon_media() {
+        let html = r#"{"image":"https:\/\/c10.patreonusercontent.com\/4\/photo.jpg?token-hash=AbCd&amp;token-time=99"}"#;
+        let urls = extract_embedded_cdn_urls(html);
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].contains("token-hash=AbCd&token-time=99"));
+    }
+
+    #[test]
+    fn extract_all_media_urls_from_html_merges_src_and_embedded() {
+        let html = r#"<img src="https://cdn.example/a.png"/> https://c11.patreonusercontent.com/z/1.jpg?token-hash=x"#;
+        let urls = extract_all_media_urls_from_html(html, "https://www.patreon.com/test");
+        assert!(urls
+            .iter()
+            .any(|url| url.contains("patreonusercontent.com")));
+        assert!(urls.iter().any(|url| url.contains("cdn.example/a.png")));
+    }
+
+    #[test]
     fn parses_http_request_with_body() {
         let request = parse_gateway_request(
             "POST /agent/intent HTTP/1.1\r\nHost: local\r\nContent-Length: 20\r\n\r\n{\"message\":\"health\"}",
@@ -15019,6 +16127,44 @@ mod tests {
             assert!(!response.proxied_to_fallback, "{path}");
             assert!(response.body.contains(expected), "{path}");
         }
+    }
+
+    #[test]
+    fn runtime_logs_route_returns_startup_and_error_sections() {
+        let temp_root = env::temp_dir().join(format!(
+            "igy6-runtime-logs-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let ops_dir = temp_root.join("ops");
+        fs::create_dir_all(&ops_dir).expect("ops dir");
+        fs::write(
+            ops_dir.join("startup.log"),
+            "1.0Z [igy6-cli] [info] stack started\n",
+        )
+        .expect("startup log");
+        fs::write(
+            ops_dir.join("error.log"),
+            "2.0Z [gateway] [error] sample failure\n",
+        )
+        .expect("error log");
+        env::set_var("IGY6_DATA_ROOT", &temp_root);
+
+        let response = handle_gateway_request_with_db(
+            &request("GET", "/ops/runtime-logs?limit=10", ""),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        env::remove_var("IGY6_DATA_ROOT");
+        let _ = fs::remove_dir_all(&temp_root);
+
+        assert_eq!(response.status_code, 200);
+        assert!(response.body.contains("\"startup_log\""));
+        assert!(response.body.contains("stack started"));
+        assert!(response.body.contains("sample failure"));
     }
 
     #[test]
@@ -16273,7 +17419,7 @@ mod tests {
             approval_required: true,
         };
         let result = connector_dry_run_result(&source, &permission)
-            .expect("now supported via generic on grok");
+            .expect("now supported via generic in IGY6");
         assert_eq!(result.connector_name, "generic_connector");
         assert!(result.allowed);
     }
@@ -16809,6 +17955,8 @@ mod tests {
                 "GET",
                 "/memory/graph/nodes/{node_label}/{node_id}/relationships",
             ),
+            ("GET", "/ops/runtime-logs"),
+            ("POST", "/ops/runtime-logs/append"),
             ("GET", "/memory/vector/chunks"),
             ("POST", "/memory/vector/chunks/ensure"),
             ("POST", "/memory/vector/chunks/search"),

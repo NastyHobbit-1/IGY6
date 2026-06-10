@@ -109,6 +109,7 @@ includesAll("browser api proxies", corpus, [
   "/api/collection-runs/full-access",
   "/api/chat/evidence-answer",
   "/api/memory/vector/chunks/ensure",
+  "/api/ops/runtime-logs",
 ]);
 
 const requiredApiRoutes = [
@@ -121,6 +122,8 @@ const requiredApiRoutes = [
   "chat/evidence-answer/route.ts",
   "chat/retrieval-preview/route.ts",
   "memory/vector/chunks/ensure/route.ts",
+  "ops/runtime-logs/route.ts",
+  "ops/runtime-logs/append/route.ts",
   "settings/env/route.ts",
   "settings/env/verify/route.ts",
   "settings/env/apply/route.ts",
@@ -146,6 +149,9 @@ includesAll("evidence gallery and activity sections", corpus, [
 
 includesAll("system and settings", corpus, [
   'id="advanced-diagnostics"',
+  'id="troubleshooting-logs"',
+  "TroubleshootingLogsPanel",
+  "data-troubleshooting-logs",
   "productServiceGrid",
   "StackRestartPanel",
   "data-stack-restart",

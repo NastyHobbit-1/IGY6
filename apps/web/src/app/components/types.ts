@@ -119,6 +119,19 @@ export type VectorCollectionStatus = {
   };
 };
 
+export type RuntimeLogSection = {
+  path: string;
+  exists: boolean;
+  lines: string[];
+};
+
+export type RuntimeLogsResponse = {
+  limit?: number;
+  startup_log: RuntimeLogSection;
+  error_log: RuntimeLogSection;
+  error?: string | null;
+};
+
 export type GraphSchemaStatus = {
   constraints: Array<Record<string, unknown>>;
 };

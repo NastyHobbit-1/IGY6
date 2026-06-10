@@ -7,7 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use igy6_config::{render_cli_report, validate_repo_config};
 use igy6_policy::{ActionRisk, ApprovalRequirement};
@@ -15,7 +15,6 @@ use igy6_policy::{ActionRisk, ApprovalRequirement};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_SCRIPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const RUN_SCRIPT: &[&str] = &["scripts/run.sh"];
-const STOP_SCRIPT: &[&str] = &["scripts/stop.sh"];
 const RUN_LAST_HEALTHY_SCRIPT: &[&str] = &["scripts/run-last-healthy-config.sh"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +87,7 @@ enum CommandAction {
     Render(String),
     RunFixedArgv(&'static [&'static str]),
     StartWithBrowser,
+    StopStack,
 }
 
 pub fn execute_cli<I>(args: I) -> Result<CliOutcome, CliError>
@@ -101,7 +101,20 @@ where
         CommandAction::RunFixedArgv(argv) => {
             run_fixed_argv(argv, &repo_root, DEFAULT_SCRIPT_TIMEOUT)
         }
-        CommandAction::StartWithBrowser => start_stack_and_open_browser(&repo_root),
+        CommandAction::StartWithBrowser => match start_stack_and_open_browser(&repo_root) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                log_cli_error(&repo_root, &error.to_string());
+                Err(error)
+            }
+        },
+        CommandAction::StopStack => match stop_stack(&repo_root) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                log_cli_error(&repo_root, &error.to_string());
+                Err(error)
+            }
+        },
     }
 }
 
@@ -148,7 +161,7 @@ where
         }
         "stop" => {
             require_exact_len(&args, 1, "igy6 stop")?;
-            Ok(CommandAction::RunFixedArgv(STOP_SCRIPT))
+            Ok(CommandAction::StopStack)
         }
         "run-last-healthy" => {
             require_exact_len(&args, 1, "igy6 run-last-healthy")?;
@@ -389,6 +402,98 @@ struct RuntimePorts {
     api_url: String,
 }
 
+const OPS_LOG_MAX_BYTES: usize = 512 * 1024;
+const OPS_LOG_MAX_LINE_CHARS: usize = 2_000;
+
+fn ops_log_timestamp() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}.{:03}Z", elapsed.as_secs(), elapsed.subsec_millis())
+}
+
+fn igy6_data_root(repo_root: &Path) -> PathBuf {
+    let env_file = repo_root.join(".env");
+    let content = fs::read_to_string(&env_file).unwrap_or_default();
+    read_env_value(&content, "IGY6_DATA_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.join("../IGY6_Data"))
+}
+
+fn truncate_ops_log_file(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= OPS_LOG_MAX_BYTES as u64 {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let keep_from = content.len().saturating_sub(OPS_LOG_MAX_BYTES / 2);
+    let trimmed = &content[content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= keep_from)
+        .unwrap_or(keep_from)..];
+    let _ = fs::write(path, trimmed);
+}
+
+pub fn append_ops_log(
+    data_root: &Path,
+    kind: &str,
+    component: &str,
+    level: &str,
+    message: &str,
+) {
+    let file_name = if kind == "error" {
+        "error.log"
+    } else {
+        "startup.log"
+    };
+    let ops_dir = data_root.join("ops");
+    if fs::create_dir_all(&ops_dir).is_err() {
+        return;
+    }
+    let path = ops_dir.join(file_name);
+    let sanitized = redact_sensitive_output(
+        &message
+            .replace('\r', " ")
+            .replace('\n', " ")
+            .chars()
+            .take(OPS_LOG_MAX_LINE_CHARS)
+            .collect::<String>(),
+    );
+    let line = format!(
+        "{} [{component}] [{level}] {sanitized}\n",
+        ops_log_timestamp()
+    );
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+    truncate_ops_log_file(&path);
+}
+
+fn log_startup_step(repo_root: &Path, message: &str) {
+    append_ops_log(
+        &igy6_data_root(repo_root),
+        "startup",
+        "igy6-cli",
+        "info",
+        message,
+    );
+}
+
+fn log_cli_error(repo_root: &Path, message: &str) {
+    append_ops_log(
+        &igy6_data_root(repo_root),
+        "error",
+        "igy6-cli",
+        "error",
+        message,
+    );
+}
+
 fn read_env_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
@@ -591,86 +696,171 @@ fn ensure_runtime_ports(repo_root: &Path, env_file: &Path) -> Result<RuntimePort
     })
 }
 
-fn ensure_db_schema(repo_root: &Path) -> Result<(), CliError> {
-    let schema_file = repo_root.join("infra/schema/bootstrap-core.sql");
-    if !schema_file.is_file() {
-        return Ok(());
-    }
+const POSTGRES_CONTAINER_SCHEMA_PATH: &str = "/docker-entrypoint-initdb.d/01-bootstrap-core.sql";
 
-    println!("Ensuring PostgreSQL schema...");
+fn postgres_credentials(repo_root: &Path) -> (String, String) {
+    let env_file = repo_root.join(".env");
+    let content = fs::read_to_string(&env_file).unwrap_or_default();
+    let user = read_env_value(&content, "POSTGRES_USER").unwrap_or_else(|| "igy6".to_string());
+    let db = read_env_value(&content, "POSTGRES_DB").unwrap_or_else(|| "igy6".to_string());
+    (user, db)
+}
+
+fn docker_compose_postgres_exec_args<'a>(
+    postgres_user: &'a str,
+    postgres_db: &'a str,
+    command: &'a str,
+    extra: &[&'a str],
+) -> Vec<&'a str> {
+    let mut args = vec![
+        "compose",
+        "-f",
+        "infra/docker-compose.yml",
+        "--env-file",
+        ".env",
+        "exec",
+        "-T",
+        "postgres",
+        command,
+    ];
+    args.extend(extra);
+    args.push("-U");
+    args.push(postgres_user);
+    args.push("-d");
+    args.push(postgres_db);
+    args
+}
+
+fn wait_for_postgres_ready(
+    repo_root: &Path,
+    postgres_user: &str,
+    postgres_db: &str,
+) -> Result<(), CliError> {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(120) {
-        let check = Command::new("docker")
-            .args([
-                "compose",
-                "-f",
-                "infra/docker-compose.yml",
-                "--env-file",
-                ".env",
-                "exec",
-                "-T",
-                "postgres",
-                "pg_isready",
-                "-U",
-                "adaptive",
-                "-d",
-                "adaptive_intelligence",
-            ])
-            .current_dir(repo_root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-
-        if matches!(check, Ok(status) if status.success()) {
-            break;
+        if postgres_compose_health(repo_root).as_deref() == Some("healthy") {
+            let args =
+                docker_compose_postgres_exec_args(postgres_user, postgres_db, "pg_isready", &[]);
+            let check = Command::new("docker")
+                .args(&args)
+                .current_dir(repo_root)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if matches!(check, Ok(status) if status.success()) {
+                return Ok(());
+            }
         }
         thread::sleep(Duration::from_secs(2));
     }
 
-    let sql = fs::read_to_string(&schema_file)
-        .map_err(|e| CliError::ProcessLaunch(format!("Failed to read schema SQL: {e}")))?;
+    Err(CliError::ProcessLaunch(format!(
+        "PostgreSQL did not become ready within 120s (user={postgres_user}, db={postgres_db})"
+    )))
+}
 
-    let mut child = Command::new("docker")
+fn postgres_compose_health(repo_root: &Path) -> Option<String> {
+    let output = Command::new("docker")
         .args([
             "compose",
             "-f",
             "infra/docker-compose.yml",
             "--env-file",
             ".env",
-            "exec",
-            "-T",
+            "ps",
             "postgres",
-            "psql",
-            "-U",
-            "adaptive",
-            "-d",
-            "adaptive_intelligence",
-            "-v",
-            "ON_ERROR_STOP=1",
+            "--format",
+            "{{.Health}}",
         ])
         .current_dir(repo_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let health = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if health.is_empty() {
+        None
+    } else {
+        Some(health)
+    }
+}
+
+fn format_command_failure(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match (stderr.is_empty(), stdout.is_empty()) {
+        (false, false) => format!("{stderr}\n{stdout}"),
+        (false, true) => stderr,
+        (true, false) => stdout,
+        (true, true) => "command exited with a non-zero status (no output captured)".to_string(),
+    }
+}
+
+fn apply_schema_sql_once(
+    repo_root: &Path,
+    postgres_user: &str,
+    postgres_db: &str,
+) -> Result<(), String> {
+    let args = docker_compose_postgres_exec_args(
+        postgres_user,
+        postgres_db,
+        "psql",
+        &[
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-f",
+            POSTGRES_CONTAINER_SCHEMA_PATH,
+        ],
+    );
+    let output = Command::new("docker")
+        .args(&args)
+        .current_dir(repo_root)
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| CliError::ProcessLaunch(format!("schema apply failed to start: {e}")))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(sql.as_bytes())
-            .map_err(|e| CliError::ProcessLaunch(format!("schema apply write failed: {e}")))?;
+        .output()
+        .map_err(|e| format!("schema apply failed to start: {e}"))?;
+    if output.status.success() {
+        return Ok(());
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| CliError::ProcessLaunch(format!("schema apply wait failed: {e}")))?;
-    if !status.success() {
-        return Err(CliError::ProcessLaunch(
-            "PostgreSQL schema apply failed (see docker compose logs postgres)".to_string(),
-        ));
+    Err(format_command_failure(&output))
+}
+
+fn ensure_db_schema(repo_root: &Path) -> Result<(), CliError> {
+    let schema_file = repo_root.join("infra/schema/bootstrap-core.sql");
+    if !schema_file.is_file() {
+        return Ok(());
     }
 
-    Ok(())
+    let (postgres_user, postgres_db) = postgres_credentials(repo_root);
+    println!("Ensuring PostgreSQL schema (user={postgres_user}, db={postgres_db})...");
+    log_startup_step(repo_root, &format!("Ensuring PostgreSQL schema (user={postgres_user}, db={postgres_db})"));
+    wait_for_postgres_ready(repo_root, &postgres_user, &postgres_db)?;
+
+    let mut last_error = String::new();
+    for attempt in 1..=8 {
+        match apply_schema_sql_once(repo_root, &postgres_user, &postgres_db) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last_error = error;
+                log_cli_error(repo_root, &format!("PostgreSQL schema apply attempt {attempt} failed: {last_error}"));
+                if attempt < 8 {
+                    eprintln!(
+                        "PostgreSQL schema apply attempt {attempt} failed; retrying in 3s..."
+                    );
+                    if !last_error.is_empty() {
+                        eprintln!("{last_error}");
+                    }
+                    thread::sleep(Duration::from_secs(3));
+                }
+            }
+        }
+    }
+
+    Err(CliError::ProcessLaunch(format!(
+        "PostgreSQL schema apply failed after 8 attempts: {last_error}"
+    )))
 }
 
 fn fetch_http_body(
@@ -731,12 +921,53 @@ fn wait_for_igy6_ui(web_url: &str, web_port: u16, timeout: Duration) -> Result<(
     )))
 }
 
+fn stop_stack(repo_root: &Path) -> Result<CliOutcome, CliError> {
+    let env_file = repo_root.join(".env");
+    if !env_file.is_file() {
+        return Err(CliError::ProcessLaunch(
+            ".env not found; run igy6 start first to bootstrap configuration.".to_string(),
+        ));
+    }
+
+    println!("Stopping IGY6 stack...");
+    log_startup_step(repo_root, "IGY6 stop requested");
+    println!(
+        "Persistent data under IGY6_DATA_ROOT is preserved. No volumes, images, or data folders will be deleted."
+    );
+
+    let status = Command::new("docker")
+        .args([
+            "compose",
+            "-f",
+            "infra/docker-compose.yml",
+            "--env-file",
+            ".env",
+            "down",
+        ])
+        .current_dir(repo_root)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| CliError::ProcessLaunch(format!("docker compose down failed: {e}")))?;
+
+    if !status.success() {
+        return Err(CliError::ProcessLaunch(
+            "docker compose down failed (is Docker running?)".to_string(),
+        ));
+    }
+
+    println!("IGY6 stack stopped.");
+    log_startup_step(repo_root, "IGY6 stack stopped");
+    Ok(CliOutcome::success("IGY6 stack stopped.\n".to_string()))
+}
+
 /// Starts the IGY6 stack in detached mode (triggering bootstrap if needed),
 /// waits for the web UI, then opens the browser. This makes the compiled
 /// `igy6` binary act like a normal executable program.
 /// Works on Linux, macOS, and Windows (requires Docker Desktop on Windows).
 pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliError> {
-    // Cross-platform bootstrap: create .env from example if missing (grok branch defaults)
+    log_startup_step(repo_root, "IGY6 start requested");
+    // Cross-platform bootstrap: create .env from example if missing (IGY6 defaults)
     let env_file = repo_root.join(".env");
     if !env_file.exists() {
         let example = repo_root.join(".env.example");
@@ -745,7 +976,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
                 CliError::ProcessLaunch(format!("Failed to copy .env.example: {}", e))
             })?;
 
-            // Set grok-friendly defaults
+            // Set IGY6-friendly defaults
             let data_dir = dirs::home_dir()
                 .map(|h| h.join("IGY6_Data").to_string_lossy().to_string())
                 .unwrap_or_else(|| "./IGY6_Data".to_string());
@@ -763,9 +994,9 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
             } else {
                 content = content.replace("SINGLE_USER_MODE=false", "SINGLE_USER_MODE=true");
             }
-            if !content.contains("GROK BRANCH NOTE") {
+            if !content.contains("IGY6 SETUP NOTE") {
                 content.push_str(&format!(
-                    "\n# GROK BRANCH NOTE (auto-added by igy6 installer)\n\
+                    "\n# IGY6 SETUP NOTE (auto-added by igy6 installer)\n\
                      # Default program password is ThatDog123 (change in UI User & Security after first unlock).\n\
                      # All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI.\n\
                      # Data lives under {} (including full-res images/videos from safe sources only).\n\
@@ -778,7 +1009,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
                 .map_err(|e| CliError::ProcessLaunch(format!("Failed to write .env: {}", e)))?;
 
             println!(
-                "Created .env with grok defaults (password: ThatDog123, data dir: {})",
+                "Created .env with IGY6 defaults (password: ThatDog123, data dir: {})",
                 data_dir
             );
         }
@@ -790,6 +1021,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
 
     // Start the stack detached (builds if needed). Uses "docker compose" (works on Docker Desktop Windows too)
     println!("Starting IGY6 stack (detached mode)...");
+    log_startup_step(repo_root, "Starting IGY6 stack (docker compose up -d --build)");
     let up_status = Command::new("docker")
         .args([
             "compose",
@@ -808,16 +1040,21 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
         .map_err(|e| CliError::ProcessLaunch(format!("docker compose failed: {}", e)))?;
 
     if !up_status.success() {
-        return Err(CliError::ProcessLaunch(
-            "docker compose up -d failed (is Docker running?)".to_string(),
-        ));
+        let message = "docker compose up -d failed (is Docker running?)";
+        log_cli_error(repo_root, message);
+        return Err(CliError::ProcessLaunch(message.to_string()));
     }
 
+    // Give compose a moment to attach exec/health endpoints after container start.
+    thread::sleep(Duration::from_secs(3));
     ensure_db_schema(repo_root)?;
+    log_startup_step(repo_root, &format!("Waiting for web UI at {}", ports.web_url));
     wait_for_igy6_ui(&ports.web_url, ports.web_port, Duration::from_secs(240))?;
 
     println!("Web UI is ready at {}", ports.web_url);
     println!("API is ready at {}", ports.api_url);
+    log_startup_step(repo_root, &format!("Web UI ready at {}", ports.web_url));
+    log_startup_step(repo_root, &format!("API ready at {}", ports.api_url));
 
     match webbrowser::open(&ports.web_url) {
         Ok(_) => println!("Opened browser to the IGY6 UI."),
@@ -828,6 +1065,15 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
     }
 
     println!("\nIGY6 is running (Rust gateway + worker, Next.js UI).");
+    log_startup_step(
+        repo_root,
+        "IGY6 stack running (Rust gateway + worker, Next.js UI)",
+    );
+    let log_dir = igy6_data_root(repo_root).join("ops");
+    println!(
+        "- Troubleshooting logs: {} (startup.log, error.log) and System tab in the UI",
+        log_dir.display()
+    );
     println!("- View logs: docker compose -f infra/docker-compose.yml --env-file .env logs -f web api worker");
     println!("- Stop: igy6 stop");
     println!("- Password: ThatDog123 (change in User & Security)");
@@ -1108,7 +1354,7 @@ mod tests {
         ));
         assert!(matches!(
             plan_cli(["stop".to_string()], &repo_root).expect("stop"),
-            CommandAction::RunFixedArgv(argv) if argv == STOP_SCRIPT
+            CommandAction::StopStack
         ));
         assert!(matches!(
             plan_cli(["run-last-healthy".to_string()], &repo_root).expect("last healthy"),
@@ -1220,5 +1466,61 @@ mod tests {
                 "fixed argv must not be empty"
             ))
         ));
+    }
+
+    #[test]
+    fn append_ops_log_writes_redacted_lines() {
+        let mut path = env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        path.push(format!("igy6-ops-log-{unique}"));
+        fs::create_dir_all(&path).expect("temp dir");
+        append_ops_log(
+            &path,
+            "startup",
+            "test",
+            "info",
+            "normal startup line",
+        );
+        append_ops_log(
+            &path,
+            "error",
+            "test",
+            "error",
+            "DATABASE_URL=postgres://secret",
+        );
+        let startup = fs::read_to_string(path.join("ops/startup.log")).expect("startup log");
+        let error_log = fs::read_to_string(path.join("ops/error.log")).expect("error log");
+        fs::remove_dir_all(&path).expect("cleanup");
+        assert!(startup.contains("normal startup line"));
+        assert!(error_log.contains("[REDACTED sensitive-looking output]"));
+        assert!(!error_log.contains("postgres://secret"));
+    }
+
+    #[test]
+    fn postgres_credentials_read_env_or_default() {
+        let repo_root = find_repo_root(&env::current_dir().expect("cwd")).expect("repo");
+        let (user, db) = postgres_credentials(&repo_root);
+        assert!(!user.is_empty());
+        assert!(!db.is_empty());
+
+        let mut path = env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        path.push(format!("igy6-cli-env-{unique}"));
+        fs::create_dir_all(&path).expect("temp dir");
+        fs::write(
+            path.join(".env"),
+            "POSTGRES_USER=custom_user\nPOSTGRES_DB=custom_db\n",
+        )
+        .expect("write env");
+        let (user, db) = postgres_credentials(&path);
+        fs::remove_dir_all(&path).expect("cleanup");
+        assert_eq!(user, "custom_user");
+        assert_eq!(db, "custom_db");
     }
 }

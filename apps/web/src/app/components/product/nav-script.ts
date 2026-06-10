@@ -139,7 +139,17 @@ export const PRODUCT_NAV_SCRIPT = `
     } catch (error) {
       root.setAttribute("data-search-state", "warning");
       if (statusEl) statusEl.textContent = "Search needs attention";
-      if (!silent) window.alert(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await postJson("/api/ops/runtime-logs/append", {
+          component: "web-ui",
+          level: "error",
+          message: "Search repair failed: " + message,
+        });
+      } catch {
+        /* ignore secondary logging failures */
+      }
+      if (!silent) window.alert(message);
       return false;
     }
   };

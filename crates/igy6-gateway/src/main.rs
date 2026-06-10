@@ -4,8 +4,8 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
 use igy6_gateway::{
-    handle_gateway_request_with_db, help_text, parse_gateway_request, render_http_response,
-    GatewayResponse, DEFAULT_BIND_ADDR,
+    append_runtime_ops_log, handle_gateway_request_with_db, help_text, parse_gateway_request,
+    render_http_response, GatewayResponse, DEFAULT_BIND_ADDR,
 };
 
 fn main() {
@@ -21,6 +21,7 @@ fn main() {
     let database_url = env::var("DATABASE_URL").ok();
 
     if let Err(error) = serve(&bind_addr, database_url.as_deref()) {
+        append_runtime_ops_log("error", "gateway", "error", &format!("igy6-gateway failed: {error}"));
         eprintln!("igy6-gateway failed: {error}");
         std::process::exit(1);
     }
@@ -36,12 +37,24 @@ fn serve(bind_addr: &str, database_url: Option<&str>) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr)?;
     let database_url = database_url.map(str::to_string);
     println!("igy6-gateway listening on http://{bind_addr}");
+    append_runtime_ops_log(
+        "startup",
+        "gateway",
+        "info",
+        &format!("igy6-gateway listening on http://{bind_addr}"),
+    );
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
                 let database_url = database_url.clone();
                 std::thread::spawn(move || {
                     if let Err(error) = handle_stream(&mut stream, database_url.as_deref()) {
+                        append_runtime_ops_log(
+                            "error",
+                            "gateway",
+                            "error",
+                            &format!("request failed: {error}"),
+                        );
                         eprintln!("request failed: {error}");
                     }
                 });
@@ -59,6 +72,17 @@ fn handle_stream(stream: &mut TcpStream, database_url: Option<&str>) -> std::io:
     let manifest = fs::read_to_string("configs/rust-cutover-manifest.json").ok();
     let response = match parse_gateway_request(&raw) {
         Ok(request) => {
+            if request.method == "POST"
+                && (request.path == "/collection-runs/full-access"
+                    || request.path == "/host-bridge/ensure-max-reach")
+            {
+                println!(
+                    "[igy6-gateway] {} {} body_bytes={}",
+                    request.method,
+                    request.path,
+                    request.body.len()
+                );
+            }
             let response =
                 handle_gateway_request_with_db(&request, manifest.as_deref(), "", database_url);
             response

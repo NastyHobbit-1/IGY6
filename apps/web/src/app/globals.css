@@ -2866,6 +2866,37 @@ pre {
   background: rgba(127, 29, 29, 0.25);
 }
 
+.productLogGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.productLogCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--product-border);
+  background: rgba(15, 23, 42, 0.55);
+  min-width: 0;
+}
+
+.productLogBody {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(30, 41, 59, 0.9);
+  background: rgba(2, 6, 23, 0.85);
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 [data-ui-mode="simple"] .productAdvanced,
 body.igy6-simple-mode .productAdvanced,
 [data-ui-mode="simple"] [data-ui-full-only],

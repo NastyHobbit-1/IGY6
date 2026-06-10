@@ -35,6 +35,15 @@ Click **items need attention** in the sidebar to see traceable causes and real n
 
 See `docs/ui/UI_PLATFORM_RECOMMENDATION.md` for platform guidance (Next.js stays).
 
+### Troubleshooting logs (DIFF-258)
+
+Open **System** → **Startup and error logs** to review recent startup steps and failures.
+
+- Files on disk: `{IGY6_DATA_ROOT}/ops/startup.log` and `{IGY6_DATA_ROOT}/ops/error.log`
+- Written by `igy6 start` / `igy6 stop`, the Rust gateway, and selected UI repair failures
+- Sensitive-looking values are redacted before display
+- Use **Refresh logs** for the latest entries without reloading the page
+
 Legacy `HomePage.tsx` remains in the repo for reference but is no longer the page entrypoint.
 
 Use the collector for aggressive local/web/system collection (password + optional totp_code required for protected calls). View results in the Media Library and Results areas. Manage your password and optional authenticator in User & Security. Everything is tied into real local artifacts, evidence, graph, and audit.

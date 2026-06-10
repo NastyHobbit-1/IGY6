@@ -7,6 +7,7 @@ import type {
   ChunkRecord,
   EvidenceItemRecord,
   VectorCollectionStatus,
+  RuntimeLogsResponse,
   WorkItemRecord,
   ApprovalRecord,
   AuditEventRecord,
@@ -42,6 +43,7 @@ import { buildAttentionItems } from "./product/attention";
 import { EvidenceCard } from "./product/EvidenceCard";
 import { ImageGallery, buildGalleryImageItems } from "./product/ImageGallery";
 import { AttentionPanel } from "./product/AttentionPanel";
+import { TroubleshootingLogsPanel } from "./product/TroubleshootingLogsPanel";
 import { EmptyState } from "./ui/EmptyState";
 import { StatusPill } from "./ui/StatusPill";
 
@@ -60,6 +62,7 @@ export async function ProductApp() {
     auditEvents,
     envSettings,
     agentCapabilities,
+    runtimeLogs,
   ] = await Promise.all([
     getJson<HealthResponse>("/health/ready", { status: "error" }),
     getJson<SourceRecord[]>("/sources", []),
@@ -83,6 +86,11 @@ export async function ProductApp() {
       actions: [],
       runtime: { repo_root: "unknown", docker_cli_available: false, docker_compose_available: false, docker_socket_available: false, docker_host_configured: false, docker_control_available: false, docker_socket_path: null, reason: "Unavailable" },
       policy: { local_first: true, hosted_ai_enabled: false, external_model_policy: "blocked_by_default", arbitrary_command_execution: false, prompt_injection_filter: "unavailable", approval_required_for_system_changing: true, blocked_request_classes: [] },
+    }),
+    getJson<RuntimeLogsResponse>("/ops/runtime-logs?limit=120", {
+      limit: 120,
+      startup_log: { path: "ops/startup.log", exists: false, lines: [] },
+      error_log: { path: "ops/error.log", exists: false, lines: [] },
     }),
   ]);
 
@@ -122,6 +130,10 @@ export async function ProductApp() {
   const collectionRunsResult: ApiResult<CollectionRunRecord[]> = collectionRuns;
   const vectorResult: ApiResult<VectorCollectionStatus> = vectorCollection;
   const artifactsResult: ApiResult<RawArtifactRecord[]> = artifacts;
+  const runtimeLogsResult: RuntimeLogsResponse = {
+    ...runtimeLogs.data,
+    error: runtimeLogs.error,
+  };
 
   return (
     <div
@@ -404,6 +416,7 @@ export async function ProductApp() {
               <StatusPill state={llmEnabled ? "ok" : "unknown"} />
             </article>
           </div>
+          <TroubleshootingLogsPanel logs={runtimeLogsResult} />
           <details className="productAdvanced">
             <summary>Advanced diagnostics</summary>
             <pre className="uiBreakLong">{JSON.stringify({ health: health.data, vector: vectorCollection.data, capabilities: agentCapabilities.data.runtime }, null, 2)}</pre>
