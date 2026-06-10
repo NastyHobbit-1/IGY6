@@ -41,6 +41,12 @@ export function PipelineOperationsPanel({
   const autoQueueLegacy = async () => {
     const legacy = queued.filter((item) => item.status === "pending_intent_verification" && item.work_type === "collection_normalization");
     if (legacy.length === 0) return;
+    const queueKey = "igy6-auto-queued-" + legacy.map((item) => item.id).sort().join(",");
+    try {
+      if (window.sessionStorage.getItem(queueKey) === "done") return;
+    } catch {
+      /* ignore storage errors */
+    }
     show("Preparing " + legacy.length + " older collection job(s)...");
     for (const item of legacy) {
       try {
@@ -50,14 +56,18 @@ export function PipelineOperationsPanel({
         return;
       }
     }
-    window.setTimeout(() => window.location.reload(), 900);
+    try {
+      window.sessionStorage.setItem(queueKey, "done");
+    } catch {
+      /* ignore storage errors */
+    }
+    show("Queued " + legacy.length + " job(s). Processing continues in the background — refresh when you want updated status.");
   };
   root.querySelector("[data-vector-ensure]")?.addEventListener("click", async () => {
     show("Preparing search...");
     try {
       await postJson("/api/memory/vector/chunks/ensure", {});
-      show("Search preparation started.");
-      window.setTimeout(() => window.location.reload(), 900);
+      show("Search is ready. Refresh the page if the status line still looks stale.");
     } catch (e) {
       show(String(e));
     }
@@ -78,7 +88,7 @@ export function PipelineOperationsPanel({
       show("Retrying work...");
       try {
         await postJson("/api/work-items/" + encodeURIComponent(workItemId) + "/status", { status: "queued", actor_id: "local-owner" });
-        window.setTimeout(() => window.location.reload(), 900);
+        show("Work re-queued. Refresh the page when you want updated activity cards.");
       } catch (e) {
         show(String(e));
       } finally {

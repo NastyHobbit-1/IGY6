@@ -2433,6 +2433,10 @@ body.minimal-ui-mode .retrievalStrip.chatHubStats {
   color: var(--product-text-muted);
 }
 
+.productSidebarStatus [data-product-status-banner]:empty {
+  display: none;
+}
+
 .productAttention {
   color: #fbbf24;
 }

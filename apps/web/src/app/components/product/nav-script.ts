@@ -28,6 +28,11 @@ export const PRODUCT_NAV_SCRIPT = `
     return payload;
   };
 
+  const showProductStatus = (message) => {
+    const banner = root.querySelector("[data-product-status-banner]");
+    if (banner) banner.textContent = message;
+  };
+
   const showSection = (sectionId, scrollTarget) => {
     sections.forEach((section) => {
       const active = section.getAttribute("data-product-section") === sectionId;
@@ -113,7 +118,8 @@ export const PRODUCT_NAV_SCRIPT = `
         status: "queued",
         actor_id: "local-owner",
       });
-      window.setTimeout(() => window.location.reload(), 900);
+      showProductStatus("Work re-queued. Processing continues in the background — refresh the page when you want updated cards.");
+      if (button) button.textContent = "Queued";
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
       if (button) button.disabled = false;
@@ -134,24 +140,25 @@ export const PRODUCT_NAV_SCRIPT = `
   };
 
   const ensureSearchIndex = async (options = {}) => {
-    const { reloadOnSuccess = true, silent = false } = options;
+    const { silent = false } = options;
     const statusEl = root.querySelector("[data-search-status-label]");
     if (statusEl && !silent) statusEl.textContent = "Search is being prepared";
     try {
       const payload = await postJson("/api/memory/vector/chunks/ensure", {});
       if (payload?.exists === true) {
         updateSearchReadyUi();
-        if (reloadOnSuccess) window.setTimeout(() => window.location.reload(), 700);
+        if (!silent) showProductStatus("Search is ready.");
         return true;
       }
       const statusResponse = await fetch("/api/memory/vector/chunks");
       const statusPayload = await statusResponse.json().catch(() => ({}));
       if (statusResponse.ok && statusPayload?.exists === true) {
         updateSearchReadyUi();
+        if (!silent) showProductStatus("Search is ready.");
         return true;
       }
       updateSearchReadyUi();
-      if (reloadOnSuccess) window.setTimeout(() => window.location.reload(), 700);
+      if (!silent) showProductStatus("Search preparation finished. Refresh the page if status looks stale.");
       return true;
     } catch (error) {
       root.setAttribute("data-search-state", "warning");
@@ -174,7 +181,7 @@ export const PRODUCT_NAV_SCRIPT = `
   root.querySelectorAll("[data-product-vector-ensure]").forEach((button) => {
     button.addEventListener("click", async () => {
       button.disabled = true;
-      await ensureSearchIndex({ reloadOnSuccess: true, silent: false });
+      await ensureSearchIndex({ silent: false });
       button.disabled = false;
     });
   });
@@ -191,7 +198,7 @@ export const PRODUCT_NAV_SCRIPT = `
     }
     if (root.getAttribute("data-search-auto-tried") === "true") return;
     root.setAttribute("data-search-auto-tried", "true");
-    const ok = await ensureSearchIndex({ reloadOnSuccess: false, silent: true });
+    const ok = await ensureSearchIndex({ silent: true });
     if (ok) {
       try {
         window.sessionStorage.setItem(SEARCH_ENSURE_KEY, "done");
@@ -222,7 +229,7 @@ export const PRODUCT_NAV_SCRIPT = `
         return;
       }
       if (sectionId === "system" && button.textContent?.toLowerCase().includes("repair")) {
-        await ensureSearchIndex({ reloadOnSuccess: true, silent: false });
+        await ensureSearchIndex({ silent: false });
         return;
       }
       if (sectionId) showSection(sectionId, scrollTarget || null);

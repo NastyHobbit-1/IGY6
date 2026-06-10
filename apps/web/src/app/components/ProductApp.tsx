@@ -185,6 +185,7 @@ export async function ProductApp() {
         <div className="productSidebarStatus">
           <StatusPill state={health.data.status} />
           <span className="uiBreakLong">{runtimeSummary}</span>
+          <span className="productHint uiBreakLong" data-product-status-banner aria-live="polite" />
           <AttentionPanel items={attentionItems} />
         </div>
       </aside>

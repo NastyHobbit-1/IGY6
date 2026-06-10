@@ -69,6 +69,7 @@ check("components directory is populated", componentFiles.length >= 40);
 
 includesAll("product navigation", corpus, [
   "data-product-app",
+  "data-product-status-banner",
   "data-product-nav",
   "data-product-section",
   "Command Center",
