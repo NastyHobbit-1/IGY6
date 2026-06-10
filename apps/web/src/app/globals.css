@@ -2707,6 +2707,36 @@ pre {
   margin-top: 4px;
 }
 
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.statusBadgeLabel {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.productStateCard {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--product-border);
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  gap: 8px;
+}
+
+.productStateError {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.productStateLoading {
+  border-style: dashed;
+}
+
 .productModeToggle {
   display: grid;
   grid-template-columns: 1fr 1fr;

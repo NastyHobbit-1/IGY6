@@ -1,16 +1,15 @@
 import type { WorkItemRecord, CollectionRunRecord, ApiResult, VectorCollectionStatus } from "./types";
-import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
-import { workActivityLabel, workStatusPlain, searchIndexStatus } from "./product/helpers";
-import { StatusPill } from "./ui/StatusPill";
+import { ClientScript } from "@/lib/use-dom-script";
+import { workActivityLabel, workStatusPlain } from "./product/helpers";
+import { ActionButton } from "./ui/ActionButton";
 
 export function PipelineOperationsPanel({
   workItems,
   collectionRuns,
-  vectorCollection,
 }: {
   workItems: ApiResult<WorkItemRecord[]>;
   collectionRuns: ApiResult<CollectionRunRecord[]>;
-  vectorCollection: ApiResult<VectorCollectionStatus>;
+  vectorCollection?: ApiResult<VectorCollectionStatus>;
 }) {
   const recentSummaries = collectionRuns.data
     .filter((run) => run.summary_json && typeof run.summary_json === "object")
@@ -20,57 +19,60 @@ export function PipelineOperationsPanel({
       item.status === "failed"
       || (item.status === "pending_intent_verification" && item.work_type === "collection_normalization"))
     .slice(0, 8);
-  const searchIndex = searchIndexStatus(vectorCollection.data);
-  const queuedJson = JSON.stringify(
-    actionableWorkItems.map((item) => ({ id: item.id, work_type: item.work_type, status: item.status })),
-  ).replace(/</g, "\\u003c");
+
   const script = `
 (() => {
   const root = document.querySelector("[data-pipeline-operations]");
   if (!root || root.getAttribute("data-wired") === "true") return;
   root.setAttribute("data-wired", "true");
-  const queued = JSON.parse(root.querySelector("[data-pipeline-queued-json]")?.textContent || "[]");
   const result = root.querySelector("[data-pipeline-ops-result]");
   const show = (message) => { if (result) result.textContent = message; };
+  const formatError = (error) => {
+    const raw = error instanceof Error ? error.message : String(error);
+    try {
+      const payload = JSON.parse(raw);
+      if (typeof payload?.detail === "string") return payload.detail;
+    } catch {
+      /* not JSON */
+    }
+    return raw;
+  };
   const postJson = async (path, body) => {
     const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(JSON.stringify(payload));
     return payload;
   };
-  const autoQueueLegacy = async () => {
-    const legacy = queued.filter((item) => item.status === "pending_intent_verification" && item.work_type === "collection_normalization");
-    if (legacy.length === 0) return;
-    const queueKey = "igy6-auto-queued-" + legacy.map((item) => item.id).sort().join(",");
+  const queueWorkItem = async (workItemId, button, successMessage) => {
+    if (!workItemId) return;
+    if (button) button.disabled = true;
+    show("Queueing work...");
     try {
-      if (window.sessionStorage.getItem(queueKey) === "done") return;
-    } catch {
-      /* ignore storage errors */
+      await postJson("/api/work-items/" + encodeURIComponent(workItemId) + "/status", { status: "queued", actor_id: "local-owner" });
+      show(successMessage);
+      if (button) button.textContent = "Queued";
+    } catch (error) {
+      show(formatError(error));
+      if (button) button.disabled = false;
     }
-    show("Preparing " + legacy.length + " older collection job(s)...");
-    for (const item of legacy) {
-      try {
-        await postJson("/api/work-items/" + encodeURIComponent(item.id) + "/status", { status: "queued", actor_id: "local-owner" });
-      } catch (error) {
-        show(String(error));
-        return;
-      }
-    }
-    try {
-      window.sessionStorage.setItem(queueKey, "done");
-    } catch {
-      /* ignore storage errors */
-    }
-    show("Queued " + legacy.length + " job(s). Processing continues in the background — refresh when you want updated status.");
   };
-  root.querySelector("[data-vector-ensure]")?.addEventListener("click", async () => {
-    show("Preparing search...");
-    try {
-      await postJson("/api/memory/vector/chunks/ensure", {});
-      show("Search is ready. Refresh the page if the status line still looks stale.");
-    } catch (e) {
-      show(String(e));
-    }
+  root.querySelectorAll("[data-retry-failed-work]").forEach((button) => {
+    button.addEventListener("click", () => {
+      queueWorkItem(
+        button.getAttribute("data-work-item-id"),
+        button,
+        "Work re-queued. Refresh the page when you want updated activity cards.",
+      );
+    });
+  });
+  root.querySelectorAll("[data-approve-pending-work]").forEach((button) => {
+    button.addEventListener("click", () => {
+      queueWorkItem(
+        button.getAttribute("data-work-item-id"),
+        button,
+        "Work approved and queued. Processing continues in the background — refresh when you want updated status.",
+      );
+    });
   });
   root.querySelector("[data-retrieval-search]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -78,53 +80,26 @@ export function PipelineOperationsPanel({
     const limit = Number(root.querySelector("[name='pipeline_search_limit']")?.value || 5);
     if (!message) return;
     show("Searching...");
-    try { show("What IGY6 found: " + JSON.stringify(await postJson("/api/chat/retrieval-preview", { message, limit }))); } catch (e) { show(String(e)); }
+    try {
+      const payload = await postJson("/api/chat/retrieval-preview", { message, limit });
+      show("What IGY6 found: " + JSON.stringify(payload));
+    } catch (error) {
+      show(formatError(error));
+    }
   });
-  root.querySelectorAll("[data-retry-failed-work]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const workItemId = button.getAttribute("data-work-item-id");
-      if (!workItemId) return;
-      button.disabled = true;
-      show("Retrying work...");
-      try {
-        await postJson("/api/work-items/" + encodeURIComponent(workItemId) + "/status", { status: "queued", actor_id: "local-owner" });
-        show("Work re-queued. Refresh the page when you want updated activity cards.");
-      } catch (e) {
-        show(String(e));
-      } finally {
-        button.disabled = false;
-      }
-    });
-  });
-  void autoQueueLegacy();
 })();
 `;
+
   return (
     <section className="panelInset pipelineOperations uiOverflowSafe" id="data-search" data-pipeline-operations>
       <div className="subHeader"><h3>Processing status</h3></div>
       <p className="actionHint">
-        New information is prepared automatically: collected items are normalized, broken into searchable pieces, and indexed in the background.
+        New information is prepared automatically. Search memory is prepared in the background — open System if search needs attention.
       </p>
-      <div className="guidedManualActions responsiveToolbar productAdvanced" data-ui-full-only>
-        <button type="button" data-vector-ensure>Prepare search index</button>
-        <span className="actionHint uiBreakLong">
-          Search: {searchIndex.label}
-        </span>
-      </div>
-      <div className="productCard uiOverflowSafe">
-        <span>Search</span>
-        <strong data-search-status-label>{searchIndex.label}</strong>
-        <StatusPill state={searchIndex.state} />
-        {searchIndex.state !== "ok" ? (
-          <button type="button" className="productGhostButton" data-vector-ensure>
-            {vectorCollection.data.detail?.tcp_reachable ? "Repair search" : "Check System first"}
-          </button>
-        ) : null}
-      </div>
-      <form data-retrieval-search className="productAdvanced">
+      <form data-retrieval-search className="productAdvanced" data-ui-full-only>
         <label><span>Try a search</span><input name="pipeline_search_message" placeholder="What did I upload today?" /></label>
         <label><span>Result limit</span><input name="pipeline_search_limit" type="number" min="1" max="20" defaultValue="5" /></label>
-        <button type="submit">Preview what IGY6 found</button>
+        <button type="submit">What IGY6 found</button>
       </form>
       {recentSummaries.length > 0 ? (
         <div className="stack">
@@ -160,15 +135,22 @@ export function PipelineOperationsPanel({
                   <span className="productAdvanced uiBreakLong">{item.id}</span>
                 </div>
                 {item.status === "failed" ? (
-                  <button type="button" data-retry-failed-work data-work-item-id={item.id}>Retry</button>
+                  <ActionButton variant="primary" data-retry-failed-work data-work-item-id={item.id}>
+                    Retry
+                  </ActionButton>
+                ) : item.status === "pending_intent_verification" ? (
+                  <ActionButton variant="primary" data-approve-pending-work data-work-item-id={item.id}>
+                    Approve and queue
+                  </ActionButton>
                 ) : null}
               </article>
             );
           })}
         </div>
-      ) : <p className="actionHint">Processing is running automatically. No manual steps are required right now.</p>}
+      ) : (
+        <p className="actionHint">Processing is running automatically. No manual steps are required right now.</p>
+      )}
       <p data-pipeline-ops-result className="productHint">Ready.</p>
-      <DomJsonScript marker="data-pipeline-queued-json" json={queuedJson} />
       <ClientScript script={script} />
     </section>
   );

@@ -1,8 +1,9 @@
 import type { RawArtifactRecord, SourceRecord } from "../types";
 import { formatDate, formatBytes } from "../helpers";
 import { galleryTitle, isImageArtifact, normalizeContentType } from "./evidence-display";
-import { StatusPill } from "../ui/StatusPill";
 import { EmptyState } from "../ui/EmptyState";
+import { ErrorState } from "../ui/ErrorState";
+import { ImageCard } from "./ImageCard";
 
 export type GalleryImageItem = {
   id: string;
@@ -65,12 +66,7 @@ export function ImageGallery({
   error?: string | null;
 }) {
   if (error) {
-    return (
-      <div className="productGalleryState productGalleryError uiOverflowSafe">
-        <strong>Could not load images</strong>
-        <p>{error}</p>
-      </div>
-    );
+    return <ErrorState title="Could not load images" message={error} />;
   }
 
   if (items.length === 0) {
@@ -121,41 +117,7 @@ export function ImageGallery({
 
       <div className="productGalleryGrid" data-gallery-grid>
         {items.map((item) => (
-          <article
-            className="productGalleryCard uiOverflowSafe"
-            key={item.id}
-            data-gallery-item
-            data-title={item.title.toLowerCase()}
-            data-source={item.sourceLabel.toLowerCase()}
-            data-extension={item.extension}
-            data-status={item.status.toLowerCase()}
-            data-timestamp={item.createdAt}
-            data-size-bytes={String(item.sizeBytes)}
-          >
-            <a className="productGalleryThumb" href={item.viewHref} target="_blank" rel="noreferrer">
-              {item.thumbHref ? (
-                <img src={item.thumbHref} alt={item.title} loading="lazy" data-gallery-thumb />
-              ) : null}
-              <div className="productGalleryPlaceholder" hidden={Boolean(item.thumbHref)} data-gallery-placeholder>
-                <span className="productTypeBadge">{item.contentType}</span>
-                <span className="uiClampTitle">{item.title}</span>
-              </div>
-            </a>
-            <div className="productGalleryMeta">
-              <span className="productTypeBadge">{item.contentType}</span>
-              <h3 className="uiClampTitle" title={item.title}>
-                {item.title}
-              </h3>
-              <p className="productMuted uiBreakLong">{item.sourceLabel}</p>
-              <div className="productGalleryMetaRow">
-                <StatusPill state={item.statusState} />
-                <span className="productMuted">{item.dateLabel}</span>
-              </div>
-              <a className="productGhostButton" href={item.viewHref} target="_blank" rel="noreferrer">
-                Open image
-              </a>
-            </div>
-          </article>
+          <ImageCard key={item.id} item={item} />
         ))}
       </div>
       <p className="productHint" data-gallery-count>

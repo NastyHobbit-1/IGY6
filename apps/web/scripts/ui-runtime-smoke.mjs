@@ -126,24 +126,29 @@ async function runChecks(page, baseURL) {
     fail('title', `expected IGY6 in title, got: ${title}`);
   }
 
-  // Main tabs (labels / text present for the documented normal-user tabs)
-  const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
-  for (const tab of expectedTabs) {
-    const visible = await page.getByText(tab, { exact: false }).first().isVisible().catch(() => false);
-    if (!visible) {
-      // Fallback: look for the classic label[for="tab-..."] pattern used in the UI
-      const alt = await page.locator(`label:has-text("${tab}")`).first().isVisible().catch(() => false);
-      if (!alt) fail(`tab visible: ${tab}`);
-    }
+  // Product shell navigation (seven sections)
+  const expectedSections = [
+    'Command Center',
+    'Add Information',
+    'Evidence',
+    'Gallery',
+    'Activity',
+    'System',
+    'Settings',
+  ];
+  for (const section of expectedSections) {
+    const visible = await page.getByRole('button', { name: new RegExp(section, 'i') }).first().isVisible().catch(() => false);
+    if (!visible) fail(`nav visible: ${section}`);
   }
 
   // Core data attributes that form the public contract (must be in DOM)
   const requiredDataAttrs = [
+    'data-product-app',
     'data-unified-chat',
     'data-chat-input',
     'data-chat-send',
-    'data-tab-panel',
-    'data-minimal-ui-root',
+    'data-product-section',
+    'data-product-nav',
   ];
   for (const attr of requiredDataAttrs) {
     const count = await page.locator(`[${attr}]`).count().catch(() => 0);
@@ -157,9 +162,9 @@ async function runChecks(page, baseURL) {
     { name: 'chat hub', sel: '[data-unified-chat]' },
     { name: 'chat input', sel: '[data-chat-input]' },
     { name: 'chat send', sel: '[data-chat-send]' },
-    { name: 'home panel', sel: '[data-tab-panel="home"]' },
-    { name: 'chat panel', sel: '[data-tab-panel="results"]' },
-    { name: 'data panel', sel: '[data-tab-panel="add-data"]' }
+    { name: 'command section', sel: '[data-product-section="command"]' },
+    { name: 'add section', sel: '[data-product-section="add"]' },
+    { name: 'evidence section', sel: '[data-product-section="evidence"]' },
   ];
   for (const { name, sel } of contractSelectors) {
     const count = await page.locator(sel).count().catch(() => 0);
@@ -232,19 +237,28 @@ async function main() {
           fail('title (node)', 'IGY6 not found in served HTML');
         }
 
-        const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
-        for (const tab of expectedTabs) {
-          if (!html.includes(tab)) {
-            fail(`tab text (node): ${tab}`);
+        const expectedSections = [
+          'Command Center',
+          'Add Information',
+          'Evidence',
+          'Gallery',
+          'Activity',
+          'System',
+          'Settings',
+        ];
+        for (const section of expectedSections) {
+          if (!html.includes(section)) {
+            fail(`nav text (node): ${section}`);
           }
         }
 
         const requiredDataAttrs = [
+          'data-product-app',
           'data-unified-chat',
           'data-chat-input',
           'data-chat-send',
-          'data-tab-panel',
-          'data-minimal-ui-root',
+          'data-product-section',
+          'data-product-nav',
         ];
         for (const attr of requiredDataAttrs) {
           if (!html.includes(attr)) {
@@ -253,7 +267,7 @@ async function main() {
         }
 
         // Light section presence via common text
-        const sectionNeedles = ['readiness', 'Chat', 'Add Data', 'Work', 'Settings'];
+        const sectionNeedles = ['Ask IGY6', 'Add Information', 'Gallery', 'Activity', 'Settings'];
         for (const needle of sectionNeedles) {
           if (!html.includes(needle)) {
             fail(`section text (node): ${needle}`);

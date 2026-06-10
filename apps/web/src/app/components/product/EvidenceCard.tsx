@@ -1,5 +1,6 @@
 import type { EvidenceCardModel } from "./evidence-display";
-import { StatusPill } from "../ui/StatusPill";
+import { StatusBadge } from "../ui/StatusBadge";
+import { DetailDrawer } from "../ui/DetailDrawer";
 
 export function EvidenceCard({ model }: { model: EvidenceCardModel }) {
   return (
@@ -11,7 +12,7 @@ export function EvidenceCard({ model }: { model: EvidenceCardModel }) {
         <h3 className="uiClampTitle" title={model.title}>
           {model.title}
         </h3>
-        <StatusPill state={model.statusState} />
+        <StatusBadge state={model.statusState} label={model.statusLabel} />
       </div>
       <p className="uiClampSummary">{model.summary}</p>
       <dl className="productMeta uiMetaSafe">
@@ -41,10 +42,9 @@ export function EvidenceCard({ model }: { model: EvidenceCardModel }) {
           </button>
         )}
       </div>
-      <details className="productAdvanced">
-        <summary>Technical details</summary>
+      <DetailDrawer summary="Technical details">
         <pre className="uiBreakLong">{JSON.stringify(model.technical, null, 2)}</pre>
-      </details>
+      </DetailDrawer>
     </article>
   );
 }

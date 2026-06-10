@@ -75,7 +75,7 @@ includesAll("product navigation", corpus, [
   "Command Center",
   "Add Information",
   "Evidence",
-  "Images",
+  "Gallery",
   "Activity",
   "System",
   "Settings",
@@ -193,11 +193,17 @@ includesAll("legacy tab sync for chat navigation", corpus, [
 
 includesAll("split component structure", corpus, [
   "export async function ProductApp",
+  "export function AppShell",
   "export function UnifiedChatHub",
+  "export function ChatCommandPanel",
   "export function AddInformationFlow",
   "export function SettingsPanel",
   "export function PipelineOperationsPanel",
   "export function StackRestartPanel",
+  "export function EvidenceCard",
+  "export function ImageCard",
+  "export function ImageGallery",
+  "plain-language",
 ]);
 
 includesAll("supporting styles", styles, [
@@ -212,8 +218,12 @@ includesAll("supporting styles", styles, [
   ".chatQuickChips",
   ".uiOverflowSafe",
   ".uiClampTitle",
+  ".uiClampSummary",
+  ".uiBreakLong",
   ".productGalleryGrid",
   ".productModeToggle",
+  ".statusBadge",
+  ".productStateCard",
 ]);
 
 includesAll("safety posture", corpus, [

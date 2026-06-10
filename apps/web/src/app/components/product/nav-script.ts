@@ -110,6 +110,17 @@ export const PRODUCT_NAV_SCRIPT = `
     });
   });
 
+  const formatWorkItemError = (error) => {
+    const raw = error instanceof Error ? error.message : String(error);
+    try {
+      const payload = JSON.parse(raw);
+      if (typeof payload?.detail === "string") return payload.detail;
+    } catch {
+      /* not JSON */
+    }
+    return raw;
+  };
+
   const retryWorkItem = async (workItemId, button) => {
     if (!workItemId) return;
     if (button) button.disabled = true;
@@ -121,7 +132,7 @@ export const PRODUCT_NAV_SCRIPT = `
       showProductStatus("Work re-queued. Processing continues in the background — refresh the page when you want updated cards.");
       if (button) button.textContent = "Queued";
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
+      showProductStatus(formatWorkItemError(error));
       if (button) button.disabled = false;
     }
   };

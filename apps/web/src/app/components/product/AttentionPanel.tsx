@@ -1,4 +1,5 @@
 import type { AttentionItem } from "./attention";
+import { AttentionItemRow } from "./AttentionItemRow";
 
 export function AttentionPanel({ items }: { items: AttentionItem[] }) {
   if (items.length === 0) return null;
@@ -17,28 +18,7 @@ export function AttentionPanel({ items }: { items: AttentionItem[] }) {
         </header>
         <ul className="productAttentionList">
           {items.map((item) => (
-            <li key={item.id} className="productAttentionItem uiOverflowSafe">
-              <div>
-                <strong className="uiClampTitle">{item.title}</strong>
-                <p className="uiClampSummary">{item.cause}</p>
-              </div>
-              <button
-                type="button"
-                className="productPrimaryButton"
-                data-attention-action
-                data-attention-section={item.section}
-                data-attention-scroll={item.scrollTarget ?? ""}
-                data-retry-work-item-id={item.retryWorkItemId ?? ""}
-              >
-                {item.actionLabel}
-              </button>
-              {item.technical ? (
-                <details className="productAdvanced">
-                  <summary>Technical details</summary>
-                  <pre className="uiBreakLong">{item.technical}</pre>
-                </details>
-              ) : null}
-            </li>
+            <AttentionItemRow key={item.id} item={item} />
           ))}
         </ul>
       </div>

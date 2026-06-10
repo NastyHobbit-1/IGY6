@@ -26,7 +26,7 @@ The default UI uses seven clear sections with **Simple mode** as the default (to
 - **Command Center** — central chat, quick actions, runtime snapshot, recent activity.
 - **Add Information** — one flow for text, websites, and local folders (supported routes only).
 - **Evidence** — standardized overflow-safe cards with a content-type badge at the top; technical IDs under Details (Full mode).
-- **Images** — dedicated gallery with search, sort, and filter; thumbnails with placeholders when preview is unavailable.
+- **Gallery** — dedicated image gallery with search, sort, and filter; thumbnails with placeholders when preview is unavailable.
 - **Activity** — processing, collections, approvals, and actionable failed-work retry in plain language.
 - **System** — service health; search shows **Search is ready** / **Search is being prepared** / **Search needs attention** (auto-prepare on load when possible).
 - **Settings** — ports, storage, local model, restart stack, user security; raw env JSON only in Full mode Advanced.

@@ -1,5 +1,6 @@
-import type { ApprovalRecord, VectorCollectionStatus, WorkItemRecord } from "../types";
+import type { ApprovalRecord, WorkItemRecord } from "../types";
 import type { ProductSection } from "./helpers";
+import { plainApprovalType, plainTerm } from "./plain-language";
 
 export type AttentionItem = {
   id: string;
@@ -25,7 +26,7 @@ export function buildAttentionItems(input: {
     items.push({
       id: `approval-${approval.id}`,
       title: "Approval needed",
-      cause: `${approval.request_type.replace(/_/g, " ")} is waiting for your decision.`,
+      cause: `${plainApprovalType(approval.request_type)} is waiting for your decision.`,
       actionLabel: "Review approval",
       section: "activity",
       scrollTarget: "approvals-panel",
@@ -58,8 +59,8 @@ export function buildAttentionItems(input: {
       scrollTarget: "activity-work",
       retryWorkItemId: work.id,
       technical: JSON.stringify({
-        work_item_id: work.id,
-        work_type: work.work_type,
+        work_id: work.id,
+        work_type: plainTerm(work.work_type),
         status: work.status,
         error_message: work.error_message,
       }),
