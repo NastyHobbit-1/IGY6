@@ -205,7 +205,7 @@ export function UnifiedChatHub({
       return {
         clear: false,
         site,
-        question: "Want me to grab stuff from " + site + "? I can stick to public pages, try harder bypass tricks, or go all out if it's really locked down.",
+        question: "Want me to grab stuff from " + site + "? I can stick to public pages, use authorized session options, or go all out with Deep Fetch if it's really locked down.",
         options: [
           { label: "Public pages only", intent: "public_fetch", url },
           { label: "Try harder", intent: "auto_bypass", url },
@@ -285,7 +285,7 @@ export function UnifiedChatHub({
     }
     if (option.intent === "auto_bypass") {
       setStatus("Warming up...");
-      appendMessage("assistant", "On it", "I'll try the sneakier route for " + site + " — cookies, browser tricks, the works.");
+      appendMessage("assistant", "On it", "I'll use authorized session options for " + site + " — your provided session header where needed.");
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 120000);
@@ -309,7 +309,7 @@ export function UnifiedChatHub({
       return;
     }
     setStatus("Fetching...");
-    appendMessage("assistant", "On it", "I'll grab the public parts of " + site + " — no login tricks.");
+    appendMessage("assistant", "On it", "I'll grab the public parts of " + site + " — public only.");
     try {
       const summary = await runCollectionFetch({
         requested_by_actor_id: "local-owner",
@@ -402,11 +402,11 @@ export function UnifiedChatHub({
     }
 
     if (/\\b(max reach|go anywhere|omnifetch|max bypass)\\b/.test(lower) && url) {
-      setStatus("Preparing max reach...");
-      appendMessage("assistant", "Max reach", "Starting host bridge and Playwright if needed, then fetching " + url + " with strongest tier (CDP/headed Playwright, multi-profile, scroll/expand, session re-fetch).");
+      setStatus("Preparing deep fetch...");
+      appendMessage("assistant", "Deep Fetch", "Starting host bridge and Playwright if needed, then fetching " + url + " with strongest tier (CDP/headed Playwright, multi-profile, scroll/expand, session header where provided).");
       try {
         await ensureMaxReachInfrastructure();
-        setStatus("Running max reach bypass...");
+        setStatus("Running deep fetch...");
         const summary = await runCollectionFetch({
           requested_by_actor_id: "local-owner",
           max_reach: true,
@@ -416,10 +416,10 @@ export function UnifiedChatHub({
           max_depth: depth,
           scope: [url]
         });
-        appendMessage("assistant", "Max reach complete", summarizeCollection(summary) + " Mode: " + String(summary?.mode || "web_max_reach_fetch"));
+        appendMessage("assistant", "Deep fetch complete", summarizeCollection(summary) + " Mode: " + String(summary?.mode || "web_max_reach_fetch"));
         addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
       } catch (error) {
-        appendMessage("assistant", "Max reach failed", error instanceof Error ? error.message : "Unknown error");
+        appendMessage("assistant", "Deep fetch failed", error instanceof Error ? error.message : "Unknown error");
         addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
       }
       setStatus("Ready");
@@ -427,8 +427,8 @@ export function UnifiedChatHub({
     }
 
     if (/\\b(auto bypass|full auto bypass)\\b/.test(lower) && url) {
-      setStatus("Preparing auto bypass...");
-      appendMessage("assistant", "Auto bypass", "Starting host bridge if needed, then fetching " + url + " with HTTP tricks, cookie harvest, Playwright, and session bypass.");
+      setStatus("Preparing deep fetch...");
+      appendMessage("assistant", "Deep Fetch", "Starting host bridge if needed, then fetching " + url + " with authorized collection techniques, Playwright, and session header.");
       try {
         try {
           const controller = new AbortController();
@@ -443,7 +443,7 @@ export function UnifiedChatHub({
           const ensurePayload = await ensureResponse.json().catch(() => ({}));
           throw new Error(ensurePayload?.detail || "Host bridge is not ready");
         }
-        setStatus("Running full auto bypass...");
+        setStatus("Running deep fetch...");
         const summary = await runCollectionFetch({
           requested_by_actor_id: "local-owner",
           auto_bypass: true,
@@ -452,10 +452,10 @@ export function UnifiedChatHub({
           max_depth: depth,
           scope: [url]
         });
-        appendMessage("assistant", "Auto bypass complete", summarizeCollection(summary) + " Ask a question over the new evidence.");
+        appendMessage("assistant", "Deep fetch complete", summarizeCollection(summary) + " Ask a question over the new evidence.");
         addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
       } catch (error) {
-        appendMessage("assistant", "Auto bypass failed", error instanceof Error ? error.message : "Unknown error");
+        appendMessage("assistant", "Deep fetch failed", error instanceof Error ? error.message : "Unknown error");
         addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
       }
       setStatus("Ready");
@@ -471,12 +471,12 @@ export function UnifiedChatHub({
         appendMessage(
           "assistant",
           "Session needed",
-          "Opened bypass fetch with your URL. Paste a Cookie header or bearer token in Web fetch tools, or say: bypass fetch " + url + " cookie: session_id=..."
+          "Opened session fetch with your URL. Paste a Cookie header or bearer token in Web fetch tools, or say: session fetch " + url + " cookie: session_id=..."
         );
         return true;
       }
-      setStatus("Running authorized bypass fetch...");
-      appendMessage("assistant", "Bypass fetch", "Using your session to fetch " + url + ".");
+      setStatus("Running session fetch...");
+      appendMessage("assistant", "Session Fetch", "Using your session to fetch " + url + ".");
       try {
         const body = {
           requested_by_actor_id: "local-owner",
@@ -490,10 +490,10 @@ export function UnifiedChatHub({
         if (cookie) body.cookie = cookie;
         if (authorization) body.authorization = authorization;
         const summary = await runCollectionFetch(body);
-        appendMessage("assistant", "Bypass fetch complete", summarizeCollection(summary));
+        appendMessage("assistant", "Session fetch complete", summarizeCollection(summary));
         addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
       } catch (error) {
-        appendMessage("assistant", "Bypass fetch failed", error instanceof Error ? error.message : "Unknown error");
+        appendMessage("assistant", "Session fetch failed", error instanceof Error ? error.message : "Unknown error");
       }
       setStatus("Ready");
       return true;
@@ -876,7 +876,7 @@ export function UnifiedChatHub({
           <div className="avatar">SYS</div>
           <div className="messageBubble">
             <span className="messageLabel">Welcome</span>
-            <p data-chat-welcome-text>Type anything here: ask over evidence, run auto bypass or fetch public with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.</p>
+            <p data-chat-welcome-text>Type anything here: ask over evidence, run deep fetch or public fetch with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.</p>
             <div className="messageMeta">
               <StatusPill state="local-first" />
               <StatusPill state="read-only-default" />
@@ -887,7 +887,7 @@ export function UnifiedChatHub({
       <div className="chatQuickChips" aria-label="Quick starts">
         <button type="button" data-chat-chip="help">Commands</button>
         <button type="button" data-chat-chip="open web fetch">Web fetch</button>
-        <button type="button" data-chat-chip="max reach https://example.com">Max reach</button>
+        <button type="button" data-chat-chip="deep fetch https://example.com">Deep Fetch</button>
         <button type="button" data-chat-chip="Show project health.">Project health</button>
         <button type="button" data-chat-chip="Check processing status">Check processing</button>
         <button type="button" data-chat-chip="Add data">Add data</button>

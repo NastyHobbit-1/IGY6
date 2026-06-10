@@ -636,7 +636,7 @@ export const WEB_FETCH_MAX_REACH_SCRIPT = `
       });
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.detail || response.statusText || "Max reach failed");
+        throw new Error(payload?.detail || response.statusText || "Deep fetch failed");
       }
       const summary = payload?.summary_json || payload?.summary || payload;
       const strategies = Array.isArray(summary?.auto_bypass_strategies)
@@ -770,7 +770,7 @@ export const WEB_FETCH_AUTO_BYPASS_SCRIPT = `
       });
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.detail || response.statusText || "Auto bypass failed");
+        throw new Error(payload?.detail || response.statusText || "Deep fetch failed");
       }
       const summary = payload?.summary_json || payload?.summary || payload;
       const strategies = Array.isArray(summary?.auto_bypass_strategies)
@@ -893,7 +893,7 @@ export const WEB_FETCH_BYPASS_SCRIPT = `
       });
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.detail || response.statusText || "Bypass fetch failed");
+        throw new Error(payload?.detail || response.statusText || "Session fetch failed");
       }
       const summary = payload?.summary_json || payload?.summary || payload;
       writeResult(
@@ -1048,7 +1048,7 @@ export const MINIMAL_UI_TOGGLE_SCRIPT = `
     if (welcome) {
       welcome.textContent = enabled
         ? "Hey — just talk to me like a person. Paste a link, ask a question, say you want to add notes, or ask what's still processing. If I'm not sure what you mean, I'll ask instead of throwing jargon at you."
-        : "Type anything here: ask over evidence, run auto bypass or fetch public with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.";
+        : "Type anything here: ask over evidence, run deep fetch or public fetch with a URL, open any panel (settings, uploads, web fetch), or run bounded actions like project health and stack control. Say help for the full command list.";
     }
   };
   const saved = localStorage.getItem(storageKey);
