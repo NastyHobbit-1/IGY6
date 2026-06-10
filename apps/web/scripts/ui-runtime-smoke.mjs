@@ -127,7 +127,8 @@ async function runChecks(page, baseURL) {
   }
 
   // Main tabs (labels / text present for the documented normal-user tabs)
-  const expectedTabs = ['Home', 'Chat', 'Data', 'Work', 'Settings', 'More'];
+  // Visible tabs only (per current app): do not include Home as a visible tab.
+  const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
   for (const tab of expectedTabs) {
     const visible = await page.getByText(tab, { exact: false }).first().isVisible().catch(() => false);
     if (!visible) {
@@ -152,22 +153,35 @@ async function runChecks(page, baseURL) {
     }
   }
 
-  // Core sections / readiness surface (text or landmark presence)
+  // Activate tab before checking content that may be hidden behind inactive tab radio
+  async function activateTab(tabId) {
+    const radio = page.locator(`#${tabId}`);
+    if ((await radio.count().catch(() => 0)) > 0) {
+      await radio.check({ force: true }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+
+  // Core sections / readiness surface (text or landmark presence).
+  // Activate owning tab first for tab-specific visible content.
   const sectionChecks = [
-    { name: 'Home / readiness', sel: 'text=/Home|readiness|System ready/i' },
-    { name: 'Chat / assistant', sel: '[data-unified-chat], text=/Chat|Assistant|Ask a question/i' },
-    { name: 'Add Data / Data & Knowledge', sel: 'text=/Add Data|Data & Knowledge|Collector/i' },
-    { name: 'Work / Processing', sel: 'text=/Work|Processing|Work Items/i' },
-    { name: 'Settings / User & Security', sel: 'text=/Settings|User & Security|password|TOTP/i' },
+    { name: 'Home / readiness', sel: '[data-tab-panel="home"], text=/System ready|readiness/i', activate: 'tab-home' },
+    { name: 'Chat / assistant', sel: '[data-unified-chat], [data-tab-panel="results"]', activate: 'tab-results' },
+    { name: 'Data / Bring In Authorized Information', sel: '[data-tab-panel="add-data"], text=/Bring In Authorized Information|Data/i', activate: 'tab-add-data' },
+    { name: 'Work / Processing', sel: '[data-tab-panel="work"], text=/Work|Processing|queued|running/i', activate: 'tab-work' },
+    { name: 'Settings / User & Security', sel: '[data-tab-panel="settings"], text=/Settings|User & Security|password|TOTP/i', activate: 'tab-settings' },
   ];
-  for (const { name, sel } of sectionChecks) {
+  for (const { name, sel, activate } of sectionChecks) {
+    if (activate) {
+      await activateTab(activate);
+    }
     const ok = await page.locator(sel).first().isVisible().catch(() => false);
     if (!ok) fail(`section: ${name}`);
   }
 
-  // No obvious fatal client crash text
+  // No obvious fatal client crash text (real signatures only; do not fail on plain "failed" or "error" in status/button labels)
   const bodyText = (await page.textContent('body').catch(() => '')) || '';
-  if (/500|internal server error|white screen of death|react.*error|failed to load chunk/i.test(bodyText)) {
+  if (/Internal Server Error|Application error|ChunkLoadError|Minified React error|__next_error|next.*error.*overlay|white screen of death/i.test(bodyText)) {
     fail('no client crash text', 'suspicious fatal text found in body');
   }
 
@@ -231,7 +245,7 @@ async function main() {
           fail('title (node)', 'IGY6 not found in served HTML');
         }
 
-        const expectedTabs = ['Home', 'Chat', 'Data', 'Work', 'Settings', 'More'];
+        const expectedTabs = ['Chat', 'Data', 'Work', 'Settings', 'More'];
         for (const tab of expectedTabs) {
           if (!html.includes(tab)) {
             fail(`tab text (node): ${tab}`);
@@ -251,15 +265,15 @@ async function main() {
           }
         }
 
-        // Light section presence via common text
-        const sectionNeedles = ['readiness', 'Chat', 'Add Data', 'Work', 'Settings'];
+        // Light section presence via common text (full HTML contains panel content regardless of active tab)
+        const sectionNeedles = ['readiness', 'Chat', 'Bring In Authorized Information', 'Work', 'Settings'];
         for (const needle of sectionNeedles) {
           if (!html.includes(needle)) {
             fail(`section text (node): ${needle}`);
           }
         }
 
-        if (/500|internal server error|react.*error|failed to load chunk/i.test(html)) {
+        if (/Internal Server Error|Application error|ChunkLoadError|Minified React error|__next_error|next.*error.*overlay|white screen of death/i.test(html)) {
           fail('no client crash text (node)');
         }
       } catch (fetchErr) {
