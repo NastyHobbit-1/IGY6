@@ -126,14 +126,31 @@ export const PRODUCT_NAV_SCRIPT = `
     });
   });
 
+  const updateSearchReadyUi = () => {
+    root.setAttribute("data-search-state", "ok");
+    root.querySelectorAll("[data-search-status-label]").forEach((element) => {
+      element.textContent = "Search is ready";
+    });
+  };
+
   const ensureSearchIndex = async (options = {}) => {
     const { reloadOnSuccess = true, silent = false } = options;
     const statusEl = root.querySelector("[data-search-status-label]");
     if (statusEl && !silent) statusEl.textContent = "Search is being prepared";
     try {
-      await postJson("/api/memory/vector/chunks/ensure", {});
-      root.setAttribute("data-search-state", "ok");
-      if (statusEl) statusEl.textContent = "Search is ready";
+      const payload = await postJson("/api/memory/vector/chunks/ensure", {});
+      if (payload?.exists === true) {
+        updateSearchReadyUi();
+        if (reloadOnSuccess) window.setTimeout(() => window.location.reload(), 700);
+        return true;
+      }
+      const statusResponse = await fetch("/api/memory/vector/chunks");
+      const statusPayload = await statusResponse.json().catch(() => ({}));
+      if (statusResponse.ok && statusPayload?.exists === true) {
+        updateSearchReadyUi();
+        return true;
+      }
+      updateSearchReadyUi();
       if (reloadOnSuccess) window.setTimeout(() => window.location.reload(), 700);
       return true;
     } catch (error) {
@@ -162,12 +179,26 @@ export const PRODUCT_NAV_SCRIPT = `
     });
   });
 
+  const SEARCH_ENSURE_KEY = "igy6-search-auto-ensured";
   const autoEnsureSearch = async () => {
     const state = root.getAttribute("data-search-state");
     const reachable = root.getAttribute("data-search-reachable") === "true";
-    if (!reachable || state === "ok" || root.getAttribute("data-search-auto-tried") === "true") return;
+    if (!reachable || state === "ok") return;
+    try {
+      if (window.sessionStorage.getItem(SEARCH_ENSURE_KEY) === "done") return;
+    } catch {
+      /* ignore storage errors */
+    }
+    if (root.getAttribute("data-search-auto-tried") === "true") return;
     root.setAttribute("data-search-auto-tried", "true");
-    await ensureSearchIndex({ reloadOnSuccess: true, silent: true });
+    const ok = await ensureSearchIndex({ reloadOnSuccess: false, silent: true });
+    if (ok) {
+      try {
+        window.sessionStorage.setItem(SEARCH_ENSURE_KEY, "done");
+      } catch {
+        /* ignore storage errors */
+      }
+    }
   };
 
   const attentionDrawer = root.querySelector("[data-attention-drawer]");

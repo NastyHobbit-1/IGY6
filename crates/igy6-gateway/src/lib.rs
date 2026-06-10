@@ -548,7 +548,7 @@ pub fn handle_gateway_request_with_db(
             }
         }
         ("GET", "/memory/vector/chunks") => {
-            json_response(200, "OK", vector_collection_status_json(), false)
+            json_response(200, "OK", vector_collection_status_live_json(), false)
         }
         ("GET", "/memory/graph/schema") => {
             json_response(200, "OK", graph_schema_status_json(), false)
@@ -15396,6 +15396,68 @@ fn vector_collection_status_json() -> String {
         escape_json(&redact_url(&qdrant_url)),
         reachability
     )
+}
+
+fn vector_collection_status_live_json() -> String {
+    let settings = match qdrant_settings_from_env() {
+        Ok(settings) => settings,
+        Err(_) => return vector_collection_status_json(),
+    };
+    let tcp_reachable = tcp_reachability_from_url(&settings.base_url);
+    if !tcp_reachable {
+        return serde_json::json!({
+            "collection_name": settings.collection_name,
+            "exists": false,
+            "detail": {
+                "configured_url": redact_url(&settings.base_url),
+                "tcp_reachable": false,
+                "collection_existence_verified": false,
+                "note": "Qdrant is not reachable from the gateway.",
+            }
+        })
+        .to_string();
+    }
+
+    match vector_collection_status_from_qdrant(&settings) {
+        Ok(body) => {
+            let Ok(mut value) = serde_json::from_str::<Value>(&body) else {
+                return body;
+            };
+            let detail = value
+                .as_object_mut()
+                .and_then(|object| object.get_mut("detail"))
+                .and_then(Value::as_object_mut);
+            if let Some(detail) = detail {
+                detail.insert(
+                    "configured_url".to_string(),
+                    Value::String(redact_url(&settings.base_url)),
+                );
+                detail.insert("tcp_reachable".to_string(), Value::Bool(true));
+                detail.insert("collection_existence_verified".to_string(), Value::Bool(true));
+            } else if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "detail".to_string(),
+                    serde_json::json!({
+                        "configured_url": redact_url(&settings.base_url),
+                        "tcp_reachable": true,
+                        "collection_existence_verified": true,
+                    }),
+                );
+            }
+            value.to_string()
+        }
+        Err(_) => serde_json::json!({
+            "collection_name": settings.collection_name,
+            "exists": false,
+            "detail": {
+                "configured_url": redact_url(&settings.base_url),
+                "tcp_reachable": true,
+                "collection_existence_verified": false,
+                "note": "Qdrant is reachable but collection status could not be verified.",
+            }
+        })
+        .to_string(),
+    }
 }
 
 fn graph_schema_status_json() -> String {

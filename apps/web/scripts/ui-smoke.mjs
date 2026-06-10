@@ -121,6 +121,7 @@ const requiredApiRoutes = [
   "host-bridge/ensure-max-reach/route.ts",
   "chat/evidence-answer/route.ts",
   "chat/retrieval-preview/route.ts",
+  "memory/vector/chunks/route.ts",
   "memory/vector/chunks/ensure/route.ts",
   "ops/runtime-logs/route.ts",
   "ops/runtime-logs/append/route.ts",
@@ -172,6 +173,7 @@ includesAll("plain language policy", corpus, [
 includesAll("simple and full mode", corpus, [
   "data-ui-mode",
   "igy6-ui-mode",
+  "igy6-search-auto-ensured",
   "productModeToggle",
   "AttentionPanel",
   "buildAttentionItems",
