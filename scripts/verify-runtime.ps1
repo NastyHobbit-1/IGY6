@@ -1,35 +1,106 @@
-# IGY6 Runtime Verification Script
-# PowerShell 7+
+# IGY6 runtime verification script.
+# Requires PowerShell 7+.
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not (Test-Path '.env.test') -and -not (Test-Path '.env')) {
-    Write-Error 'No .env or .env.test found. Please create one from .env.example and configure IGY6_DATA_ROOT.'
+function Invoke-Step {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $Command
+    )
+
+    Write-Host ""
+    Write-Host "==> $Name"
+    & $Command
+}
+
+$requiredRootFiles = @(
+    'Cargo.toml',
+    'infra/docker-compose.yml',
+    'apps/web/package.json',
+    '.env.example'
+)
+
+foreach ($path in $requiredRootFiles) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        Write-Error "This script must be run from the IGY6 repository root. Missing required path: $path"
+        exit 1
+    }
+}
+
+$envFile = $null
+if (Test-Path -LiteralPath '.env.test') {
+    $envFile = '.env.test'
+} elseif (Test-Path -LiteralPath '.env') {
+    $envFile = '.env'
+} else {
+    Write-Error 'No .env.test or .env file found. Create one from .env.example and configure IGY6_DATA_ROOT.'
     exit 1
 }
 
-$envFile = if (Test-Path '.env.test') { '.env.test' } else { '.env' }
 Write-Host "Using $envFile"
 
-# Core checks
-cargo test --workspace
+try {
+    Invoke-Step 'Rust workspace tests' {
+        cargo test --workspace
+    }
 
-npm --prefix apps/web install
-npm --prefix apps/web audit
-npm --prefix apps/web run typecheck
-npm --prefix apps/web run build
+    Invoke-Step 'Web dependency install' {
+        npm --prefix apps/web install
+    }
 
-docker compose -f infra/docker-compose.yml --env-file $envFile build web
-docker compose -f infra/docker-compose.yml --env-file $envFile up -d web
-Start-Sleep -Seconds 15
-docker compose -f infra/docker-compose.yml --env-file $envFile ps
+    Invoke-Step 'Web audit' {
+        npm --prefix apps/web audit
+    }
 
-# Health checks
-Invoke-RestMethod -Uri 'http://127.0.0.1:18000/health/live' -Method Get | Out-Null
-Invoke-RestMethod -Uri 'http://127.0.0.1:18000/health/ready' -Method Get | Out-Null
+    Invoke-Step 'Web typecheck' {
+        npm --prefix apps/web run typecheck
+    }
 
-# Clean build artifact
-if (Test-Path 'apps/web/tsconfig.tsbuildinfo') { Remove-Item 'apps/web/tsconfig.tsbuildinfo' -Force }
+    Invoke-Step 'Web production build' {
+        npm --prefix apps/web run build
+    }
 
+    Invoke-Step 'Docker web build' {
+        docker compose -f infra/docker-compose.yml --env-file $envFile build web
+    }
+
+    Invoke-Step 'Docker web start' {
+        docker compose -f infra/docker-compose.yml --env-file $envFile up -d web
+    }
+
+    Start-Sleep -Seconds 20
+
+    Invoke-Step 'Docker service status' {
+        docker compose -f infra/docker-compose.yml --env-file $envFile ps
+    }
+
+    Invoke-Step 'API live health' {
+        Invoke-RestMethod -Uri 'http://127.0.0.1:18000/health/live' -Method Get | Out-Null
+    }
+
+    Invoke-Step 'API ready health' {
+        Invoke-RestMethod -Uri 'http://127.0.0.1:18000/health/ready' -Method Get | Out-Null
+    }
+
+    Invoke-Step 'Web HTTP status' {
+        $response = Invoke-WebRequest -Uri 'http://127.0.0.1:13000' -UseBasicParsing
+        if ($response.StatusCode -ne 200) {
+            throw "Expected web HTTP 200 but received $($response.StatusCode)"
+        }
+    }
+}
+finally {
+    $tsBuildInfo = 'apps/web/tsconfig.tsbuildinfo'
+    if (Test-Path -LiteralPath $tsBuildInfo) {
+        Remove-Item -LiteralPath $tsBuildInfo -Force
+    }
+}
+
+Write-Host ''
 Write-Host 'Runtime verification passed successfully.'
 exit 0
