@@ -1,25 +1,69 @@
-# IGY6 Web UI
+# Web UI
 
-The web UI is the primary user interface for the local evidence and intelligence workspace.
+The IGY6 web UI is the main browser interface for local runtime use.
 
-## Accessing the UI
-Open your browser to http://127.0.0.1:13000 after starting the stack.
+## Open the UI
 
-## API Connection
-The UI connects to the Rust gateway/API service at http://127.0.0.1:18000 by default.
+Start the stack, then open:
 
-## Visible Tabs and Areas
-- Chat: Evidence-grounded questions and retrieval.
-- Data: Add authorized information and sources.
-- Work: Processing status.
-- Settings: Approvals and configuration.
-- Advanced/More: Diagnostics.
+```text
+http://127.0.0.1:13000
+```
 
-## Workflow Highlights
-Authorized information is added through the Data tab. Evidence is reviewed with full provenance trails. Chat provides grounded responses.
+The web container maps local port `13000` to the application inside Docker.
+
+## API connection
+
+The UI talks to the Rust API gateway at:
+
+```text
+http://127.0.0.1:18000
+```
+
+The API gateway provides local runtime routes for health checks, evidence operations, work operations, settings, approvals, and related application functions.
+
+## Main UI areas
+
+The visible UI may include areas for:
+
+- Chat and evidence-grounded answers
+- Adding authorized information and sources
+- Work status and processing
+- Results, reports, and evidence records
+- Settings and approvals
+- Advanced diagnostics
+
+Use only authorized source material. Evidence answers should be reviewed with their provenance trail.
 
 ## Troubleshooting
-- Web container starting: Wait for Docker Compose to complete.
-- API unreachable: Check health endpoints and Docker logs.
-- Missing .env: Copy from .env.example and set IGY6_DATA_ROOT.
-- Unhealthy container: Use docker compose ps and restart.
+
+### Web page does not load
+
+Check container status:
+
+```powershell
+docker compose -f infra/docker-compose.yml --env-file .env.test ps
+```
+
+Then verify the web endpoint:
+
+```powershell
+Invoke-WebRequest -Uri "http://127.0.0.1:13000" -UseBasicParsing | Select-Object StatusCode
+```
+
+### API is unreachable
+
+Check:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:18000/health/live"
+Invoke-RestMethod -Uri "http://127.0.0.1:18000/health/ready"
+```
+
+### Environment file is missing
+
+Create `.env` from `.env.example` and configure `IGY6_DATA_ROOT`.
+
+### Container is unhealthy
+
+Use Docker Compose status and logs to identify the service that is not ready.
