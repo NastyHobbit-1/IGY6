@@ -1,0 +1,9 @@
+[package]
+name = "igy6-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared foundational IGY6 Rust types"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]

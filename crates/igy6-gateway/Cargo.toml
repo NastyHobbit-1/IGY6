@@ -1,0 +1,28 @@
+[package]
+name = "igy6-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-agent-api = { path = "../igy6-agent-api" }
+igy6-artifacts = { path = "../igy6-artifacts" }
+igy6-evidence-answer = { path = "../igy6-evidence-answer" }
+igy6-host-bridge = { path = "../igy6-host-bridge" }
+igy6-llm = { path = "../igy6-llm" }
+igy6-read-only-api = { path = "../igy6-read-only-api" }
+igy6-retrieval-preview = { path = "../igy6-retrieval-preview" }
+igy6-vector-memory = { path = "../igy6-vector-memory" }
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+# On grok branch: full access collection (ignore previous no-scraping restrictions)
+walkdir = "2"
+infer = "0.15"
+ureq = "2.9"  # simple blocking HTTP for web scraping / URL collection
+base64 = "0.21"  # for serving artifact content as base64 for UI media viewer (grok branch)
+totp-rs = { version = "5", default-features = false, features = ["gen_secret", "otpauth"] }  # for optional TOTP authenticator support (grok branch, off by default)
+scraper = "0.18"  # for deep HTML parsing and link/asset extraction in web collector
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }  # for stripping exif/metadata from images for non-traceability and full res storage
+rand = "0.8"  # for UA rotation and jittered delays in anonymous deep collection (grok branch)
+# For potential future media deep extract (pdf etc) we can add more later; keep light for now

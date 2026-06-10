@@ -1,0 +1,11 @@
+[package]
+name = "igy6-artifacts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# On grok branch full-access mode: powerful media detection and helpers
+infer = "0.15"
+walkdir = "2"
+serde_json = "1"
+pdf-extract = "0.7"  # for deep PDF text extraction (grok branch: real content, not placeholder)

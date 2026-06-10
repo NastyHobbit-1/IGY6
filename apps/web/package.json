@@ -1,0 +1,30 @@
+{
+  "name": "igy6-web",
+  "version": "0.0.0-phase0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/start-dynamic.mjs",
+    "build": "next build",
+    "start": "node scripts/start-dynamic.mjs --start",
+    "test": "npm run test:ui-smoke",
+    "test:ui-smoke": "node scripts/ui-smoke.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:ui-runtime-smoke": "node scripts/ui-runtime-smoke.mjs",
+    "check": "npm run typecheck && npm run test:ui-smoke && npm run test:ui-runtime-smoke"
+  },
+  "dependencies": {
+    "next": "15.5.15",
+    "playwright": "^1.51.1",
+    "react": "19.0.2",
+    "react-dom": "19.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "@types/react": "19.0.4",
+    "@types/react-dom": "19.0.2",
+    "typescript": "5.7.2"
+  },
+  "overrides": {
+    "postcss": "8.5.10"
+  }
+}

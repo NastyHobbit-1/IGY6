@@ -1,0 +1,16 @@
+[package]
+name = "igy6-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-config = { path = "../igy6-config" }
+igy6-core = { path = "../igy6-core" }
+igy6-policy = { path = "../igy6-policy" }
+webbrowser = "0.8"
+dirs = "5"
+clap = { version = "4.5", features = ["derive"] }
+
+[[bin]]
+name = "igy6"
+path = "src/main.rs"

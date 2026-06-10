@@ -1,0 +1,10 @@
+[package]
+name = "igy6-config"
+version = "0.1.0"
+edition = "2021"
+description = "Safe IGY6 Rust configuration parsing primitives"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+igy6-core = { path = "../igy6-core" }

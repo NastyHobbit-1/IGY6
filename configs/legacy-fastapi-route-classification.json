@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "diff": "DIFF-165",
+  "source": {
+    "fastapi_route_inventory": "archive/legacy-python/services-api/app",
+    "rust_gateway_inventory": "crates/igy6-gateway/src/lib.rs",
+    "web_usage_inventory": "apps/web",
+    "route_parity_guard": "scripts/rust-route-parity.py"
+  },
+  "route_parity": {
+    "fastapi_routes": 91,
+    "rust_native_routes": 118,
+    "fastapi_routes_missing_from_rust": 0,
+    "web_used_routes": 79,
+    "web_routes_requiring_fallback": 0
+  },
+  "fastapi_fallback_required": false,
+  "rust_only_claim_allowed": true,
+  "rust_api_route_parity_claim_allowed": true,
+  "classification_counts": {
+    "active_parity_required": 0,
+    "intentional_legacy_fallback": 0,
+    "retireable_unused": 0,
+    "duplicate_or_superseded": 0,
+    "unsafe_to_migrate_now": 0
+  },
+  "routes": []
+}

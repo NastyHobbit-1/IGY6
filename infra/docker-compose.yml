@@ -1,0 +1,186 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/postgres
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./schema/bootstrap-core.sql
+        target: /docker-entrypoint-initdb.d/01-bootstrap-core.sql
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/qdrant
+        target: /qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+      NEO4J_server_default__listen__address: 0.0.0.0
+      NEO4J_server_bolt_listen__address: 0.0.0.0:7687
+      NEO4J_server_http_listen__address: 0.0.0.0:7474
+    ports:
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/neo4j/data
+        target: /data
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/neo4j/logs
+        target: /logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.20.3
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --default-artifact-root
+      - /mlflow/artifacts
+    environment:
+      MLFLOW_TELEMETRY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/mlflow
+        target: /mlflow
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    environment:
+      PHOENIX_TELEMETRY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${PHOENIX_PORT:-6006}:6006"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}/phoenix
+        target: /mnt/data
+    healthcheck:
+      test: ["CMD", "/usr/bin/python3.13", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: crates/igy6-gateway/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      GATEWAY_BIND_ADDR: 0.0.0.0:8000
+      ENV_FILE_PATH: ${ENV_FILE_PATH:-/workspace/project/.env}
+      ENV_BACKUP_DIR: ${ENV_BACKUP_DIR:-/workspace/storage/env_backups}
+      IGY6_DATA_ROOT: /workspace/storage
+      IGY6_HOST_BRIDGE_HOST: ${IGY6_HOST_BRIDGE_HOST:-host.docker.internal}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}
+        target: /workspace/storage
+      - type: bind
+        source: ..
+        target: /workspace/project
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: crates/igy6-worker/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      IGY6_DATA_ROOT: /workspace/storage
+      IGY6_WORKER_SHUTDOWN_FILE: ${IGY6_WORKER_SHUTDOWN_FILE:-worker/control/shutdown}
+    command:
+      - igy6-worker
+      - --daemon
+      - --claim-limit
+      - ${IGY6_WORKER_CLAIM_LIMIT:-4}
+      - --poll-interval-ms
+      - ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${IGY6_DATA_ROOT}
+        target: /workspace/storage
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../apps/web
+    environment:
+      API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL}
+      PORT: "3000"
+      NEXT_TELEMETRY_DISABLED: 1
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s

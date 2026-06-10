@@ -1,0 +1,1687 @@
+{
+  "schema_version": 1,
+  "cutover_ready": true,
+  "target_architecture": "rust-only-application-runtime",
+  "operational_status": "rust-native-api-and-worker-daemon-with-legacy-python-archived",
+  "fastapi_fallback_required": false,
+  "route_parity": {
+    "diff": "DIFF-139",
+    "status": "complete",
+    "rust_native_routes": 118,
+    "fastapi_router_routes": 91,
+    "fastapi_total_routes": 91,
+    "fastapi_routes_missing_from_rust": 0,
+    "web_used_routes": 79,
+    "web_routes_requiring_fallback": 0,
+    "fastapi_root_route": true,
+    "unsupported_routes_proxy_to_legacy_api": false,
+    "legacy_route_classification": "configs/legacy-fastapi-route-classification.json",
+    "audit_document": "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md",
+    "guard_script": "scripts/rust-route-parity.py",
+    "next_required_diff": null
+  },
+  "final_rust_api_cutover_audit": {
+    "diff": "DIFF-140",
+    "status": "complete",
+    "api_runtime_path": "rust-native",
+    "route_parity_complete": true,
+    "fastapi_fallback_removed": true,
+    "services_api_archived": true,
+    "remaining_python_components": [],
+    "remaining_python_reason": "Superseded by DIFF-165. Base Docker Compose no longer runs FastAPI, Python/Celery worker, or Celery beat; legacy Python API and worker source trees are archived under archive/legacy-python for history and rollback review only.",
+    "superseded_by": "DIFF-165",
+    "rust_only_repository_or_runtime_claimed": true,
+    "next_recommended_diff": null
+  },
+  "worker_execution_parity_audit": {
+    "diff": "DIFF-141",
+    "status": "complete",
+    "recommendation": "migrate worker execution to Rust one job family at a time while retaining Python/Celery worker and beat until execution parity is complete",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "celery_tasks": [
+      "phase0.health",
+      "collection.normalization_scaffold",
+      "collection.normalize_collection_run",
+      "evidence.generate_document_chunks",
+      "memory.vector.upsert_chunks"
+    ],
+    "beat_scheduled_tasks_found": [],
+    "worker_writes": {
+      "db_tables": [
+        "work_items",
+        "normalized_documents",
+        "chunks",
+        "evidence_items",
+        "audit_events"
+      ],
+      "audit_events": [
+        "work_item.created",
+        "collection_normalization.completed",
+        "collection_normalization.failed",
+        "document_chunks.generated",
+        "document_chunks.failed",
+        "chunk_vectors.upserted",
+        "chunk_vectors.failed"
+      ],
+      "artifact_writes": [],
+      "artifact_reads": [
+        "raw_artifacts.storage_path under ARTIFACT_STORE_PATH"
+      ],
+      "qdrant_operations": [
+        "GET chunk collection",
+        "PUT chunk collection when missing",
+        "PUT chunk points"
+      ],
+      "neo4j_operations": []
+    },
+    "required_environment": [
+      "CELERY_BROKER_URL",
+      "CELERY_RESULT_BACKEND",
+      "DATABASE_URL",
+      "ARTIFACT_STORE_PATH",
+      "QDRANT_URL",
+      "QDRANT_CHUNK_COLLECTION",
+      "QDRANT_CHUNK_VECTOR_SIZE",
+      "IGY6_DATA_ROOT bind mount"
+    ],
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
+  },
+  "worker_execution_contract_queue_claim": {
+    "diff": "DIFF-142",
+    "status": "complete",
+    "scope": "Rust worker queue-claim contract and planning only; no job-family execution",
+    "claim_execution_status": "claimed_without_execution",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "allowed_work_types": [
+      "collection_normalization",
+      "document_chunking",
+      "chunk_vector_upsert"
+    ],
+    "legacy_task_names": [
+      "collection.normalize_collection_run",
+      "evidence.generate_document_chunks",
+      "memory.vector.upsert_chunks"
+    ],
+    "claim_guards": [
+      "queued status required",
+      "recorded intent verification required",
+      "non-empty claim actor required",
+      "supported work type required",
+      "work-type payload shape validation required",
+      "claim limit bounded to 1..16"
+    ],
+    "planned_sql": [
+      "SELECT queued allowed work items ordered by created_at with FOR UPDATE SKIP LOCKED",
+      "UPDATE still-queued work item to running"
+    ],
+    "audit_contract": {
+      "event_type": "work_item.claimed",
+      "decision": "running",
+      "resource_type": "work_item"
+    },
+    "out_of_scope": [
+      "collection_normalization execution",
+      "document_chunking execution",
+      "chunk_vector_upsert execution",
+      "artifact reads",
+      "database writes from a Rust worker process",
+      "audit writes from a Rust worker process",
+      "Qdrant calls from a Rust worker process",
+      "Neo4j calls from a Rust worker process",
+      "worker or beat removal"
+    ],
+    "next_recommended_diff": "DIFF-143 Rust collection_normalization execution parity"
+  },
+  "collection_normalization_execution_parity": {
+    "diff": "DIFF-143",
+    "status": "complete",
+    "scope": "Rust worker collection_normalization execution planner and SQL/audit/status executor contract only",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "collection_normalization_parity_status": "planner_and_executor_contract_complete",
+    "behavior_covered": [
+      "validates collection_normalization work item payload against requested collection_run_id and raw_artifact_ids",
+      "requires an existing collection run",
+      "detects missing raw artifacts deterministically",
+      "rejects raw artifacts from a different collection run",
+      "decodes UTF-8 artifact bytes and rejects non-UTF-8 artifacts",
+      "plans normalized_documents inserts with Python/Celery metadata shape",
+      "skips raw artifacts that already have normalized documents",
+      "plans originating work_item completed or failed status updates",
+      "plans collection_normalization.completed and collection_normalization.failed audit events",
+      "plans chained document_chunking work item creation when new normalized documents are created"
+    ],
+    "out_of_scope": [
+      "document_chunking execution",
+      "chunk_vector_upsert execution",
+      "Qdrant calls from the Rust worker",
+      "Neo4j calls from the Rust worker",
+      "Python/Celery worker or beat removal",
+      "full Rust-only repository or runtime claim"
+    ],
+    "next_recommended_diff": "DIFF-144 Rust document_chunking execution parity"
+  },
+  "document_chunking_execution_parity": {
+    "diff": "DIFF-144",
+    "status": "complete",
+    "scope": "Rust worker document_chunking execution planner and SQL/audit/status executor contract only",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "document_chunking_parity_status": "planner_and_executor_contract_complete",
+    "behavior_covered": [
+      "validates document_chunking work item payload against requested document_ids",
+      "supports document_ids and legacy single document_id payload forms",
+      "validates chunk size bounds from 100 to 5000",
+      "requires every requested normalized document to exist",
+      "rejects empty document text deterministically",
+      "plans chunks inserts with Python/Celery metadata and not_started embedding status",
+      "plans evidence_items inserts for generated document chunks",
+      "skips documents that already have chunks",
+      "plans originating work_item completed or failed status updates",
+      "plans document_chunks.generated and document_chunks.failed audit events",
+      "plans chained chunk_vector_upsert work item creation when chunks are created"
+    ],
+    "out_of_scope": [
+      "chunk_vector_upsert execution",
+      "Qdrant calls from the Rust worker",
+      "Neo4j calls from the Rust worker",
+      "Python/Celery worker or beat removal",
+      "full Rust-only repository or runtime claim"
+    ],
+    "next_recommended_diff": "DIFF-145 Rust chunk_vector_upsert execution parity"
+  },
+  "chunk_vector_upsert_execution_parity": {
+    "diff": "DIFF-145",
+    "status": "complete",
+    "scope": "Rust worker chunk_vector_upsert execution planner and SQL/audit/status/Qdrant request executor contract only",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "rust_worker_execution_parity_complete": false,
+    "chunk_vector_upsert_parity_status": "planner_and_executor_contract_complete",
+    "behavior_covered": [
+      "validates chunk_vector_upsert work item payload and limit bounds from 1 to 1000",
+      "supports optional chunk_ids payload scoping",
+      "selects uncompleted chunks ordered by id and bounded by limit",
+      "skips chunks whose embedding_status is already completed",
+      "plans deterministic local chunk vectors",
+      "plans Qdrant collection status, ensure, and point upsert requests",
+      "plans chunk embedding_status completed updates",
+      "plans chunk metadata merge with embedding_method and vector_collection",
+      "plans originating work_item completed or failed status updates",
+      "plans chunk_vectors.upserted and chunk_vectors.failed audit events"
+    ],
+    "out_of_scope": [
+      "Rust worker process cutover",
+      "beat or scheduler replacement",
+      "Python/Celery worker or beat removal",
+      "full Rust-only repository or runtime claim"
+    ],
+    "next_recommended_diff": "DIFF-146 worker process cutover and scheduler/beat decision"
+  },
+  "worker_process_cutover_scheduler_beat_decision": {
+    "diff": "DIFF-146",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Rust worker process cutover is not ready; retain Python/Celery worker and beat until a real Rust worker runtime executes queued jobs and scheduler posture is resolved.",
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": true,
+    "beat_removed": false,
+    "services_worker_removed": true,
+    "rust_only_repository_or_runtime_claimed": false,
+    "rust_worker_contracts_complete_for_job_families": [
+      "collection_normalization",
+      "document_chunking",
+      "chunk_vector_upsert"
+    ],
+    "rust_worker_live_runtime_ready": false,
+    "blockers": [
+      "crates/igy6-worker is a library crate only and has no long-running worker binary or Docker image",
+      "no Rust runtime polls or subscribes to queued work items",
+      "no Rust runtime atomically claims queued jobs from PostgreSQL with live FOR UPDATE SKIP LOCKED execution",
+      "no Rust runtime reads artifact bytes from the configured artifact store during job execution",
+      "no Rust runtime applies planned normalized_documents, chunks, evidence_items, work_items, or audit_events writes to PostgreSQL",
+      "no Rust runtime executes planned Qdrant collection ensure or point upsert HTTP requests",
+      "no Rust runtime has retry/backoff, shutdown, logging, or health behavior equivalent to the current worker service",
+      "beat/scheduled-work posture has not been replaced or formally retired"
+    ],
+    "compose_decision": {
+      "worker": "retained",
+      "beat": "retained",
+      "reason": "Docker Compose still needs Python/Celery worker for live end-to-end processing; beat remains until scheduler posture is resolved even though no repo-defined beat schedule was found in DIFF-141."
+    },
+    "next_recommended_diff": "DIFF-147 Rust worker runtime execution harness and cutover readiness gate"
+  },
+  "rust_worker_runtime_harness_cutover_readiness": {
+    "diff": "DIFF-147",
+    "status": "complete",
+    "scope": "Rust worker CLI/runtime harness and non-mutating cutover readiness gate",
+    "rust_worker_binary_added": true,
+    "binary": "igy6-worker",
+    "runtime_modes": [
+      "--help",
+      "--check",
+      "--dry-run",
+      "--once"
+    ],
+    "default_mode": "--check",
+    "default_mode_mutates_runtime_data": false,
+    "live_execution_enabled": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": true,
+    "rust_only_repository_or_runtime_claimed": false,
+    "config_validation": [
+      "DATABASE_URL must be PostgreSQL-shaped",
+      "QDRANT_URL must be http(s) and must not include credentials",
+      "IGY6_DATA_ROOT must be a non-root local path",
+      "QDRANT_CHUNK_COLLECTION must be bounded to safe ASCII name characters",
+      "QDRANT_CHUNK_VECTOR_SIZE must be at least 1",
+      "claim limit is bounded to 1 through 16",
+      "poll interval is bounded to 100 through 60000 milliseconds"
+    ],
+    "safety_defaults": [
+      "no PostgreSQL connection is opened",
+      "no runtime queue row is mutated",
+      "no artifact bytes are read",
+      "no audit event is written",
+      "no Qdrant HTTP request is executed",
+      "no Celery or beat control is attempted",
+      "no arbitrary shell command execution exists",
+      "secrets are not printed in status output"
+    ],
+    "cutover_readiness": "not_ready_for_python_celery_removal",
+    "remaining_blockers": [
+      "live PostgreSQL queue claim execution is still not implemented",
+      "live job-family executors that apply planned DB writes are still not implemented",
+      "live artifact-store reads during Rust job execution are still not implemented",
+      "live Qdrant side-effect execution is still not implemented",
+      "Rust worker Docker/Compose canary service is still not wired",
+      "beat/scheduler replacement or retirement is still undecided"
+    ],
+    "next_recommended_diff": "DIFF-148 Rust worker live executor canary and side-effect verification"
+  },
+  "rust_worker_live_executor_canary": {
+    "diff": "DIFF-148",
+    "status": "complete",
+    "scope": "Opt-in one-job Rust worker canary gate and side-effect verification planning",
+    "live_canary_execution_added": true,
+    "live_canary_default": false,
+    "live_canary_requires": [
+      "--once",
+      "--canary-live",
+      "--canary-work-item ID",
+      "IGY6_WORKER_LIVE_CANARY=DIFF-148 for live_execution_enabled=true"
+    ],
+    "max_jobs": 1,
+    "default_mode_mutates_runtime_data": false,
+    "actual_side_effects_executed": [],
+    "side_effects_planned_only": [
+      "PostgreSQL work item claim",
+      "PostgreSQL job-family writes",
+      "audit_events writes",
+      "artifact store reads",
+      "Qdrant collection ensure and point upserts"
+    ],
+    "structured_result_states": [
+      "claimed",
+      "skipped",
+      "completed",
+      "failed",
+      "unsupported"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "cutover_readiness": "canary_gate_ready_side_effect_executor_not_implemented",
+    "remaining_blockers": [
+      "live PostgreSQL executor is not implemented",
+      "live artifact-store read executor is not implemented",
+      "live audit writer is not implemented",
+      "live Qdrant HTTP executor is not implemented",
+      "Rust worker Docker/Compose canary service is not wired",
+      "beat/scheduler replacement or retirement is not decided"
+    ],
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "rust_worker_live_side_effect_executor": {
+    "diff": "DIFF-149",
+    "status": "complete",
+    "scope": "Explicit one-job Rust worker live canary executor behind DIFF-148 canary acknowledgement",
+    "live_canary_default": false,
+    "live_canary_requires": [
+      "--once",
+      "--canary-live",
+      "--canary-work-item ID",
+      "IGY6_WORKER_LIVE_CANARY=DIFF-148"
+    ],
+    "max_jobs": 1,
+    "default_mode_mutates_runtime_data": false,
+    "real_side_effects_implemented": [
+      "PostgreSQL selected work item claim using FOR UPDATE SKIP LOCKED",
+      "PostgreSQL work_items running/completed/failed status updates for the selected canary item",
+      "audit_events for claim, start, success, and failure",
+      "artifact reads for collection_normalization under IGY6_DATA_ROOT/artifacts",
+      "normalized_documents writes for collection_normalization",
+      "chunks and evidence_items writes for document_chunking",
+      "chained work_items writes for follow-on document_chunking and chunk_vector_upsert jobs",
+      "deterministic local vector generation for chunk_vector_upsert",
+      "Qdrant HTTP collection ensure and point upsert for chunk_vector_upsert only",
+      "chunk embedding_status and metadata updates after successful Qdrant upsert"
+    ],
+    "side_effects_still_not_live": [
+      "broad queue polling",
+      "multi-job processing",
+      "long-running Rust worker loop",
+      "Rust scheduler or beat replacement",
+      "Docker Compose Rust worker process wiring",
+      "Neo4j worker execution"
+    ],
+    "structured_result_states": [
+      "claimed",
+      "skipped",
+      "completed",
+      "failed",
+      "unsupported"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "cutover_readiness": "canary_executor_ready_process_cutover_not_ready",
+    "remaining_blockers": [
+      "canary must be verified against controlled runtime data before production ownership changes",
+      "Rust worker long-running loop and Compose wiring are not active",
+      "beat/scheduler replacement or retirement is not decided",
+      "Python/Celery remains the production worker owner until a cutover DIFF removes or disables it"
+    ],
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "rust_worker_canary_verification_cutover_decision": {
+    "diff": "DIFF-150",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Rust worker process cutover is not ready; retain Python/Celery worker and beat.",
+    "real_canary_run": false,
+    "real_canary_reason_not_run": "No explicitly selected safe runtime work item was provided for DIFF-150, and the task prohibits touching runtime/private data except through scoped canary verification.",
+    "verified_by_static_audit": [
+      "DIFF-149 live executor remains gated by --once, --canary-live, --canary-work-item ID, and IGY6_WORKER_LIVE_CANARY=DIFF-148",
+      "default igy6-worker --check and dry-run modes remain non-mutating",
+      "DIFF-149 implements one selected canary work item only",
+      "Docker Compose still runs Python/Celery worker and beat",
+      "No Rust worker long-running Compose service is wired",
+      "No beat/scheduler replacement or retirement is implemented"
+    ],
+    "side_effects_verified_without_live_runtime_data": [
+      "CLI canary gates",
+      "safe non-mutating default status output",
+      "SQL claim plan includes FOR UPDATE SKIP LOCKED",
+      "artifact path safety tests reject absolute and traversal paths",
+      "Qdrant HTTP-origin boundary tests reject non-http and path-bearing origins",
+      "worker tests cover canary result side-effect shape"
+    ],
+    "side_effects_not_verified_against_real_canary": [
+      "PostgreSQL claim/write effects on a real selected work_items row",
+      "audit_events rows observed after a real selected canary",
+      "artifact bytes read from a real selected canary under IGY6_DATA_ROOT",
+      "normalized_documents writes from a real collection_normalization canary",
+      "chunks and evidence_items writes from a real document_chunking canary",
+      "Qdrant collection ensure and point upsert from a real chunk_vector_upsert canary",
+      "chunk embedding_status and metadata updates after a real Qdrant upsert",
+      "failure rollback posture against live runtime data"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "no controlled real canary work item has been run and audited",
+      "Rust worker is still not wired as a long-running worker process in Docker Compose",
+      "broad queue polling remains out of scope",
+      "only one explicitly selected canary work item is supported",
+      "beat/scheduler posture has not been replaced or formally retired",
+      "production rollback procedure after Rust worker ownership is not yet verified"
+    ],
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "controlled_rust_worker_canary_observed_side_effect_audit": {
+    "diff": "DIFF-151",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Safe canary was not available; no live Rust canary was run.",
+    "real_canary_run": false,
+    "canary_command": null,
+    "canary_work_item_id": null,
+    "blocker": "No explicitly selected safe queued work item ID was provided, and DIFF-151 prohibits touching runtime/private data except through the explicitly scoped canary.",
+    "observed_side_effects": [],
+    "side_effects_still_unverified": [
+      "PostgreSQL claim and work_items status update for a selected safe canary",
+      "audit_events claim/start/success/failure rows for a selected safe canary",
+      "artifact bytes read under IGY6_DATA_ROOT/artifacts for a selected safe collection_normalization canary",
+      "normalized_documents writes for a selected safe collection_normalization canary",
+      "chunks and evidence_items writes for a selected safe document_chunking canary",
+      "Qdrant collection ensure and point upsert for a selected safe chunk_vector_upsert canary",
+      "chunk embedding_status and metadata updates after a selected safe Qdrant canary",
+      "failure rollback posture from an intentionally safe failing canary"
+    ],
+    "preparation_steps_required": [
+      "Start from an approved local stack with PostgreSQL and Qdrant running.",
+      "Create or select one non-sensitive test source and one test raw artifact under IGY6_DATA_ROOT/artifacts.",
+      "Create exactly one queued work_items row for collection_normalization, document_chunking, or chunk_vector_upsert with recorded intent verification.",
+      "Confirm Python/Celery worker will not race the selected canary item during the Rust canary window.",
+      "Record the selected work_item_id before running Rust.",
+      "Run exactly: IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item <work_item_id>.",
+      "After the run, query only the selected work item, correlated audit_events, and expected downstream rows or Qdrant points.",
+      "Document observed before/after status, audit rows, artifact read evidence, DB writes, Qdrant results, and rollback posture."
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "safe_canary_fixture_work_item_selection": {
+    "diff": "DIFF-152",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Safe deterministic canary fixture path was added; no live Rust canary was run.",
+    "fixture_script": "scripts/rust-worker-canary-fixture.py",
+    "fixture_work_type": "collection_normalization",
+    "fixture_data_classification": "synthetic_non_production",
+    "selected_work_item_id": "diff-152-canary-work-item",
+    "selected_source_id": "diff-152-canary-source",
+    "selected_collection_run_id": "diff-152-canary-run",
+    "selected_raw_artifact_id": "diff-152-canary-raw",
+    "artifact_storage_path": "sha256/26/15/26157f4935b30dbed9c3801007fea903db0c7192cc60422602703a5f22320256",
+    "artifact_content_hash": "26157f4935b30dbed9c3801007fea903db0c7192cc60422602703a5f22320256",
+    "work_item_id_selection_method": "deterministic fixture ID emitted by scripts/rust-worker-canary-fixture.py; the selected canary work item is diff-152-canary-work-item and is bounded to one collection_normalization job.",
+    "fixture_default_mutates_runtime_data": false,
+    "live_canary_run": false,
+    "future_live_canary_command": "IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-152-canary-work-item",
+    "safety_constraints": [
+      "default fixture helper only prints selection metadata",
+      "seed SQL is emitted only when requested",
+      "synthetic artifact writing requires --write-artifact and a canary/diff152 data root",
+      "no broad queue processing is performed",
+      "Python/Celery worker and beat remain active",
+      "Rust-only runtime is not claimed"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "controlled_live_rust_worker_canary_run": {
+    "diff": "DIFF-153",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "DIFF-152 fixture was applied to an isolated PostgreSQL canary container and exactly one Rust live canary was run for diff-152-canary-work-item.",
+    "fixture_applied": true,
+    "fixture_command": "scripts/rust-worker-canary-fixture.py --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff153-canary.sql --write-artifact --data-root /tmp/igy6-diff153-canary",
+    "fixture_database": "isolated docker postgres container igy6-diff153-postgres on 127.0.0.1:55432; stopped after observation",
+    "fixture_data_root": "/tmp/igy6-diff153-canary",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff153-local@127.0.0.1:55432/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff153-canary QDRANT_URL=http://127.0.0.1:6333 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-152-canary-work-item",
+    "work_item_id": "diff-152-canary-work-item",
+    "work_type": "collection_normalization",
+    "result_state": "completed",
+    "observed_side_effects": [
+      "work_items diff-152-canary-work-item moved from queued to completed",
+      "audit_events rows observed for rust_worker_canary_fixture.selected, work_item.claimed, work_item.started, work_item.created, and collection_normalization.completed",
+      "artifact file was present under /tmp/igy6-diff153-canary/artifacts with expected SHA-256 hash and 188 bytes",
+      "normalized_documents row document-18b22ec6d500b8d3-0 was written for raw artifact diff-152-canary-raw",
+      "chained document_chunking work item work-item-18b22ec6d50fc91f-1 was created in queued status"
+    ],
+    "qdrant_expected": false,
+    "qdrant_reason": "The selected canary work type is collection_normalization; Qdrant side effects are only expected for chunk_vector_upsert.",
+    "side_effects_still_unverified": [
+      "live document_chunking execution side effects",
+      "live chunk_vector_upsert Qdrant collection ensure and point upsert",
+      "live failure rollback posture",
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "controlled_document_chunking_live_canary": {
+    "diff": "DIFF-154",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "A document_chunking canary was attempted exactly once in an isolated database, but the synthetic fixture used invalid chunk_size 80 and the worker failed safely before chunk/evidence writes.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture document_chunking --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff154-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff154-postgres on 127.0.0.1:55433; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff154-local@127.0.0.1:55433/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff154-canary QDRANT_URL=http://127.0.0.1:6333 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-154-canary-work-item",
+    "work_item_id": "diff-154-canary-work-item",
+    "work_type": "document_chunking",
+    "result_state": "failed",
+    "blocker": "The DIFF-154 fixture seeded chunk_size=80, but Rust document chunking requires chunk_size between 100 and 5000.",
+    "observed_side_effects": [
+      "work_items diff-154-canary-work-item moved from queued to failed",
+      "error_message was recorded as chunk size must be between 100 and 5000, got 80",
+      "audit_events rows observed for rust_worker_canary_fixture.selected, work_item.claimed, work_item.started, and document_chunks.failed",
+      "no chunks were written",
+      "no evidence_items were written",
+      "no chained chunk_vector_upsert work item was created"
+    ],
+    "fixture_correction": "scripts/rust-worker-canary-fixture.py now emits chunk_size=100 for the document_chunking fixture, but DIFF-154 does not rerun the live canary because only one canary work item may be processed in this DIFF.",
+    "qdrant_expected": false,
+    "qdrant_reason": "The selected canary work type was document_chunking; Qdrant side effects are expected only for chunk_vector_upsert, which DIFF-154 was prohibited from running.",
+    "side_effects_still_unverified": [
+      "successful live document_chunking chunks writes",
+      "successful live document_chunking evidence_items writes",
+      "successful chained chunk_vector_upsert work item creation",
+      "live chunk_vector_upsert Qdrant collection ensure and point upsert",
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "corrected_document_chunking_live_canary": {
+    "diff": "DIFF-155",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Corrected document_chunking canary was run exactly once in an isolated database and completed with chunks, evidence_items, and a chained chunk_vector_upsert work item.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture document_chunking --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff155-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff155-postgres on 127.0.0.1:55434; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff155-local@127.0.0.1:55434/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff155-canary QDRANT_URL=http://127.0.0.1:6333 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item diff-154-canary-work-item",
+    "work_item_id": "diff-154-canary-work-item",
+    "work_type": "document_chunking",
+    "result_state": "completed",
+    "observed_side_effects": [
+      "work_items diff-154-canary-work-item moved from queued to completed",
+      "audit_events rows observed for rust_worker_canary_fixture.selected, work_item.claimed, work_item.started, work_item.created, and document_chunks.generated",
+      "three chunks were written for diff-154-canary-document with text lengths 100, 100, and 61 and embedding_status not_started",
+      "three evidence_items were written with evidence_type document_chunk and matching chunk IDs",
+      "chained chunk_vector_upsert work item work-item-18b25ee83a881458-6 was created in queued status"
+    ],
+    "qdrant_expected": false,
+    "qdrant_reason": "The selected canary work type was document_chunking; Qdrant side effects are expected only for chunk_vector_upsert, which DIFF-155 was prohibited from running.",
+    "side_effects_still_unverified": [
+      "live chunk_vector_upsert Qdrant collection ensure and point upsert",
+      "chunk embedding_status and metadata updates after successful Qdrant upsert",
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement",
+      "production rollback posture after Rust worker process ownership changes"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "controlled_chunk_vector_upsert_live_canary": {
+    "diff": "DIFF-156",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Safe chunk_vector_upsert canary was run exactly once in isolated PostgreSQL and Qdrant; PostgreSQL claim/failure audit and Qdrant collection ensure were observed, but Qdrant point upsert failed with HTTP 400.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture chunk_vector_upsert --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff156-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff156-postgres on 127.0.0.1:55435; stopped after observation",
+    "fixture_qdrant": "isolated docker qdrant container igy6-diff156-qdrant on 127.0.0.1:16333; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff156-local@127.0.0.1:55435/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff156-canary QDRANT_URL=http://127.0.0.1:16333 QDRANT_CHUNK_COLLECTION=igy6_diff156_chunks QDRANT_CHUNK_VECTOR_SIZE=384 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item work-item-18b25ee83a881458-6",
+    "work_item_id": "work-item-18b25ee83a881458-6",
+    "work_type": "chunk_vector_upsert",
+    "result_state": "failed",
+    "error_message": "Qdrant point upsert failed with HTTP 400",
+    "observed_postgresql_side_effects": [
+      "work_items work-item-18b25ee83a881458-6 moved from queued to failed",
+      "error_message was recorded as Qdrant point upsert failed with HTTP 400",
+      "three selected chunks remained embedding_status not_started",
+      "chunk embedding_method metadata remained empty",
+      "chunk vector_collection metadata remained empty"
+    ],
+    "observed_audit_side_effects": [
+      "rust_worker_canary_fixture.selected",
+      "work_item.claimed",
+      "work_item.started",
+      "chunk_vectors.failed"
+    ],
+    "observed_qdrant_side_effects": [
+      "GET /collections/igy6_diff156_chunks returned 404 before ensure",
+      "PUT /collections/igy6_diff156_chunks returned 200 and created the collection",
+      "PUT /collections/igy6_diff156_chunks/points returned 400",
+      "collection igy6_diff156_chunks exists with status green, vector size 384, and Cosine distance",
+      "points_count remained 0 and scroll returned no points"
+    ],
+    "side_effects_still_unverified": [
+      "successful live Qdrant point upsert",
+      "chunk embedding_status completed updates after successful Qdrant upsert",
+      "chunk embedding_method and vector_collection metadata updates after successful Qdrant upsert",
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement",
+      "production rollback posture after Rust worker process ownership changes"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "qdrant_upsert_compatibility_live_canary": {
+    "diff": "DIFF-157",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Qdrant upsert compatibility was fixed by using deterministic UUID-shaped Qdrant point IDs while preserving original chunk IDs in point payload metadata; exactly one isolated chunk_vector_upsert canary completed successfully.",
+    "compatibility_fix": "crates/igy6-vector-memory/src/lib.rs now derives deterministic UUID-shaped Qdrant point IDs from chunk IDs for the point id field; payload.chunk_id remains the original chunk ID.",
+    "fixture_preparation_command": "scripts/rust-worker-canary-fixture.py --fixture chunk_vector_upsert --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff157-canary.sql",
+    "fixture_database": "isolated docker postgres container igy6-diff157-postgres on 127.0.0.1:55436; stopped after observation",
+    "fixture_qdrant": "isolated docker qdrant container igy6-diff157-qdrant on 127.0.0.1:16334; stopped after observation",
+    "live_canary_run": true,
+    "canary_command": "env DATABASE_URL=postgresql://igy6:diff157-local@127.0.0.1:55436/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff157-canary QDRANT_URL=http://127.0.0.1:16334 QDRANT_CHUNK_COLLECTION=igy6_diff157_chunks QDRANT_CHUNK_VECTOR_SIZE=384 IGY6_WORKER_LIVE_CANARY=DIFF-148 cargo run -p igy6-worker -- --once --canary-live --canary-work-item work-item-18b25ee83a881458-6",
+    "work_item_id": "work-item-18b25ee83a881458-6",
+    "work_type": "chunk_vector_upsert",
+    "result_state": "completed",
+    "observed_postgresql_side_effects": [
+      "work_items work-item-18b25ee83a881458-6 moved from queued to completed",
+      "three selected chunks moved to embedding_status completed",
+      "three selected chunks recorded embedding_method local_hash_v1",
+      "three selected chunks recorded vector_collection igy6_diff157_chunks"
+    ],
+    "observed_audit_side_effects": [
+      "rust_worker_canary_fixture.selected",
+      "work_item.claimed",
+      "work_item.started",
+      "chunk_vectors.upserted"
+    ],
+    "observed_qdrant_side_effects": [
+      "GET /collections/igy6_diff157_chunks returned 404 before ensure",
+      "PUT /collections/igy6_diff157_chunks returned 200 and created the collection",
+      "PUT /collections/igy6_diff157_chunks/points returned 200",
+      "collection igy6_diff157_chunks exists with status green, vector size 384, and Cosine distance",
+      "points_count is 3 and scroll returned three points with original chunk_id payload metadata"
+    ],
+    "observed_qdrant_point_ids": [
+      "bf7a0ac7-8293-5ae9-8c85-62430be5fa39",
+      "5842bd3d-9fb4-5f16-a474-94b9284db426",
+      "e2373440-7d5c-5d49-92c9-951e3c69ccf9"
+    ],
+    "side_effects_still_unverified": [
+      "long-running Rust worker process ownership",
+      "beat/scheduler replacement or retirement",
+      "multi-job queue processing outside the one-item canary gate",
+      "production rollback posture after Rust worker process ownership changes"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "docker_compose_changed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-158 worker process cutover readiness and scheduler beat decision"
+  },
+  "worker_process_cutover_readiness_scheduler_beat_decision_after_canaries": {
+    "diff": "DIFF-158",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Rust worker process cutover is not ready. Successful isolated one-job canaries prove the three covered job-family executors, but they do not prove production long-running worker ownership or scheduler/beat replacement.",
+    "covered_live_canaries": [
+      "DIFF-153 collection_normalization",
+      "DIFF-155 document_chunking",
+      "DIFF-157 chunk_vector_upsert"
+    ],
+    "rust_worker_process_cutover_ready": false,
+    "docker_compose_changed": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "current_rust_worker_modes": [
+      "--help",
+      "--check",
+      "--dry-run",
+      "--once",
+      "--once --canary-live --canary-work-item ID with IGY6_WORKER_LIVE_CANARY=DIFF-148"
+    ],
+    "exact_blockers": [
+      "no long-running Rust worker daemon mode is implemented",
+      "no generic live queue polling loop processes queued work items without a named canary work item",
+      "live Rust execution still requires --once --canary-live --canary-work-item ID and IGY6_WORKER_LIVE_CANARY=DIFF-148",
+      "no Dockerfile or Compose service exists for a production Rust worker container",
+      "no production retry, backoff, and repeated polling behavior has been proven for the Rust worker process",
+      "no graceful shutdown or in-flight job handoff behavior has been proven for a long-running Rust worker process",
+      "no worker health/readiness posture has been defined for Docker Compose",
+      "no production rollback plan has been proven for replacing the Python/Celery worker container with a Rust worker container",
+      "Celery Beat scheduler posture has not been replaced or explicitly retired",
+      "no side-by-side canary deployment has shown the Rust worker owning broad queue processing without racing Python/Celery"
+    ],
+    "python_celery_worker_required_reason": "Production live processing still needs a long-running worker process that owns queue polling, retries, shutdown behavior, and repeated execution. Rust has proven only isolated one-item canary execution for covered job families.",
+    "python_celery_beat_required_reason": "DIFF-141 found no repo-defined beat schedule, but scheduler posture has not been replaced or formally retired. Removing beat is deferred until a DIFF explicitly resolves scheduled work ownership.",
+    "next_recommended_diff": "DIFF-160 live bounded Rust worker process-loop canary"
+  },
+  "rust_worker_process_ownership_canary_scheduler_beat_posture": {
+    "diff": "DIFF-159",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A non-default Rust process ownership canary planning mode was added. It is bounded, explicitly acknowledged, and non-mutating in DIFF-159; Python/Celery worker and beat remain active.",
+    "rust_process_ownership_canary_added": true,
+    "runtime_mode_added": "--canary-loop",
+    "runtime_mode_default": false,
+    "runtime_mode_mutates_runtime_data": false,
+    "live_loop_execution_enabled": false,
+    "safety_gates_required": [
+      "--canary-loop",
+      "IGY6_WORKER_PROCESS_CANARY=DIFF-159",
+      "bounded --max-jobs",
+      "bounded --max-idle-polls",
+      "bounded --claim-limit",
+      "bounded --poll-interval-ms"
+    ],
+    "bounds": {
+      "max_jobs": "1..16",
+      "max_idle_polls": "0..16",
+      "claim_limit": "1..16",
+      "poll_interval_ms": "100..60000"
+    },
+    "structured_output": [
+      "process_canary.mode",
+      "process_canary.status",
+      "process_canary.max_jobs",
+      "process_canary.claim_limit",
+      "process_canary.max_idle_polls",
+      "process_canary.poll_interval_ms",
+      "process_canary.stop_conditions",
+      "process_canary.safety_gates",
+      "process_canary.scheduler_beat_posture",
+      "process_canary.side_effects_executed",
+      "process_canary.side_effects_planned"
+    ],
+    "stop_conditions": [
+      "max_jobs reached",
+      "max_idle_polls reached",
+      "fatal validation error",
+      "external shutdown signal requested"
+    ],
+    "scheduler_beat_posture": "retained; replacement or retirement deferred",
+    "docker_compose_changed": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "live --canary-loop executor still needs to claim queued supported work without a named canary work item",
+      "bounded repeated processing must be proven against isolated synthetic data",
+      "graceful shutdown and in-flight job behavior must be observed",
+      "retry/backoff behavior must be implemented and observed",
+      "Rust worker Dockerfile or Compose canary service must be added before service replacement",
+      "side-by-side canary operation must avoid racing Python/Celery",
+      "scheduler/beat replacement or retirement must be decided",
+      "rollback from Rust worker ownership back to Python/Celery must be documented"
+    ],
+    "next_recommended_diff": "DIFF-161 Rust worker Docker/Compose canary service and rollback posture"
+  },
+  "live_bounded_rust_worker_process_loop_canary": {
+    "diff": "DIFF-160",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A live bounded Rust --canary-loop process-loop canary was implemented and run against isolated synthetic PostgreSQL, synthetic IGY6_DATA_ROOT, and isolated local Qdrant. It processed three synthetic chained jobs and exited cleanly at max_jobs.",
+    "live_process_loop_canary_run": true,
+    "loop_command": "env DATABASE_URL=postgresql://igy6:diff160-local@127.0.0.1:55437/igy6_canary IGY6_DATA_ROOT=/tmp/igy6-diff160-canary QDRANT_URL=http://127.0.0.1:16335 QDRANT_CHUNK_COLLECTION=igy6_diff160_chunks QDRANT_CHUNK_VECTOR_SIZE=384 IGY6_WORKER_PROCESS_CANARY=DIFF-159 cargo run -p igy6-worker -- --canary-loop --max-jobs 3 --max-idle-polls 1 --claim-limit 1 --poll-interval-ms 100",
+    "loop_bounds": {
+      "max_jobs": 3,
+      "max_idle_polls": 1,
+      "claim_limit": 1,
+      "poll_interval_ms": 100
+    },
+    "loop_result": {
+      "status": "process_canary_exited_cleanly",
+      "result_state": "completed",
+      "exit_reason": "max_jobs reached",
+      "jobs_attempted": 3,
+      "jobs_completed": 3,
+      "jobs_failed": 0,
+      "idle_polls": 0
+    },
+    "fixture": {
+      "type": "collection_normalization synthetic chain",
+      "sql_command": "scripts/rust-worker-canary-fixture.py --fixture collection_normalization --emit-schema-sql --emit-sql --emit-observation-sql --write-sql /tmp/igy6-diff160-canary.sql",
+      "artifact_command": "scripts/rust-worker-canary-fixture.py --fixture collection_normalization --write-artifact --data-root /tmp/igy6-diff160-canary",
+      "postgres": "isolated docker postgres container igy6-diff160-postgres on 127.0.0.1:55437; stopped after observation",
+      "qdrant": "isolated docker qdrant container igy6-diff160-qdrant on 127.0.0.1:16335; stopped after observation"
+    },
+    "observed_work_items": [
+      "diff-152-canary-work-item collection_normalization completed",
+      "work-item-18b270d674236f6e-1 document_chunking completed",
+      "work-item-18b270d674cbd7a1-4 chunk_vector_upsert completed"
+    ],
+    "observed_audit_events": [
+      "rust_worker_canary_fixture.selected",
+      "work_item.claimed for each processed work item",
+      "work_item.started for each processed work item",
+      "work_item.created for chained work items",
+      "collection_normalization.completed",
+      "document_chunks.generated",
+      "chunk_vectors.upserted"
+    ],
+    "observed_postgresql_side_effects": [
+      "one normalized_documents row document-18b270d6741271aa-0",
+      "one chunks row chunk-18b270d674b4bf85-2 with embedding_status completed",
+      "one evidence_items row evidence-18b270d674b4c6f0-3",
+      "chunk metadata includes embedding_method local_hash_v1",
+      "chunk metadata includes vector_collection igy6_diff160_chunks"
+    ],
+    "observed_artifact_side_effects": [
+      "synthetic artifact read under /tmp/igy6-diff160-canary/artifacts"
+    ],
+    "observed_qdrant_side_effects": [
+      "collection igy6_diff160_chunks created",
+      "collection status green",
+      "vector size 384 and Cosine distance",
+      "points_count 1",
+      "point upsert returned HTTP 200",
+      "point scroll returned one point with chunk_id chunk-18b270d674b4bf85-2"
+    ],
+    "docker_compose_changed": false,
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "Rust worker Compose canary service has been added but not yet run end to end through Docker Compose",
+      "side-by-side service-level canary without racing Python/Celery is not yet observed",
+      "Rust worker service health/readiness behavior is not defined",
+      "production rollback from Rust worker ownership to Python/Celery is not proven",
+      "scheduler/beat replacement or retirement is not decided"
+    ],
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
+  },
+  "rust_worker_docker_compose_canary_rollback": {
+    "diff": "DIFF-161",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A non-default Rust worker Docker/Compose canary service was added with isolated profile-scoped PostgreSQL and Qdrant services, bounded flags, and rollback documentation. It does not replace Python/Celery worker or beat.",
+    "dockerfile": "crates/igy6-worker/Dockerfile",
+    "compose_override": "infra/docker-compose.rust-worker-canary.yml",
+    "base_compose_changed": false,
+    "canary_service": "rust-worker-canary",
+    "canary_dependency_services": [
+      "rust-worker-canary-postgres",
+      "rust-worker-canary-qdrant"
+    ],
+    "compose_profile": "rust-worker-canary",
+    "canary_startup_command": "RUST_WORKER_CANARY_DATA_ROOT=/tmp/igy6-diff161-canary RUST_WORKER_CANARY_QDRANT_CHUNK_COLLECTION=igy6_diff161_chunks docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary up --build rust-worker-canary",
+    "rollback_commands": [
+      "docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary stop rust-worker-canary",
+      "docker compose -f infra/docker-compose.yml -f infra/docker-compose.rust-worker-canary.yml --env-file .env.example --profile rust-worker-canary rm -f rust-worker-canary"
+    ],
+    "canary_bounds": {
+      "max_jobs": 3,
+      "max_idle_polls": 1,
+      "claim_limit": 1,
+      "poll_interval_ms": 100
+    },
+    "required_gates": [
+      "explicit docker compose override file",
+      "rust-worker-canary compose profile",
+      "targeted rust-worker-canary service startup",
+      "isolated profile-scoped rust-worker-canary-postgres service",
+      "isolated profile-scoped rust-worker-canary-qdrant service",
+      "RUST_WORKER_CANARY_DATA_ROOT may override the synthetic canary data root; default is /tmp/igy6-rust-worker-canary",
+      "IGY6_WORKER_PROCESS_CANARY=DIFF-159 inside the container"
+    ],
+    "safety_posture": [
+      "default production compose file is unchanged",
+      "normal docker compose startup does not start rust-worker-canary",
+      "canary service depends on isolated canary PostgreSQL and Qdrant services instead of production services",
+      "canary data root is mounted read-only in the Rust worker container",
+      "canary loop remains bounded",
+      "rollback stops and removes only rust-worker-canary"
+    ],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "services_worker_removed": false,
+    "rust_only_repository_or_runtime_claimed": false,
+    "remaining_blockers": [
+      "Compose-level Rust worker canary has service wiring but has not yet been run end to end against synthetic data",
+      "production worker replacement is not performed in this DIFF",
+      "scheduler/beat replacement or retirement is not resolved in this DIFF",
+      "rollback from production Rust worker ownership back to Python/Celery is documented for canary only, not yet proven for production replacement"
+    ],
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
+  },
+  "rust_worker_production_cutover_beat_resolution": {
+    "diff": "DIFF-162",
+    "status": "complete",
+    "decision": "B",
+    "decision_summary": "Production Rust worker replacement is not safe yet. The Rust live loop remains canary-only and intentionally exits after bounded job or idle budgets, so production Docker Compose worker ownership remains Python/Celery.",
+    "production_docker_compose_worker_ownership_changed": false,
+    "compose_files_changed": [],
+    "python_celery_worker_active": true,
+    "python_celery_beat_active": true,
+    "worker_removed": false,
+    "beat_removed": false,
+    "beat_posture": "retained",
+    "beat_schedule_audit": {
+      "repo_defined_schedule_found": false,
+      "evidence": [
+        "archive/legacy-python/services-worker/app/celery_app.py contains no beat_schedule",
+        "repo search found no crontab, periodic_task, on_after_configure, or scheduled Celery registration"
+      ],
+      "retained_reason": "Beat is retained because production worker ownership itself was not replaced in DIFF-162; removing beat would be a partial runtime topology change while Python/Celery remains active."
+    },
+    "rust_worker_blockers": [
+      "current live Rust worker process mode is --canary-loop, not a production daemon mode",
+      "--canary-loop requires IGY6_WORKER_PROCESS_CANARY=DIFF-159",
+      "--canary-loop intentionally exits after max_jobs or max_idle_polls",
+      "max_jobs is bounded to 1 through 16, which is not long-running production worker ownership",
+      "Rust worker Dockerfile defaults to igy6-worker --check",
+      "DIFF-161 Compose override is canary-only and profile-gated; DIFF-162 keeps it config-valid with a safe /tmp synthetic data-root default",
+      "production retry/backoff behavior is not defined",
+      "production worker health/readiness posture is not defined",
+      "production rollback from Rust worker ownership back to Python/Celery is not proven"
+    ],
+    "rollback_posture": "No production worker replacement was performed. Rollback is preserving infra/docker-compose.yml unchanged. Future production cutover rollback must restore services/worker worker and beat definitions and validate Compose before restart.",
+    "rust_only_repository_or_runtime_claimed": false,
+    "next_recommended_diff": "DIFF-164 cut production Docker Compose worker ownership to Rust daemon and resolve beat/scheduler posture"
+  },
+  "production_rust_worker_daemon_mode": {
+    "diff": "DIFF-163",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "A production-capable Rust worker daemon mode was added as an explicit --daemon command. Docker Compose production worker ownership is not changed in this DIFF.",
+    "runtime_mode_added": "--daemon",
+    "runtime_command": "igy6-worker --daemon --claim-limit N --poll-interval-ms MS",
+    "requires_process_canary_env": false,
+    "default_command_safe": true,
+    "default_command": "igy6-worker --check",
+    "daemon_behavior": [
+      "repeated queue polling for supported queued work types",
+      "bounded claim_limit from 1 through 16",
+      "bounded poll_interval_ms from 100 through 60000",
+      "PostgreSQL FOR UPDATE SKIP LOCKED claim path reused from verified canaries",
+      "covered job-family execution path reused from verified canaries",
+      "job-level execution failures mark work items failed and write failure audit events",
+      "idle polling sleeps for poll_interval_ms before the next poll",
+      "fatal PostgreSQL connection or claim errors stop the daemon for supervisor restart"
+    ],
+    "graceful_shutdown": {
+      "method": "shutdown marker under IGY6_DATA_ROOT checked between polls",
+      "default_marker": "worker/control/shutdown",
+      "env_override": "IGY6_WORKER_SHUTDOWN_FILE",
+      "safety": "marker path must be relative and must not contain parent traversal"
+    },
+    "preserved_boundaries": [
+      "DATABASE_URL must be PostgreSQL",
+      "QDRANT_URL must be http(s) without credentials",
+      "IGY6_DATA_ROOT must be non-root and traversal-safe",
+      "artifact reads remain under IGY6_DATA_ROOT",
+      "no arbitrary shell commands",
+      "no user-provided command execution",
+      "no secrets printed"
+    ],
+    "production_docker_compose_worker_ownership_changed": true,
+    "compose_files_changed": [
+      "infra/docker-compose.yml"
+    ],
+    "python_celery_worker_active": false,
+    "python_celery_beat_active": false,
+    "worker_removed": false,
+    "beat_removed": true,
+    "services_worker_removed": false,
+    "beat_posture": "retired from production Compose by DIFF-164 because no repo-defined beat schedule exists",
+    "rollback_posture": "Restore the previous Python/Celery worker and beat service definitions from git and the archived source at archive/legacy-python/services-worker, validate Compose, and restart worker ownership.",
+    "rust_only_repository_or_runtime_claimed": true,
+    "next_recommended_diff": null
+  },
+  "rust_worker_production_compose_cutover": {
+    "diff": "DIFF-164",
+    "status": "complete",
+    "decision": "A",
+    "decision_summary": "Production Docker Compose worker ownership moved from Python/Celery to the Rust worker daemon. The empty Celery beat service was retired because no repo-defined beat schedule exists.",
+    "production_docker_compose_worker_ownership_changed": true,
+    "compose_files_changed": [
+      "infra/docker-compose.yml"
+    ],
+    "worker_service": {
+      "runtime": "rust",
+      "build_context": "..",
+      "dockerfile": "crates/igy6-worker/Dockerfile",
+      "command": "igy6-worker --daemon --claim-limit ${IGY6_WORKER_CLAIM_LIMIT:-4} --poll-interval-ms ${IGY6_WORKER_POLL_INTERVAL_MS:-1000}",
+      "depends_on": [
+        "postgres service_healthy",
+        "qdrant service_healthy"
+      ],
+      "data_root": "/workspace/storage",
+      "shutdown_marker": "${IGY6_WORKER_SHUTDOWN_FILE:-worker/control/shutdown}"
+    },
+    "python_celery_worker_active": false,
+    "python_celery_beat_active": false,
+    "worker_removed": false,
+    "beat_removed": true,
+    "services_worker_removed": false,
+    "beat_posture": "removed from active Compose runtime",
+    "beat_schedule_audit": {
+      "repo_defined_schedule_found": false,
+      "evidence": [
+        "archive/legacy-python/services-worker/app/celery_app.py contains no beat_schedule",
+        "repo search found no crontab, periodic_task, on_after_configure, or scheduled Celery registration"
+      ],
+      "retirement_reason": "No repo-defined scheduled Celery work exists, so there is no scheduler behavior to replace in DIFF-164."
+    },
+    "rollback_posture": "Restore the previous Python/Celery worker and beat service definitions from git and the archived source at archive/legacy-python/services-worker, run docker compose config validation, and restart the stack.",
+    "rust_only_repository_or_runtime_claimed": true,
+    "rust_only_claim_deferred_reason": null,
+    "next_recommended_diff": null
+  },
+  "final_rust_only_runtime_audit": {
+    "diff": "DIFF-165",
+    "status": "complete",
+    "decision": "A",
+    "services_worker_archived": true,
+    "services_worker_archive_path": "archive/legacy-python/services-worker/",
+    "fastapi_fallback_required": false,
+    "python_celery_worker_active": false,
+    "python_celery_beat_active": false,
+    "beat_posture": "retired from active Compose runtime because no repo-defined Celery beat schedule or periodic task registration was found",
+    "active_runtime_python_components": [],
+    "rust_only_application_runtime_claimed": true,
+    "remaining_non_rust_components": [
+      "Next.js web UI",
+      "PostgreSQL",
+      "Redis",
+      "Qdrant",
+      "Neo4j",
+      "MLflow",
+      "Phoenix"
+    ],
+    "runtime_evidence": [
+      "infra/docker-compose.yml builds api from crates/igy6-gateway/Dockerfile",
+      "infra/docker-compose.yml builds worker from crates/igy6-worker/Dockerfile",
+      "infra/docker-compose.yml defines no legacy-api service",
+      "infra/docker-compose.yml defines no Python/Celery worker service",
+      "infra/docker-compose.yml defines no beat service",
+      "infra/docker-compose.rust-worker-canary.yml builds the canary worker from crates/igy6-worker/Dockerfile"
+    ],
+    "rollback_posture": "Legacy Python worker source is preserved at archive/legacy-python/services-worker and in git history. To roll back worker ownership, restore the prior Python/Celery worker and optional beat service definitions, point them at the archived source or restore the historical services/worker path, validate Docker Compose, and restart intentionally."
+  },
+  "post_cutover_hardening_audit": {
+    "diff": "DIFF-166",
+    "status": "complete",
+    "audit_scope": "post-cutover current-runtime docs, manifest, Compose/runtime references, and non-destructive operator checks",
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "active_python_celery_worker_claims_found": false,
+    "active_python_celery_beat_claims_found": false,
+    "archive_python_references_allowed": true,
+    "verification_script": "scripts/post-cutover-runtime-audit.py",
+    "remaining_archived_python_references": [
+      "archive/legacy-python/services-api/",
+      "archive/legacy-python/services-worker/",
+      "historical DIFF docs and chronological migration audit entries",
+      "rollback instructions for intentionally restoring legacy topology"
+    ],
+    "current_runtime_posture": "Rust gateway API and Rust worker daemon are the active application runtime; Next.js web, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix remain expected non-Rust supporting components."
+  },
+  "post_cutover_runtime_smoke_suite": {
+    "diff": "DIFF-168",
+    "status": "complete",
+    "command": "scripts/post-cutover-smoke.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "optional_live_api_probe": {
+      "default_required": false,
+      "require_running_flag": "--require-running",
+      "default_api_url": "http://127.0.0.1:8000"
+    },
+    "verifies": [
+      "manifest JSON and Rust-only application API/worker runtime posture",
+      "post-cutover runtime audit",
+      "Rust/FastAPI route parity guard",
+      "Rust cutover check",
+      "Docker Compose config builds api from crates/igy6-gateway/Dockerfile and worker from crates/igy6-worker/Dockerfile",
+      "Docker Compose config does not define legacy-api, Python/Celery worker, Celery beat, or services/worker references",
+      "Rust worker --help renders",
+      "Rust worker --check reports Python/Celery worker and beat are not required and Rust-only runtime is claimed",
+      "optional live Rust API health and migration-status endpoints when a stack is already running"
+    ],
+    "does_not_verify": [
+      "does not start or stop Docker Compose services",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not mutate .env",
+      "does not touch runtime/private data or IGY6_DATA_ROOT contents",
+      "does not verify product user journeys or UI feature behavior"
+    ]
+  },
+  "fresh_clone_startup_validation": {
+    "diff": "DIFF-169",
+    "status": "complete",
+    "command": "scripts/fresh-clone-startup-check.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "verifies": [
+      "required local tools are available",
+      "fresh-clone required repository files exist",
+      ".env.example supplies every variable required by infra/docker-compose.yml plus key runtime settings",
+      "Docker Compose config validates from .env.example",
+      "post-cutover runtime audit passes",
+      "Rust/FastAPI route parity guard passes",
+      "Rust worker --help renders",
+      "Rust worker --check reports non-mutating Rust-only posture",
+      "post-cutover smoke suite passes"
+    ],
+    "does_not_verify": [
+      "does not mutate .env",
+      "does not create, read, or mutate IGY6_DATA_ROOT",
+      "does not start or stop Docker Compose services",
+      "does not install dependencies, pull images, or clone external repositories",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not verify end-to-end product workflows"
+    ]
+  },
+  "runtime_lifecycle_validation": {
+    "diff": "DIFF-170",
+    "status": "complete",
+    "command": "scripts/runtime-lifecycle-check.sh --check",
+    "default_non_destructive": true,
+    "runtime_ownership_changed": false,
+    "rust_only_application_runtime_claimed": true,
+    "planned_start_command": "docker compose -f infra/docker-compose.yml --env-file .env up --build",
+    "planned_shutdown_command": "docker compose -f infra/docker-compose.yml --env-file .env down",
+    "planned_restart_commands": [
+      "docker compose -f infra/docker-compose.yml --env-file .env down",
+      "docker compose -f infra/docker-compose.yml --env-file .env up --build -d"
+    ],
+    "verifies": [
+      "Docker Compose config validates from .env.example",
+      "base Compose service names are postgres, redis, qdrant, neo4j, mlflow, phoenix, api, worker, and web",
+      "base Compose defines no legacy-api or beat service",
+      "api is built from crates/igy6-gateway/Dockerfile",
+      "worker is built from crates/igy6-worker/Dockerfile and runs igy6-worker --daemon",
+      "startup, shutdown, and restart command shapes are documented",
+      "shutdown command shape does not remove Docker volumes",
+      "rollback posture points to archived legacy worker source and Compose validation"
+    ],
+    "does_not_verify": [
+      "does not mutate .env",
+      "does not create, read, or mutate IGY6_DATA_ROOT",
+      "does not start, stop, or restart Docker Compose services",
+      "does not run the Rust worker daemon",
+      "does not process broad worker queues",
+      "does not verify live service health after restart"
+    ]
+  },
+  "legacy_python_review": {
+    "diff": "DIFF-139",
+    "services_api": {
+      "decision": "archived",
+      "from": "services/api/",
+      "to": "archive/legacy-python/services-api/",
+      "reason": "No active runtime path needs the FastAPI API service after DIFF-138 removed legacy-api fallback wiring and route parity reached zero missing FastAPI routes."
+    },
+    "services_worker": {
+      "decision": "archived",
+      "from": "services/worker/",
+      "to": "archive/legacy-python/services-worker/",
+      "reason": "Base Docker Compose no longer runs Python/Celery worker or beat after DIFF-164; DIFF-165 archives the inactive worker source for rollback/history."
+    },
+    "rust_only_repository_claim_allowed": true
+  },
+  "required_phases": [
+    "host_bridge",
+    "workspace",
+    "cli",
+    "config",
+    "artifact_store",
+    "normalization",
+    "chunking",
+    "vector_memory",
+    "worker",
+    "read_only_api",
+    "agent_api",
+    "retrieval_preview",
+    "evidence_answer",
+    "write_api_batch_1",
+    "work_queue_reports",
+    "rust_gateway",
+    "route_parity"
+  ],
+  "phases": {
+    "host_bridge": {
+      "status": "complete",
+      "diff": "DIFF-086",
+      "crate": "crates/igy6-host-bridge",
+      "verification": [
+        "cargo test --manifest-path crates/igy6-host-bridge/Cargo.toml passed, 7 tests passed",
+        "cargo fmt --manifest-path crates/igy6-host-bridge/Cargo.toml --check passed",
+        "cargo clippy --manifest-path crates/igy6-host-bridge/Cargo.toml --all-targets passed",
+        "git diff --check passed",
+        "bash -n scripts/start-host-bridge.sh passed",
+        "bash -n scripts/stop-host-bridge.sh passed",
+        "scripts/rust-cutover.sh --check passed with expected warnings: no root Cargo.toml yet and cutover_ready false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed"
+      ]
+    },
+    "workspace": {
+      "status": "complete",
+      "diff": "DIFF-087",
+      "verification": [
+        "git status --short checked DIFF-087 scoped files only",
+        "git diff --check passed",
+        "cargo test --workspace passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed"
+      ]
+    },
+    "cli": {
+      "status": "complete",
+      "diff": "DIFF-089",
+      "verification": [
+        "DIFF-088 added the initial CLI foundation with manifest-oriented commands and binary name igy6-cli.",
+        "DIFF-089 corrects DIFF-088 CLI contract drift and provides binary name igy6.",
+        "git status --short checked DIFF-089 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo run -p igy6-cli --bin igy6 -- --help passed",
+        "cargo run -p igy6-cli --bin igy6 -- health passed",
+        "cargo run -p igy6-cli --bin igy6 -- config check passed",
+        "cargo run -p igy6-cli --bin igy6 -- snapshot show passed",
+        "cargo run -p igy6-cli --bin igy6 -- version passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "config": {
+      "status": "complete",
+      "diff": "DIFF-090",
+      "verification": [
+        "DIFF-090 adds Rust repo-visible config validation in crates/igy6-config.",
+        "Python settings/env validation remains active until a later parity DIFF explicitly replaces it.",
+        "git status --short checked DIFF-090 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo run -p igy6-cli --bin igy6 -- config check passed",
+        "cargo run -p igy6-cli --bin igy6 -- health passed",
+        "cargo run -p igy6-cli --bin igy6 -- --help passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "artifact_store": {
+      "status": "complete",
+      "diff": "DIFF-091",
+      "verification": [
+        "DIFF-091 adds Rust content-addressed artifact storage in crates/igy6-artifacts.",
+        "Legacy Python/FastAPI artifact behavior is archived under archive/legacy-python/services-api after DIFF-139; Rust artifact route parity is active.",
+        "git status --short checked DIFF-091 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-artifacts passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "normalization": {
+      "status": "complete",
+      "diff": "DIFF-092",
+      "verification": [
+        "DIFF-092 adds Rust normalization foundation in crates/igy6-normalization.",
+        "Python collector normalization remains active until a later parity DIFF explicitly replaces it.",
+        "git status --short checked DIFF-092 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-normalization passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "chunking": {
+      "status": "complete",
+      "diff": "DIFF-093",
+      "verification": [
+        "DIFF-093 adds Rust deterministic chunking foundation in crates/igy6-chunking.",
+        "Legacy Python API chunk generation is archived after DIFF-139; Python/Celery worker chunk generation remains active until Rust worker execution parity explicitly replaces it.",
+        "git status --short checked DIFF-093 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-chunking passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "vector_memory": {
+      "status": "complete",
+      "diff": "DIFF-094",
+      "verification": [
+        "DIFF-094 adds Rust deterministic vector-memory helpers in crates/igy6-vector-memory.",
+        "Legacy Python API database routes are archived after DIFF-139; Python/Celery worker vector behavior remains active until Rust worker execution parity explicitly replaces it.",
+        "Qdrant request planning is local/client-provided HTTP only and is not executed during verification.",
+        "git status --short checked DIFF-094 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-vector-memory passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "worker": {
+      "status": "complete",
+      "diff": "DIFF-149",
+      "verification": [
+        "DIFF-149 implements an explicit one-job Rust worker live canary executor behind --once --canary-live --canary-work-item ID and IGY6_WORKER_LIVE_CANARY=DIFF-148.",
+        "DIFF-149 implements selected-work-item PostgreSQL claim/status writes, worker audit events, scoped artifact reads, collection_normalization writes, document_chunking writes, chunk_vector_upsert deterministic vectors, and Qdrant collection/point side effects only for the selected canary job.",
+        "DIFF-149 does not enable broad queue polling, long-running worker process ownership, Compose Rust worker wiring, beat replacement, or Rust-only runtime claims.",
+        "DIFF-148 adds an explicit one-job canary gate requiring --once --canary-live --canary-work-item ID. IGY6_WORKER_LIVE_CANARY=DIFF-148 is required before the status reports live_execution_enabled=true.",
+        "DIFF-148 reports structured canary result states and side-effect verification planning for PostgreSQL claim/writes, audit writes, artifact reads, and Qdrant collection/point work.",
+        "DIFF-148 executes no real DB, audit, artifact, or Qdrant side effects; those remain planned-only and Python/Celery remains required for production worker execution.",
+        "DIFF-147 adds the igy6-worker binary with --help, --check, --dry-run, and --once modes. The default mode is safe and non-mutating; live execution is not enabled.",
+        "DIFF-147 validates DATABASE_URL, QDRANT_URL, IGY6_DATA_ROOT, Qdrant collection/vector settings, bounded claim limits, and bounded modeled poll intervals without printing secrets.",
+        "DIFF-147 plans queue polling and one-job claim flow only; it does not connect to PostgreSQL, read artifacts, write audit events, execute Qdrant requests, control Celery, remove worker, remove beat, or claim Rust-only runtime.",
+        "DIFF-145 adds Rust chunk_vector_upsert execution planning and SQL/audit/status/Qdrant request executor contracts matching Python/Celery behavior, including chunk selection, deterministic local vectors, Qdrant request plans, chunk metadata/status updates, completion audit events, and failure handling.",
+        "DIFF-144 adds Rust document_chunking execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including chunks inserts, evidence_items inserts, duplicate document skips, failure handling, completion audit events, and chained chunk_vector_upsert work-item creation.",
+        "DIFF-143 adds Rust collection_normalization execution planning and SQL/audit/status executor contracts matching Python/Celery behavior, including normalized_documents inserts, duplicate skips, failure handling, completion audit events, and chained document_chunking work-item creation.",
+        "DIFF-142 adds a Rust worker queue-claim contract and bounded claim query planning without executing normalization, chunking, vector upsert, database writes, audit writes, artifact reads, Qdrant calls, or Neo4j calls.",
+        "DIFF-141 audits Python/Celery worker and beat usage and recommends migrating worker execution to Rust one job family at a time while retaining Python/Celery until execution parity is complete.",
+        "DIFF-095 adds a Rust worker MVP planning crate in crates/igy6-worker.",
+        "Python/Celery worker and beat remain active until a later cutover DIFF replaces live worker process ownership and decides beat/scheduler posture.",
+        "Rust worker planning composes normalization, chunking, and vector-upsert request planning without live runtime side effects.",
+        "git status --short checked DIFF-095 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-worker passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "read_only_api": {
+      "status": "complete",
+      "diff": "DIFF-096",
+      "verification": [
+        "DIFF-096 adds a Rust read-only API sidecar foundation in crates/igy6-read-only-api.",
+        "The active API gateway is Rust. This read-only sidecar crate remains historical scaffolding; FastAPI API source is archived after DIFF-139.",
+        "Rust sidecar routes are local read-only health and migration-status responses with no database, runtime data, or external service calls.",
+        "git status --short checked DIFF-096 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-read-only-api passed",
+        "cargo run -p igy6-read-only-api -- --help passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "agent_api": {
+      "status": "complete",
+      "diff": "DIFF-097",
+      "verification": [
+        "DIFF-097 adds Rust typed agent command-plane classification in crates/igy6-agent-api.",
+        "Legacy Python/FastAPI agent routes, approvals, audits, and action endpoints are archived after DIFF-139; Rust gateway route parity is active.",
+        "Rust agent API covers the fixed action registry and intent classification only; it performs no actions.",
+        "git status --short checked DIFF-097 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-agent-api passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "retrieval_preview": {
+      "status": "complete",
+      "diff": "DIFF-098",
+      "verification": [
+        "DIFF-098 adds Rust in-memory retrieval-preview planning in crates/igy6-retrieval-preview.",
+        "Legacy Python/FastAPI DB hydration, Qdrant search, and retrieval routes are archived after DIFF-139; Rust gateway route parity is active.",
+        "Rust preview preserves answer_status not_generated and performs no database, Qdrant, graph, or external model calls.",
+        "git status --short checked DIFF-098 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-retrieval-preview passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "evidence_answer": {
+      "status": "complete",
+      "diff": "DIFF-099",
+      "verification": [
+        "DIFF-099 adds Rust deterministic evidence-answer packet construction in crates/igy6-evidence-answer.",
+        "Legacy Python/FastAPI chat routes are archived after DIFF-139; Rust gateway route parity is active.",
+        "Rust evidence answer operates on caller-provided hydrated retrieval context only and performs no external model calls.",
+        "git status --short checked DIFF-099 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-evidence-answer passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "write_api_batch_1": {
+      "status": "complete",
+      "diff": "DIFF-100",
+      "crate": "crates/igy6-write-api",
+      "verification": [
+        "DIFF-100 adds Rust write API batch 1 contract planning in crates/igy6-write-api.",
+        "Legacy Python/FastAPI sources, approvals, audit, feedback, and outcomes routes are archived after DIFF-139; Rust gateway route parity is active.",
+        "Rust write API batch 1 validates contracts and builds deterministic audit/side-effect plans without database writes, runtime/private data access, or external service calls.",
+        "git status --short checked DIFF-100 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-write-api passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "work_queue_reports": {
+      "status": "complete",
+      "diff": "DIFF-101",
+      "crate": "crates/igy6-work-queue-reports",
+      "verification": [
+        "DIFF-101 adds Rust work queue and report contract planning in crates/igy6-work-queue-reports.",
+        "Legacy Python/FastAPI work-item and report routes are archived after DIFF-139; Python/Celery worker execution remains active until Rust worker execution parity explicitly replaces it.",
+        "Rust work queue reports validates contracts and builds deterministic dispatch/report/audit plans without database writes, runtime/private data access, Celery execution, artifact writes, or external service calls.",
+        "git status --short checked DIFF-101 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-work-queue-reports passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed"
+      ]
+    },
+    "rust_gateway": {
+      "status": "complete",
+      "diff": "DIFF-102",
+      "crate": "crates/igy6-gateway",
+      "verification": [
+        "DIFF-102 adds a Rust primary gateway in crates/igy6-gateway and kept FastAPI as legacy-api fallback until DIFF-138.",
+        "The Rust gateway uses std-only HTTP handling because Axum/Tokio are not established workspace dependencies.",
+        "DIFF-138 updates Compose so the Rust gateway is the API service without legacy-api fallback wiring.",
+        "git status --short checked DIFF-102 scoped files only",
+        "git diff --check passed",
+        "cargo fmt --all --check passed",
+        "cargo clippy --workspace --all-targets passed",
+        "cargo test --workspace passed",
+        "cargo test -p igy6-gateway passed",
+        "scripts/rust-cutover.sh --check passed with expected warning that cutover_ready is false before manifest completion",
+        "python3 -m json.tool configs/rust-cutover-manifest.json passed",
+        "snippet-vault JSONL parse validation passed",
+        "npm --prefix apps/web run build passed",
+        "docker compose -f infra/docker-compose.yml --env-file .env.example config passed"
+      ]
+    },
+    "route_parity": {
+      "status": "complete",
+      "diff": "DIFF-140",
+      "verification": [
+        "DIFF-140 records the final Rust API cutover audit: active API runtime path is Rust-native, FastAPI fallback is removed, services/api is archived, route parity is complete, and Python/Celery worker and beat remain active.",
+        "FastAPI route parity guard reads the archived FastAPI source at archive/legacy-python/services-api/app and found 90 APIRouter routes plus root route.",
+        "Rust gateway route inventory found 94 Rust-native routes after DIFF-137.",
+        "apps/web route inventory found 45 web-used routes and 0 active routes requiring FastAPI fallback after DIFF-133.",
+        "DIFF-137 classifies 0 FastAPI routes still missing from Rust in configs/legacy-fastapi-route-classification.json.",
+        "DIFF-120 explicitly tracks the 4 dynamic web control routes in scripts/rust-route-parity.py and serves them Rust-native.",
+        "DIFF-138 sets fastapi_fallback_required false after parity reaches 0 missing FastAPI routes and 0 web routes requiring fallback.",
+        "DIFF-106 migrates read-only DB-backed sources, approvals, evidence documents/items/chunks/claims, reports, and work-items route reads into the Rust gateway.",
+        "DIFF-107 migrates read-only DB-backed audit events, artifacts, collection runs, feedback, outcomes, and analysis pattern/hypothesis/prediction/recommendation reads into the Rust gateway.",
+        "DIFF-108 migrates read-only settings/env metadata, vector status, and graph status routes into the Rust gateway without reading .env contents or mutating external services.",
+        "DIFF-109 migrates DB-backed approval request creation with audit event insertion into the Rust gateway.",
+        "DIFF-110 migrates DB-backed feedback and outcome write routes with audit event insertion and deterministic validation into the Rust gateway.",
+        "DIFF-111 migrates DB-backed source creation with optional initial permission insertion and source.created audit event insertion into the Rust gateway.",
+        "DIFF-112 migrates DB-backed report creation with report.created audit event insertion into the Rust gateway.",
+        "DIFF-113 migrates DB-backed analysis pattern creation and baseline pattern detection with analysis.pattern.created audit event insertion into the Rust gateway.",
+        "DIFF-114 migrates DB-backed collection dry-run preview creation with source/permission validation, scaffold connector preview parity, collection_run.created audit event insertion, and collection_run.dry_run_preview audit event insertion into the Rust gateway.",
+        "DIFF-115 migrates settings env verify/apply with allowlisted validation, secret redaction, candidate hash token compatibility, safe .env backup/write constraints, and settings.env.updated audit event insertion into the Rust gateway.",
+        "DIFF-116 migrates DB-backed work-item creation with intent verification context validation, deterministic pending_intent_verification status, and work_item.created audit event insertion into the Rust gateway without dispatching work.",
+        "DIFF-117 migrates DB-backed manual upload collection creation with source permission checks, approval checks, bounded content-addressed artifact storage, collection_run.created, raw_artifact.created, and work_item.created audit insertion into the Rust gateway without synchronous ingestion, dispatch, or agent execution.",
+        "DIFF-118 migrates web-used agent action request and execute routes with the fixed action allowlist, approval checks for system-changing actions, audit insertion, bounded redaction, and local-only host bridge execution for script-backed actions without accepting user-provided argv or arbitrary commands.",
+        "DIFF-120 migrates dynamically referenced web controls for pattern review, approval decision, report render, and work-item dispatch into the Rust gateway; work-item dispatch records a bounded non-executing dispatch marker instead of invoking Celery from HTTP.",
+        "DIFF-132 migrates the 11 active medium-risk fallback routes for analysis creation, evidence document/chunk/item writes, source permission creation, report/work-item status transitions, and retrieval trail/search into the Rust gateway; at that point FastAPI fallback was still retained until later route buckets completed.",
+        "DIFF-133 migrates graph/vector memory route parity for Neo4j relationship reads, schema ensure, lineage sync, and Qdrant collection ensure/search/upsert using bounded Rust service calls; at that point FastAPI fallback was still retained until later route buckets completed.",
+        "DIFF-134 migrates POST /reports/{report_id}/work-item to Rust-native DB-backed report_generation work-item creation with bounded scaffold-only payload and work_item.created audit insertion, without Celery dispatch.",
+        "DIFF-135 migrates artifact and collection ingestion route parity for POST /artifacts, POST /collection-runs, POST /collection-runs/local-project, and POST /collection-runs/manual-upload/ingest with bounded artifact storage, permission/approval checks, and audit events; at that point FastAPI fallback was still retained until later route buckets completed.",
+        "DIFF-136 migrates experiments and improvements route parity for GET/POST experiment metadata and GET/POST improvement metadata routes with DB-backed reads, writes, status updates, validation, and audit events; at that point FastAPI fallback was still retained until DIFF-137 root-route resolution and DIFF-138 removal.",
+        "DIFF-137 migrates the duplicate FastAPI GET / scaffold root to a Rust-native gateway identity response.",
+        "DIFF-138 removes legacy-api fallback wiring from infra/docker-compose.yml and unsupported Rust gateway routes now return deterministic Rust 404 responses.",
+        "DIFF-139 archives the tracked legacy FastAPI API tree from services/api to archive/legacy-python/services-api because no active runtime path needs it.",
+        "DIFF-139 preserves services/worker because Docker Compose still runs Python/Celery worker and beat services from that directory.",
+        "scripts/rust-cutover.sh validates governance cutover readiness but does not validate full route parity.",
+        "docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md records the parity matrix and follow-up DIFF plan.",
+        "DIFF-105 adds scripts/rust-route-parity.py and runs it from scripts/rust-cutover.sh --check.",
+        "DIFF-106 updates scripts/rust-route-parity.py to count the Rust gateway route registry without counting test fixtures."
+      ]
+    },
+    "local_llm_provider_plan": {
+      "status": "partial",
+      "diff": "DIFF-130",
+      "verification": [
+        "DIFF-126 documents optional local LLM provider requirements in docs/llm/LOCAL_LLM_PROVIDER_PLAN.md.",
+        "DIFF-126 adds safe disabled-by-default local LLM keys to .env.example.",
+        "DIFF-127 adds the Rust igy6-llm crate with disabled-provider handling and a local-Ollama-only adapter tested with fake transports.",
+        "DIFF-128 wires optional local LLM generation into evidence answer generation behind evidence-required checks and deterministic fallback.",
+        "DIFF-129 adds user-facing Assistant and Settings status for local LLM provider config, answer mode, examples, and Advanced diagnostics without exposing secrets.",
+        "DIFF-130 adds configs/local-llm-routing.json for task-based local Ollama model routing plus scripts/ollama-local-setup.sh for check-only-by-default local setup.",
+        "DIFF-131 connects the local LLM routing config to Rust evidence-answer generation so requested task names select route-specific model, system instruction, temperature, and evidence-required behavior.",
+        "LLM_PROVIDER=none means no model calls.",
+        "No automatic Ollama install, automatic model pull, real Ollama call during tests, external model call, LLM action execution, broad retrieval rewrite, or Rust-only claim is added by DIFF-130 or DIFF-131.",
+        "Local LLM answers must remain evidence-grounded, timeout-bound, and citation-oriented, with deterministic evidence fallback and insufficient-evidence behavior when evidence is absent."
+      ]
+    }
+  },
+  "archive_plan": {
+    "move": [],
+    "keep": [
+      {
+        "path": "docs/diffs/",
+        "reason": "DIFF governance remains active after cutover"
+      },
+      {
+        "path": "configs/rust-cutover-manifest.json",
+        "reason": "manifest remains the cutover audit record"
+      },
+      {
+        "path": "infra/docker-compose.yml",
+        "reason": "active local deployment config with Rust api and Rust worker daemon services"
+      },
+      {
+        "path": "archive/legacy-python/services-api/",
+        "reason": "archived legacy FastAPI API source retained for route parity history, migration archaeology, and rollback analysis; not an active runtime service"
+      },
+      {
+        "path": "archive/legacy-python/services-worker/",
+        "reason": "archived legacy Python/Celery worker source retained for rollback history; not an active runtime service"
+      },
+      {
+        "path": "docs/rust-migration/RUST_CUTOVER_ROLLBACK.md",
+        "reason": "rollback expectations remain active documentation"
+      }
+    ],
+    "rewrite": [],
+    "create_if_missing": []
+  }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "igy6-policy"
+version = "0.1.0"
+edition = "2021"
+description = "IGY6 Rust approval and safety policy primitives"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+igy6-core = { path = "../igy6-core" }

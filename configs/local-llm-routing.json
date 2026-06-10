@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "provider": "ollama",
+  "default_provider": "none",
+  "hardware_target": "local PC with NVIDIA RTX 3060 12GB VRAM",
+  "default_models": [
+    "qwen2.5-coder:7b",
+    "llama3.1:8b",
+    "gemma3:4b"
+  ],
+  "optional_models": [
+    "gemma3:12b"
+  ],
+  "blocked_default_models": [
+    "qwen2.5-coder:32b",
+    "llama3.1:70b",
+    "llama3.1:405b",
+    "gemma3:27b"
+  ],
+  "tasks": [
+    {
+      "task_name": "code_repo",
+      "model": "qwen2.5-coder:7b",
+      "purpose": "code, logs, stack traces, DIFF prompts, repo summaries, route parity, scripts",
+      "system_instruction": "You are IGY6 local code assistant. Use only provided repo context and retrieved evidence. Be precise, cite files/routes when available, do not invent repo state, do not suggest unsafe commands, and preserve DIFF governance.",
+      "temperature": 0.2,
+      "evidence_required": true,
+      "max_context_note": "Use bounded repo snippets, route lists, logs, and retrieved evidence. Do not include broad private runtime data."
+    },
+    {
+      "task_name": "evidence_summary",
+      "model": "llama3.1:8b",
+      "purpose": "summarize uploaded notes, warranty text, bills, router notes, general evidence records",
+      "system_instruction": "You are IGY6 evidence summarizer. Answer only from retrieved evidence. Include uncertainty and missing information. Do not invent facts. If evidence is insufficient, say insufficient evidence.",
+      "temperature": 0.2,
+      "evidence_required": true,
+      "max_context_note": "Use retrieved evidence packets with citations/source trails only."
+    },
+    {
+      "task_name": "fast_triage",
+      "model": "gemma3:4b",
+      "purpose": "quick classification, short summaries, first-pass issue triage, UI helper explanations",
+      "system_instruction": "You are IGY6 fast local triage. Give concise, evidence-grounded output. Prefer short actionable summaries. Do not make external calls. Do not execute actions.",
+      "temperature": 0.1,
+      "evidence_required": true,
+      "max_context_note": "Use the smallest sufficient evidence packet for quick classification or explanation."
+    },
+    {
+      "task_name": "report_draft",
+      "model": "llama3.1:8b",
+      "optional_model": "gemma3:12b",
+      "purpose": "longer evidence-grounded reports and migration summaries",
+      "system_instruction": "You are IGY6 report drafter. Produce structured reports from retrieved evidence only. Preserve citations/source trails. Separate facts, assumptions, uncertainty, and next actions.",
+      "temperature": 0.2,
+      "evidence_required": true,
+      "max_context_note": "Use bounded report evidence with citation handles. Use gemma3:12b only if installed and explicitly selected."
+    },
+    {
+      "task_name": "action_explanation",
+      "model": "gemma3:4b",
+      "purpose": "explain approval-required actions, safety reasons, audit summaries",
+      "system_instruction": "You are IGY6 safety explainer. Explain what an action would do, why approval may be required, and what audit records should exist. Do not approve, execute, or bypass policy.",
+      "temperature": 0.1,
+      "evidence_required": true,
+      "max_context_note": "Use action metadata, approval state, policy status, and audit records only."
+    },
+    {
+      "task_name": "chat_default",
+      "model": "llama3.1:8b",
+      "purpose": "default Assistant evidence-grounded chat when task cannot be classified as code-specific",
+      "system_instruction": "You are IGY6 Assistant. Use retrieved evidence only. If the answer is not supported, say insufficient evidence. Do not execute actions. Do not reveal secrets. Keep local-first behavior.",
+      "temperature": 0.2,
+      "evidence_required": true,
+      "max_context_note": "Use retrieved evidence packets and source trails; do not include raw private runtime data beyond the budget."
+    }
+  ]
+}

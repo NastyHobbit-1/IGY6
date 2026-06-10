@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/igy6-core",
+    "crates/igy6-config",
+    "crates/igy6-policy",
+    "crates/igy6-host-bridge",
+    "crates/igy6-cli",
+    "crates/igy6-artifacts",
+    "crates/igy6-normalization",
+    "crates/igy6-chunking",
+    "crates/igy6-vector-memory",
+    "crates/igy6-worker",
+    "crates/igy6-read-only-api",
+    "crates/igy6-agent-api",
+    "crates/igy6-retrieval-preview",
+    "crates/igy6-evidence-answer",
+    "crates/igy6-llm",
+    "crates/igy6-write-api",
+    "crates/igy6-work-queue-reports",
+    "crates/igy6-gateway",
+]
+resolver = "2"

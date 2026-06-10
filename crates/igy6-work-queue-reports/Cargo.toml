@@ -1,0 +1,7 @@
+[package]
+name = "igy6-work-queue-reports"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+igy6-write-api = { path = "../igy6-write-api" }
