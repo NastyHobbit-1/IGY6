@@ -1,42 +1,25 @@
 # IGY6 Web UI
 
-The IGY6 Web UI is the primary user interface for the local evidence and intelligence workspace. It provides an intuitive dashboard for data ingestion, analysis, and evidence-grounded decision support.
+The web UI is the primary user interface for the local evidence and intelligence workspace.
 
-## Accessing the Web UI
+## Accessing the UI
+Open your browser to http://127.0.0.1:13000 after starting the stack.
 
-Once the stack is running, open your browser and navigate to:
+## API Connection
+The UI connects to the Rust gateway/API service at http://127.0.0.1:18000 by default.
 
-http://127.0.0.1:13000
+## Visible Tabs and Areas
+- Chat: Evidence-grounded questions and retrieval.
+- Data: Add authorized information and sources.
+- Work: Processing status.
+- Settings: Approvals and configuration.
+- Advanced/More: Diagnostics.
 
-## Connection to Backend
-
-The web UI communicates with the Rust gateway/API service running at http://127.0.0.1:18000 (configurable via APP_PORT in .env).
-
-## Main UI Areas
-
-The interface includes tabs such as:
-- Home
-- Add Data
-- Work
-- Results
-- Settings
-- Advanced
-
-## Adding Authorized Information
-
-Use the Add Data section to securely ingest authorized documents, artifacts, and data sources. All processing remains local.
-
-## Evidence-Grounded Chat and Retrieval
-
-Interact with your ingested evidence through natural language queries. The system performs retrieval from vector and graph stores to deliver grounded responses.
-
-## Provenance and Evidence Trail
-
-Responses include detailed provenance information linking back to source artifacts, documents, and processing steps for full traceability and verification.
+## Workflow Highlights
+Authorized information is added through the Data tab. Evidence is reviewed with full provenance trails. Chat provides grounded responses.
 
 ## Troubleshooting
-
-- **Web container still starting**: Wait a few moments for the Next.js application to fully initialize.
-- **API unreachable**: Verify the Rust gateway is running and check the health endpoints.
-- **Missing .env or .env.test**: Copy `.env.example` to `.env` or `.env.test` and configure IGY6_DATA_ROOT.
-- **Docker container unhealthy**: Use `docker compose ps` to check status.
+- Web container starting: Wait for Docker Compose to complete.
+- API unreachable: Check health endpoints and Docker logs.
+- Missing .env: Copy from .env.example and set IGY6_DATA_ROOT.
+- Unhealthy container: Use docker compose ps and restart.
