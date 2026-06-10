@@ -1,6 +1,6 @@
-# IGY6 Web UI Guide (grok branch)
+# IGY6 Web UI Guide (IGY6)
 
-This guide explains the web interface in plain language for the running program on the grok branch.
+This guide explains the web interface in plain language for the running program on the IGY6.
 
 The program is password protected (default "ThatDog123"). Optional TOTP authenticator support is off by default until you link it in the User & Security section (works with any standard authenticator app). All data stays local only. The UI automatically uses a clear free local URL (dynamic port switching with clear printed address if the preferred port is busy).
 
@@ -19,16 +19,21 @@ Evidence Workspace**.
 
 Stop with `igy6 stop` or the matching stop/restart scripts.
 
-## Main Areas (DIFF-256 product shell)
+## Main Areas (DIFF-257 product shell)
 
-The default UI uses six clear sections:
+The default UI uses seven clear sections with **Simple mode** as the default (toggle Simple / Full in the sidebar; persisted in browser storage):
 
 - **Command Center** — central chat, quick actions, runtime snapshot, recent activity.
 - **Add Information** — one flow for text, websites, and local folders (supported routes only).
-- **Evidence** — readable evidence cards; technical IDs under expandable details.
-- **Activity** — processing, collections, approvals, and pipeline status in plain language.
-- **System** — service health with honest Running / Needs attention / Not configured labels.
-- **Settings** — ports, storage, local model, restart stack, user security; raw env JSON only in Advanced.
+- **Evidence** — standardized overflow-safe cards with a content-type badge at the top; technical IDs under Details (Full mode).
+- **Images** — dedicated gallery with search, sort, and filter; thumbnails with placeholders when preview is unavailable.
+- **Activity** — processing, collections, approvals, and actionable failed-work retry in plain language.
+- **System** — service health; search shows **Search is ready** / **Search is being prepared** / **Search needs attention** (auto-prepare on load when possible).
+- **Settings** — ports, storage, local model, restart stack, user security; raw env JSON only in Full mode Advanced.
+
+Click **items need attention** in the sidebar to see traceable causes and real next actions (approvals, failed work retry, search repair).
+
+See `docs/ui/UI_PLATFORM_RECOMMENDATION.md` for platform guidance (Next.js stays).
 
 Legacy `HomePage.tsx` remains in the repo for reference but is no longer the page entrypoint.
 
@@ -36,7 +41,7 @@ Use the collector for aggressive local/web/system collection (password + optiona
 
 Dynamic URL: the program always picks a free port if needed and tells you the exact address — just use what it prints.
 
-All other docs have been aligned to this program-only operating view for the grok branch.
+All other docs have been aligned to this program-only operating view for the IGY6.
 
 ## Home
 
@@ -134,8 +139,8 @@ Sources:
   must satisfy before becoming active product paths: scope validation, dry-run
   preview, bounded collection, normalization, sensitivity classification, safe
   metadata, cleanup posture, and audit.
-- Connector status in the UI reflects the verified table from DIFF-249: manual text paths (manual_upload, conversation_history, user_observation) are implemented; browser_export/web_public/router_network/local_pc_diagnostics/media_import have real full-access + host-bridge support on the `grok` branch (crawl, Deep Fetch / Session Fetch, binary media collection, WiFi/system snapshots) with host-bridge/approval/scope requirements. Some guided panels remain more paste/preview oriented.
-- The contract view is a source policy + status view. Actual deep collection for supported types on grok uses the full-access routes + host bridge (see constants.ts and gateway full-access implementation). It does not perform silent external account scraping.
+- Connector status in the UI reflects the verified table from DIFF-249: manual text paths (manual_upload, conversation_history, user_observation) are implemented; browser_export/web_public/router_network/local_pc_diagnostics/media_import have real full-access + host-bridge support in IGY6 (crawl, Deep Fetch / Session Fetch, binary media collection, WiFi/system snapshots) with host-bridge/approval/scope requirements. Some guided panels remain more paste/preview oriented.
+- The contract view is a source policy + status view. Actual deep collection for supported types in IGY6 uses the full-access routes + host bridge (see constants.ts and gateway full-access implementation). It does not perform silent external account scraping.
 
 Guided Upload:
 
@@ -186,30 +191,30 @@ User Observation Ingestion:
 - Related IDs or labels are stored as plain text in this MVP; they are not
   validated links unless a later DIFF adds that behavior.
 
-Browser / Web / Router Import (grok full-access paths):
+Browser / Web / Router Import (IGY6 full-access paths):
 
-- On the `grok` branch, "Deep Fetch", "Public Fetch", "Session Fetch", and "Fetch public" panels (and Advanced full-access) call the real `/collection-runs/full-access` Rust endpoint (with web_only, auto_bypass, max_reach, bypass_auth flags) + host bridge / Playwright for live URL crawling, authorized Session Fetch, and content capture.
+- In IGY6, "Deep Fetch", "Public Fetch", "Session Fetch", and "Fetch public" panels (and Advanced full-access) call the real `/collection-runs/full-access` Rust endpoint (with web_only, auto_bypass, max_reach, bypass_auth flags) + host bridge / Playwright for live URL crawling, authorized Session Fetch, and content capture.
 - Guided "paste" surfaces accept user-provided browser export text, page text, or router status text and treat them as manual_upload / reviewed extract.
 - Dry-run / preview panels summarize scope/exclusions/sensitivity before real collection.
 - Full paths can crawl, fetch full-res media from sources using Deep Fetch / Public Fetch / Session Fetch, and store artifacts + evidence with provenance.
 - Requirements and limits (honest): host bridge often needed for advanced tiers; approval may be required; user must supply their own session header (Cookie or Authorization) for Session Fetch (no silent account scraping or credential harvesting); treat all fetched content as sensitive until reviewed; no router writes or credential capture.
 - See constants.ts SOURCE_CONNECTOR_STATUS (browser_export, web_public, router_network) and the full-access implementation in crates/igy6-gateway.
 
-PDF / Image / Audio / Video Import (grok foundation + deep scan):
+PDF / Image / Audio / Video Import (IGY6 foundation + deep scan):
 
 - Guided media panel: metadata + size/type + optional user-provided extracted text/transcript (paste path). Does not run OCR/transcription in the panel itself.
-- On `grok` branch, "Deep scan" / full-access collection (via /collection-runs/full-access with media support) performs real binary media collection + storage as artifacts. igy6-artifacts performs deep PDF text extraction on supported paths; images/videos are stored with original bytes for the Media Library full-res viewer.
+- In IGY6, "Deep scan" / full-access collection (via /collection-runs/full-access with media support) performs real binary media collection + storage as artifacts. igy6-artifacts performs deep PDF text extraction on supported paths; images/videos are stored with original bytes for the Media Library full-res viewer.
 - Kind detection (image/pdf/audio/video/binary) and content-addressed storage are real.
 - Automatic OCR/vision description/audio transcription in all guided flows remains partial (user can provide reviewed text; full automated extraction may require later DIFF + verification).
 - Media Library shows and serves original collected media.
 - All paths remain local-only, approval-aware where configured, and sensitive-by-default. See constants.ts MEDIA_IMPORT_TYPES and artifacts extraction logic.
 
-Local Project / PC Diagnostics (grok bounded + full-access):
+Local Project / PC Diagnostics (IGY6 bounded + full-access):
 
 - Guided panel provides scoped dry-run/preview for explicit container-visible paths or authorized diagnostics exports (paste or selected label).
-- On the `grok` branch, full-access / local_project collection supports bounded directory reads and system snapshot commands (ps, nmcli/iwlist for WiFi/signals, etc.) when the source/permission allows.
+- In IGY6, full-access / local_project collection supports bounded directory reads and system snapshot commands (ps, nmcli/iwlist for WiFi/signals, etc.) when the source/permission allows.
 - No arbitrary crawl outside explicit scope; binary/secret content must be excluded or fail.
-- WiFi / local PC diagnostics via full-access system commands are implemented on grok (see gateway lib.rs comments on full-access mode).
+- WiFi / local PC diagnostics via full-access system commands are implemented in IGY6 (see gateway lib.rs comments on full-access mode).
 - See constants.ts (local_project and local_pc_diagnostics marked partial/implemented with bounds) and full-access implementation. All collection is local, auditable, and approval-aware where configured.
 
 ### Buttons And Actions
@@ -302,7 +307,7 @@ User observation flow:
 
 ### What Not To Use Add Data For
 
-Do not assume every source type has identical depth. On `grok`, full-access Deep scan supports binary media collection + PDF text extraction + full-res viewing in the Media Library. Guided media panels are primarily metadata + reviewed-extracted-text paste (partial for automatic OCR/transcription). See the verified table in DIFF-249 and constants.ts for exact status per type. Convert untrusted binary to reviewed text when using guided paste paths if you want immediate evidence creation.
+Do not assume every source type has identical depth. In IGY6, full-access Deep scan supports binary media collection + PDF text extraction + full-res viewing in the Media Library. Guided media panels are primarily metadata + reviewed-extracted-text paste (partial for automatic OCR/transcription). See the verified table in DIFF-249 and constants.ts for exact status per type. Convert untrusted binary to reviewed text when using guided paste paths if you want immediate evidence creation.
 
 ## Work
 
@@ -910,7 +915,7 @@ operator docs or scripts.
 ## Current Limitations (aligned to DIFF-249 verified table)
 
 - Core manual UTF-8 text paths (manual_upload, conversation_history, user_observation) are the most mature implemented flows.
-- On the `grok` branch, web/public URL, browser export, authorized Session Fetch, media binary, and system/WiFi collection are implemented via full-access + host bridge (crawl, full-res media artifacts, Media Library viewing, system snapshots). See constants.ts and gateway full-access code.
+- In IGY6, web/public URL, browser export, authorized Session Fetch, media binary, and system/WiFi collection are implemented via full-access + host bridge (crawl, full-res media artifacts, Media Library viewing, system snapshots). See constants.ts and gateway full-access code.
 - Guided "paste/preview" panels for media/browser/router are often partial (metadata + user-provided extracted text) or status entries; the "Deep Fetch" / full-access buttons deliver the deeper implemented paths.
 - Automatic OCR / vision / audio transcription in guided panels is partial; full extraction is available on some deep paths and via provided text + library.
 - Host bridge is a dependency for the most aggressive web tiers (Deep Fetch, advanced Session Fetch, Playwright).

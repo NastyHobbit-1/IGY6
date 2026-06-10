@@ -1,6 +1,6 @@
 # DIFF-256: Polished Professional UI Redesign
 
-Status: Active
+Status: Complete (superseded by DIFF-257 for polish gaps)
 
 ## Type
 

@@ -74,6 +74,7 @@ includesAll("product navigation", corpus, [
   "Command Center",
   "Add Information",
   "Evidence",
+  "Images",
   "Activity",
   "System",
   "Settings",
@@ -130,9 +131,13 @@ for (const route of requiredApiRoutes) {
   check(`api route file: ${route}`, existsSync(join(apiDir, route)));
 }
 
-includesAll("evidence and activity sections", corpus, [
+includesAll("evidence gallery and activity sections", corpus, [
   'id="evidence-panel"',
   "productEvidenceCard",
+  "productTypeBadge",
+  'id="image-gallery"',
+  "data-image-gallery",
+  "data-gallery-sort",
   'id="work-processing"',
   "productActivityCard",
   "PipelineOperationsPanel",
@@ -154,6 +159,18 @@ includesAll("plain language policy", corpus, [
   "What IGY6 found",
   "Ask IGY6",
   "Bring information into IGY6",
+  "Search is ready",
+  "Search is being prepared",
+]);
+
+includesAll("simple and full mode", corpus, [
+  "data-ui-mode",
+  "igy6-ui-mode",
+  "productModeToggle",
+  "AttentionPanel",
+  "buildAttentionItems",
+  "EvidenceCard",
+  "ImageGallery",
 ]);
 
 includesAll("legacy tab sync for chat navigation", corpus, [
@@ -184,6 +201,10 @@ includesAll("supporting styles", styles, [
   ".unifiedChatHub",
   ".chatComposer",
   ".chatQuickChips",
+  ".uiOverflowSafe",
+  ".uiClampTitle",
+  ".productGalleryGrid",
+  ".productModeToggle",
 ]);
 
 includesAll("safety posture", corpus, [

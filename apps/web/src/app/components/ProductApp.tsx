@@ -31,11 +31,17 @@ import {
   plainHealthStatus,
   plainServiceName,
   summarizeRuntime,
+  visibleHealthChecks,
+  dedupeHealthChecksByLabel,
+  searchIndexStatus,
   workActivityLabel,
   workStatusPlain,
-  evidenceCardTitle,
-  evidenceWhyItMatters,
 } from "./product/helpers";
+import { buildEvidenceCardModel } from "./product/evidence-display";
+import { buildAttentionItems } from "./product/attention";
+import { EvidenceCard } from "./product/EvidenceCard";
+import { ImageGallery, buildGalleryImageItems } from "./product/ImageGallery";
+import { AttentionPanel } from "./product/AttentionPanel";
 import { EmptyState } from "./ui/EmptyState";
 import { StatusPill } from "./ui/StatusPill";
 
@@ -80,26 +86,51 @@ export async function ProductApp() {
     }),
   ]);
 
-  const checks = health.data.checks ?? {};
+  const serviceChecks = dedupeHealthChecksByLabel(visibleHealthChecks(health.data.checks ?? {}));
+  const searchIndex = searchIndexStatus(vectorCollection.data);
   const pendingApprovals = approvals.data.filter((a) => a.status === "pending");
   const activeWork = workItems.data.filter((w) => ["queued", "running", "pending_intent_verification"].includes(w.status));
   const failedWork = workItems.data.filter((w) => w.status === "failed");
-  const recentEvidence = evidenceItems.data.slice(0, 12);
+  const recentEvidence = evidenceItems.data.slice(0, 24);
   const recentWork = workItems.data.slice(0, 10);
   const recentRuns = collectionRuns.data.slice(0, 6);
   const recentAudit = auditEvents.data.slice(0, 5);
   const sourceById = new Map(sources.data.map((s) => [s.id, s]));
+  const artifactById = new Map(artifacts.data.map((a) => [a.id, a]));
+  const artifactByDocumentId = new Map<string, RawArtifactRecord>();
+  for (const doc of documents.data) {
+    if (doc.raw_artifact_id) {
+      const artifact = artifactById.get(doc.raw_artifact_id);
+      if (artifact) artifactByDocumentId.set(doc.id, artifact);
+    }
+  }
   const llmEnabled = (settingValue(envSettings.data, "LLM_PROVIDER", "none") || "none") === "ollama";
   const llmModel = settingValue(envSettings.data, "OLLAMA_MODEL", "") || "not selected";
   const runtimeSummary = summarizeRuntime(health.data);
-  const attentionCount = pendingApprovals.length + failedWork.length + (vectorCollection.data.exists ? 0 : 1);
+  const searchReachable = Boolean(vectorCollection.data.detail?.tcp_reachable);
+  const attentionItems = buildAttentionItems({
+    pendingApprovals,
+    failedWork,
+    searchIndexState: searchIndex.state,
+    searchHint: searchReachable
+      ? "Search memory is still being prepared automatically."
+      : "Search memory is not reachable. Check that supporting services are running.",
+  });
+  const galleryItems = buildGalleryImageItems(artifacts.data, sourceById);
 
   const workItemsResult: ApiResult<WorkItemRecord[]> = workItems;
   const collectionRunsResult: ApiResult<CollectionRunRecord[]> = collectionRuns;
   const vectorResult: ApiResult<VectorCollectionStatus> = vectorCollection;
+  const artifactsResult: ApiResult<RawArtifactRecord[]> = artifacts;
 
   return (
-    <div className="igy6-app" data-product-app>
+    <div
+      className="igy6-app"
+      data-product-app
+      data-ui-mode="simple"
+      data-search-state={searchIndex.state}
+      data-search-reachable={searchReachable ? "true" : "false"}
+    >
       <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" defaultChecked hidden />
       <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" hidden />
       <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" hidden />
@@ -115,6 +146,16 @@ export async function ProductApp() {
             <span>Local evidence workspace</span>
           </div>
         </div>
+
+        <div className="productModeToggle" role="group" aria-label="Display mode">
+          <button type="button" className="productModeButton productModeActive" data-ui-mode="simple" aria-pressed="true">
+            Simple
+          </button>
+          <button type="button" className="productModeButton" data-ui-mode="full" aria-pressed="false">
+            Full
+          </button>
+        </div>
+
         <nav className="productNav" aria-label="Main sections">
           {PRODUCT_SECTIONS.map((section) => (
             <button
@@ -131,8 +172,8 @@ export async function ProductApp() {
         </nav>
         <div className="productSidebarStatus">
           <StatusPill state={health.data.status} />
-          <span>{runtimeSummary}</span>
-          {attentionCount > 0 ? <span className="productAttention">{attentionCount} item(s) need attention</span> : null}
+          <span className="uiBreakLong">{runtimeSummary}</span>
+          <AttentionPanel items={attentionItems} />
         </div>
       </aside>
 
@@ -150,13 +191,14 @@ export async function ProductApp() {
               <article><span>Sources</span><strong>{sources.data.length}</strong></article>
               <article><span>Evidence</span><strong>{evidenceItems.data.length}</strong></article>
               <article><span>Active work</span><strong>{activeWork.length}</strong></article>
-              <article><span>Search index</span><strong>{vectorCollection.data.exists ? "Ready" : "Needs setup"}</strong></article>
+              <article><span>Search</span><strong data-search-status-label>{searchIndex.label}</strong></article>
             </div>
           </header>
 
           <div className="productQuickActions" aria-label="Quick actions">
             <button type="button" className="productChip" data-product-go="add" data-product-scroll="uploads-collection">Add information</button>
             <button type="button" className="productChip" data-product-go="evidence" data-product-scroll="evidence-panel">Browse evidence</button>
+            <button type="button" className="productChip" data-product-go="gallery" data-product-scroll="image-gallery">Browse images</button>
             <button type="button" className="productChip" data-product-go="activity" data-product-scroll="work-processing">See activity</button>
             <button type="button" className="productChip" data-product-go="system">System health</button>
             {pendingApprovals.length > 0 ? (
@@ -188,9 +230,9 @@ export async function ProductApp() {
             <section className="productCardGrid" aria-label="Recent activity">
               <h3>Recent activity</h3>
               {recentAudit.map((event) => (
-                <article className="productCard" key={event.id}>
-                  <strong>{event.event_type.replace(/_/g, " ")}</strong>
-                  <span>{event.decision ?? "recorded"} · {formatDate(event.created_at)}</span>
+                <article className="productCard uiOverflowSafe" key={event.id}>
+                  <strong className="uiClampTitle">{event.event_type.replace(/_/g, " ")}</strong>
+                  <span className="uiBreakLong">{event.decision ?? "recorded"} · {formatDate(event.created_at)}</span>
                 </article>
               ))}
             </section>
@@ -210,30 +252,15 @@ export async function ProductApp() {
             <StatusPill state={evidenceItems.data.length > 0 ? "ready" : "empty"} />
           </header>
           <p className="productLead">
-            Readable evidence cards from your sources. Open details for excerpts; technical IDs stay in Advanced.
+            Readable evidence cards from your sources. Each card shows the content type first, with technical IDs under Details in Full mode.
           </p>
           {recentEvidence.length > 0 ? (
             <div className="productCardGrid">
               {recentEvidence.map((item) => {
                 const source = item.source_id ? sourceById.get(item.source_id) : undefined;
-                return (
-                  <article className="productEvidenceCard" key={item.id}>
-                    <div className="productEvidenceHead">
-                      <h3>{evidenceCardTitle(item, source)}</h3>
-                      <StatusPill state={item.confidence && item.confidence > 0.7 ? "high" : "recorded"} />
-                    </div>
-                    <p>{excerpt(item.statement, 180)}</p>
-                    <dl className="productMeta">
-                      <div><dt>Source</dt><dd>{source?.name ?? "Local source"}</dd></div>
-                      <div><dt>Why it matters</dt><dd>{evidenceWhyItMatters(item)}</dd></div>
-                      <div><dt>Status</dt><dd>Saved locally</dd></div>
-                    </dl>
-                    <details className="productAdvanced">
-                      <summary>Technical details</summary>
-                      <pre>{JSON.stringify({ id: item.id, document_id: item.document_id, chunk_id: item.chunk_id, type: item.evidence_type }, null, 2)}</pre>
-                    </details>
-                  </article>
-                );
+                const artifact = item.document_id ? artifactByDocumentId.get(item.document_id) : undefined;
+                const model = buildEvidenceCardModel(item, source, artifact);
+                return <EvidenceCard key={item.id} model={model} />;
               })}
             </div>
           ) : (
@@ -244,11 +271,25 @@ export async function ProductApp() {
               <summary>Documents ({documents.data.length})</summary>
               <ul className="productPlainList">
                 {documents.data.slice(0, 8).map((doc) => (
-                  <li key={doc.id}>{doc.title ?? "Untitled document"}</li>
+                  <li key={doc.id} className="uiBreakLong">{doc.title ?? "Untitled document"}</li>
                 ))}
               </ul>
             </details>
           ) : null}
+        </section>
+
+        <section className="productSection" data-product-section="gallery" data-tab-panel="results" hidden id="image-gallery">
+          <header className="productPanelHeader">
+            <div>
+              <p className="productEyebrow">Images</p>
+              <h2>Image gallery</h2>
+            </div>
+            <StatusPill state={galleryItems.length > 0 ? "ready" : "empty"} />
+          </header>
+          <p className="productLead">
+            Browse saved images in one place. Search, sort, and filter without digging through generic evidence lists.
+          </p>
+          <ImageGallery items={galleryItems} error={artifacts.error} />
         </section>
 
         <section className="productSection" data-product-section="activity" data-tab-panel="work" hidden id="work-processing">
@@ -263,20 +304,25 @@ export async function ProductApp() {
             collectionRuns={collectionRunsResult}
             vectorCollection={vectorResult}
           />
-          <div className="productCardGrid" id="data-search">
+          <div className="productCardGrid" id="activity-work">
             {recentWork.length > 0 ? recentWork.map((item) => {
               const status = workStatusPlain(item);
               return (
-                <article className="productActivityCard" key={item.id}>
+                <article className="productActivityCard uiOverflowSafe" key={item.id}>
                   <div className="productEvidenceHead">
-                    <h3>{workActivityLabel(item)}</h3>
+                    <h3 className="uiClampTitle">{workActivityLabel(item)}</h3>
                     <StatusPill state={status.state} />
                   </div>
-                  <p>{status.next}</p>
+                  <p className="uiClampSummary">{status.next}</p>
                   <span className="productMuted">Updated {formatDate(item.updated_at ?? item.created_at)}</span>
+                  {item.status === "failed" ? (
+                    <button type="button" className="productPrimaryButton" data-retry-failed-work data-work-item-id={item.id}>
+                      Retry
+                    </button>
+                  ) : null}
                   <details className="productAdvanced">
                     <summary>Technical details</summary>
-                    <pre>{JSON.stringify({ id: item.id, work_type: item.work_type, status: item.status, error_message: item.error_message }, null, 2)}</pre>
+                    <pre className="uiBreakLong">{JSON.stringify({ id: item.id, work_type: item.work_type, status: item.status, error_message: item.error_message }, null, 2)}</pre>
                   </details>
                 </article>
               );
@@ -287,8 +333,8 @@ export async function ProductApp() {
             {pendingApprovals.length > 0 ? (
               <div className="productCardGrid">
                 {pendingApprovals.map((approval) => (
-                  <article className="productCard" key={approval.id}>
-                    <strong>{approval.request_type.replace(/_/g, " ")}</strong>
+                  <article className="productCard uiOverflowSafe" key={approval.id}>
+                    <strong className="uiClampTitle">{approval.request_type.replace(/_/g, " ")}</strong>
                     <span>Needs your decision</span>
                     <button type="button" className="productGhostButton" data-product-go="settings" data-product-scroll="safety-audit">Review in Settings</button>
                   </article>
@@ -304,10 +350,10 @@ export async function ProductApp() {
                   const summary = run.summary_json ?? {};
                   const aiSummary = typeof summary.ai_review_summary === "string" ? summary.ai_review_summary : null;
                   return (
-                    <article className="productCard" key={run.id}>
+                    <article className="productCard uiOverflowSafe" key={run.id}>
                       <strong>{run.status}</strong>
                       <span>{formatDate(run.created_at)}</span>
-                      {aiSummary ? <p>{excerpt(aiSummary, 160)}</p> : null}
+                      {aiSummary ? <p className="uiClampSummary">{excerpt(aiSummary, 160)}</p> : null}
                     </article>
                   );
                 })}
@@ -324,33 +370,35 @@ export async function ProductApp() {
             </div>
             <StatusPill state={health.data.status} />
           </header>
-          <p className="productLead">{runtimeSummary}</p>
-          <div className="productServiceGrid">
-            <article className="productServiceCard">
+          <p className="productLead uiBreakLong">{runtimeSummary}</p>
+          <div className="productServiceGrid" id="search-status">
+            <article className="productServiceCard uiOverflowSafe">
               <span>Web UI</span>
               <strong>Running</strong>
               <StatusPill state="ok" />
             </article>
-            {Object.entries(checks).map(([name, check]) => {
+            {serviceChecks.map(([name, check]) => {
               const plain = plainHealthStatus(check.status);
               return (
-                <article className="productServiceCard" key={name}>
+                <article className="productServiceCard uiOverflowSafe" key={name}>
                   <span>{plainServiceName(name)}</span>
                   <strong>{plain.label}</strong>
                   <StatusPill state={plain.state} />
-                  {check.detail ? <small>{check.detail}</small> : null}
+                  {check.detail ? <small className="uiBreakLong">{check.detail}</small> : null}
                 </article>
               );
             })}
-            <article className="productServiceCard">
-              <span>Search index</span>
-              <strong>{vectorCollection.data.exists ? "Running" : "Needs attention"}</strong>
-              <StatusPill state={vectorCollection.data.exists ? "ok" : "warning"} />
-              {!vectorCollection.data.exists ? (
-                <button type="button" className="productGhostButton" data-product-go="activity" data-product-scroll="data-search">Fix in Activity</button>
+            <article className="productServiceCard uiOverflowSafe">
+              <span>Search</span>
+              <strong data-search-status-label>{searchIndex.label}</strong>
+              <StatusPill state={searchIndex.state} />
+              {searchIndex.state !== "ok" ? (
+                <button type="button" className="productGhostButton" data-product-vector-ensure>
+                  {searchReachable ? "Repair search" : "Check services first"}
+                </button>
               ) : null}
             </article>
-            <article className="productServiceCard">
+            <article className="productServiceCard uiOverflowSafe">
               <span>Local model</span>
               <strong>{llmEnabled ? `Running (${llmModel})` : "Not configured"}</strong>
               <StatusPill state={llmEnabled ? "ok" : "unknown"} />
@@ -358,7 +406,7 @@ export async function ProductApp() {
           </div>
           <details className="productAdvanced">
             <summary>Advanced diagnostics</summary>
-            <pre>{JSON.stringify({ health: health.data, vector: vectorCollection.data, capabilities: agentCapabilities.data.runtime }, null, 2)}</pre>
+            <pre className="uiBreakLong">{JSON.stringify({ health: health.data, vector: vectorCollection.data, capabilities: agentCapabilities.data.runtime }, null, 2)}</pre>
           </details>
         </section>
 
@@ -376,7 +424,7 @@ export async function ProductApp() {
           </div>
           <details className="productAdvanced" id="user-security">
             <summary>Advanced: raw environment and audit JSON</summary>
-            <pre>{JSON.stringify({ settings: envSettings.data.file_status, approvals: approvals.data.slice(0, 5), artifacts: artifacts.data.length }, null, 2)}</pre>
+            <pre className="uiBreakLong">{JSON.stringify({ settings: envSettings.data.file_status, approvals: approvals.data.slice(0, 5), artifacts: artifactsResult.data.length }, null, 2)}</pre>
           </details>
         </section>
       </main>

@@ -39,6 +39,7 @@ export type RawArtifactRecord = {
   content_hash: string;
   mime_type: string | null;
   size_bytes: number | null;
+  metadata_json?: Record<string, unknown> | null;
   created_at: string;
 };
 

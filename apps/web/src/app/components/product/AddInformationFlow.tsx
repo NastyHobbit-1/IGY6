@@ -122,7 +122,7 @@ export function AddInformationFlow({
         const payload = await postJson("/api/collection-runs/full-access", {
           requested_by_actor_id: "local-owner",
           scope: [url],
-          mode: "full_access_grok",
+          mode: "full_access_igy6",
           max_depth: Number(value("add_website_depth") || 1),
           safe_mode: true,
         });
