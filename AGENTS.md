@@ -144,16 +144,17 @@ Prefer non-destructive checks by default.
 
 The web UI is a normal-user tabbed dashboard.
 
-Current tabs:
+Current tabs (labels as shown in the UI):
 
-- Home
-- Add Data
-- Work
-- Results
-- Settings
-- Advanced
+- Chat (default) — evidence-grounded assistant and retrieval
+- Data — sources, guided upload, web fetch, media, local project
+- Work — processing queue and work items
+- Settings — password/TOTP, env, approvals, safety policy
+- More — diagnostics and advanced route console
 
-Keep normal user workflows visible and push low-level controls to Advanced. Empty states must be honest empty states, not fake demo data. Settings changes must stay dry-run/verification gated. Advanced controls must not encourage guessing IDs or bypassing approvals.
+(Internal panel ids still include home/results/add-data/advanced; visible labels are the five above.)
+
+Keep normal user workflows visible and push low-level controls to More. Empty states must be honest empty states, not fake demo data. Settings changes must stay dry-run/verification gated. Advanced controls must not encourage guessing IDs or bypassing approvals.
 
 ### UI styling on `grok` (custom CSS, not Tailwind/shadcn)
 
