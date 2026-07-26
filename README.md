@@ -15,7 +15,7 @@ On the `grok` branch: Full-access deep collection via Rust gateway + host bridge
 - **Local-Only**: All data stays under `IGY6_DATA_ROOT`. No cloud, no telemetry by default.
 - **Dynamic Ports**: Automatically uses free ports for UI and API.
 - **Modular Rust Crates**: High-performance gateway, worker, LLM routing, chunking, vector memory, etc.
-- **Tabbed UI**: Home, Add Data, Work, Results, Settings, Advanced.
+- **Tabbed UI**: Chat (default), Data, Work, Settings, More.
 
 ## 🚀 Quick Start
 
