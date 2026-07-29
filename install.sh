@@ -5,6 +5,7 @@ set -euo pipefail
 # Builds the compiled 'igy6' executable (Rust CLI) and installs it for easy use.
 # Running 'igy6' (bare) will start the full Docker stack (detached) and open your browser to the UI.
 # Requires: Rust (cargo), Docker, Docker Compose.
+# DIFF-268: also installs local media extraction tools used by the worker/host path.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
@@ -23,6 +24,39 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: docker not found. Please install Docker and Docker Compose."
   exit 1
 fi
+
+install_media_tools() {
+  echo "Installing local media extraction tools (PDF/OCR/ffmpeg/whisper)..."
+  if command -v apt-get >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo apt-get update
+      sudo apt-get install -y --no-install-recommends \
+        poppler-utils tesseract-ocr tesseract-ocr-eng ffmpeg python3 python3-pip || true
+    else
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        poppler-utils tesseract-ocr tesseract-ocr-eng ffmpeg python3 python3-pip || true
+    fi
+    if command -v pip3 >/dev/null 2>&1; then
+      pip3 install --user openai-whisper || true
+    fi
+  elif command -v brew >/dev/null 2>&1; then
+    brew install poppler tesseract ffmpeg || true
+    if command -v pip3 >/dev/null 2>&1; then
+      pip3 install --user openai-whisper || true
+    fi
+  else
+    echo "NOTE: Could not auto-install media tools (no apt-get/brew)."
+    echo "Worker Docker image still installs them on rebuild."
+  fi
+  echo "Media tool check:"
+  command -v pdftotext >/dev/null 2>&1 && echo "  pdftotext: ok" || echo "  pdftotext: missing (worker image provides it)"
+  command -v tesseract >/dev/null 2>&1 && echo "  tesseract: ok" || echo "  tesseract: missing (worker image provides it)"
+  command -v ffmpeg >/dev/null 2>&1 && echo "  ffmpeg: ok" || echo "  ffmpeg: missing (worker image provides it)"
+  command -v whisper >/dev/null 2>&1 && echo "  whisper: ok" || echo "  whisper: missing (worker image provides it)"
+}
+
+install_media_tools
 
 # Build the executable
 echo "Building igy6 CLI (this may take a minute on first build)..."
@@ -77,7 +111,8 @@ echo "  igy6 stop"
 echo "  igy6 health"
 echo ""
 echo "Note: Keep this repo directory ($REPO_ROOT) - the binary auto-finds it."
-echo "Docker must be running."
+echo "Docker must be running. Rebuild worker after this install so media tools are in the image:"
+echo "  docker compose -f infra/docker-compose.yml build worker"
 echo "First run will bootstrap .env with password 'ThatDog123' etc."
 echo "igy6 auto-picks WEB_PORT/APP_PORT if 3000/8000 are busy and verifies the IGY6 UI before opening the browser."
 echo ""
