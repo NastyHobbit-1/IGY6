@@ -1,5 +1,4 @@
 import { MEDIA_IMPORT_TYPES } from "./constants";
-import { formatBytes } from "./helpers";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function MediaImportMvp() {
@@ -32,7 +31,7 @@ export function MediaImportMvp() {
     body.textContent = payload.message;
     result.append(title, body);
     const details = document.createElement("dl");
-    payload.details.forEach((detail) => {
+    (payload.details || []).forEach((detail) => {
       const term = document.createElement("dt");
       term.textContent = detail.label;
       const description = document.createElement("dd");
@@ -41,7 +40,7 @@ export function MediaImportMvp() {
     });
     result.append(details);
     const list = document.createElement("ul");
-    payload.next.forEach((step) => {
+    (payload.next || []).forEach((step) => {
       const item = document.createElement("li");
       item.textContent = step;
       list.appendChild(item);
@@ -51,7 +50,7 @@ export function MediaImportMvp() {
   const updateStatus = () => {
     const type = selectedType();
     if (!typeStatus || !type) return;
-    typeStatus.textContent = type.label + " status: " + type.status + ". " + type.unsupportedReason;
+    typeStatus.textContent = type.label + " — " + type.status + ". " + (type.acceptedInput || "");
   };
   typeSelect?.addEventListener("change", updateStatus);
   updateStatus();
@@ -62,87 +61,106 @@ export function MediaImportMvp() {
     if (!response.ok) throw new Error(JSON.stringify(payload));
     return payload;
   };
-  const textToBase64 = (text) => {
-    const bytes = new TextEncoder().encode(text);
-    let binary = "";
-    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-    return btoa(binary);
+  const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      const comma = text.indexOf(",");
+      resolve(comma >= 0 ? text.slice(comma + 1) : text);
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+  const defaultMime = (typeKey, file) => {
+    if (file?.type) return file.type;
+    if (typeKey === "pdf") return "application/pdf";
+    if (typeKey === "image") return "image/png";
+    if (typeKey === "audio") return "audio/wav";
+    if (typeKey === "video") return "video/mp4";
+    return "application/octet-stream";
   };
-  root.querySelector("[data-media-collect-text]")?.addEventListener("click", async () => {
-    const button = root.querySelector("[data-media-collect-text]");
-    const extractedText = value("media_extracted_text");
-    const label = value("media_label") || "media-extract.txt";
-    if (!extractedText) {
-      render({ title: "Text required", message: "Paste reviewed extracted text before collecting.", details: [], next: ["OCR/transcription is not run here. Paste reviewed UTF-8 text only."] });
+  root.querySelector("[data-media-upload-binary]")?.addEventListener("click", async () => {
+    const button = root.querySelector("[data-media-upload-binary]");
+    const type = selectedType();
+    const file = fileInput?.files?.[0] || null;
+    if (!file) {
+      render({ title: "File required", message: "Choose a PDF, image, audio, or video file to upload.", details: [], next: ["Binary is stored locally; extraction runs in the worker with installed tools."] });
       return;
     }
-    if (button) { button.disabled = true; button.textContent = "Collecting..."; }
+    if (file.size > 200 * 1024 * 1024) {
+      render({ title: "File too large", message: "Current bound is 200 MB for media upload.", details: [{ label: "size", value: formatBytes(file.size) }], next: [] });
+      return;
+    }
+    if (button) { button.disabled = true; button.textContent = "Uploading..."; }
     try {
+      const contentBase64 = await fileToBase64(file);
+      const label = value("media_label") || file.name || "media-upload";
       const created = await postJson("/sources", {
         name: label.slice(0, 80),
         source_type: "media_file",
-        location: label,
+        location: file.name,
         sensitivity: "internal",
-        metadata_json: { created_from: "media_import_panel" },
+        metadata_json: { created_from: "media_import_panel", media_type: type.key },
         permission: {
-          scope_json: { media_label: label, media_type: selectedType().key },
-          allowed_operations: ["dry_run", "read", "collect"],
+          scope_json: { media_label: label, media_type: type.key },
+          allowed_operations: ["dry_run", "read", "collect", "normalize", "extract_metadata"],
           external_model_policy: "blocked",
           approval_required: false
         }
       });
       const permission = (created.permissions || []).find((item) => (item.allowed_operations || []).includes("collect"));
+      if (!permission?.id) throw new Error("No collect permission on created media source");
       const upload = await postJson("/collection-runs/manual-upload", {
         source_id: created.id,
         source_permission_id: permission.id,
-        filename: label.endsWith(".txt") ? label : label + ".txt",
-        mime_type: "text/plain",
-        content_base64: textToBase64(extractedText),
-        metadata_json: { submitted_from: "media_import_panel", media_type: selectedType().key },
+        filename: file.name,
+        mime_type: defaultMime(type.key, file),
+        content_base64: contentBase64,
+        metadata_json: {
+          submitted_from: "media_import_panel",
+          media_type: type.key,
+          original_filename: file.name,
+          extract_pipeline: "local_tools"
+        },
         requested_by_actor_id: "local-owner"
       });
       render({
-        title: "Media text collected",
-        message: "Reviewed extracted text was stored locally and normalization work was queued.",
+        title: "Media uploaded",
+        message: "Binary stored locally. Worker normalization extracts text with pdftotext / tesseract / ffmpeg+whisper. Processed text stays inside IGY6.",
         details: [
           { label: "source", value: created.id },
           { label: "collection run", value: upload?.id || "not returned" },
-          { label: "work item", value: upload?.summary_json?.normalization_work_item_id || "not returned" }
+          { label: "work item", value: upload?.summary_json?.normalization_work_item_id || "not returned" },
+          { label: "mime", value: defaultMime(type.key, file) },
+          { label: "size", value: formatBytes(file.size) }
         ],
-        next: ["Open Work to watch processing.", "Use Deep scan or Media Library for binary image/video artifacts."]
+        next: [
+          "Open Work to watch normalization / extraction.",
+          "When complete, open Results / Chat and ask over the extracted evidence.",
+          "Original binary remains in the artifact store."
+        ]
       });
     } catch (error) {
-      render({ title: "Collection failed", message: error instanceof Error ? error.message : "Unknown error", details: [], next: [] });
+      render({ title: "Upload failed", message: error instanceof Error ? error.message : "Unknown error", details: [], next: ["Confirm the API is running and rebuild the worker image after install."] });
     } finally {
-      if (button) { button.disabled = false; button.textContent = "Collect extracted text"; }
+      if (button) { button.disabled = false; button.textContent = "Upload media file"; }
     }
   });
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     const type = selectedType();
     const file = fileInput?.files?.[0] || null;
-    const extractedText = value("media_extracted_text");
-    const fileSize = file ? file.size : null;
-    const bounded = fileSize === null || fileSize <= 25 * 1024 * 1024;
     render({
-      title: "Media import preview",
-      message: extractedText ? "Reviewed extracted text can be collected with the button below. Binary parsing/OCR/transcription are not run in this panel." : "No binary media was uploaded, parsed, OCRed, transcribed, or sent to a hosted service.",
+      title: "Media import ready",
+      message: "Select a file and click Upload media file. Extraction uses local tools installed with the product; results stay inside IGY6.",
       details: [
         { label: "media type", value: type.label + " · " + type.status },
-        { label: "file label", value: file ? file.name : (value("media_label") || "not selected") },
-        { label: "browser-reported MIME", value: file?.type || "not provided" },
+        { label: "file", value: file ? file.name : (value("media_label") || "not selected") },
+        { label: "MIME", value: file?.type || "not provided" },
         { label: "size", value: file ? formatBytes(file.size) : "not selected" },
-        { label: "size bound", value: bounded ? "within 25 MB preview bound" : "too large for this MVP preview" },
-        { label: "accepted input", value: type.acceptedInput },
-        { label: "extraction status", value: extractedText ? "user-provided extracted text can be collected through Guided Upload after review" : type.unsupportedReason },
-        { label: "lineage posture", value: "future implementation must preserve source, artifact, document, chunk, and evidence lineage" },
-        { label: "external services", value: "none" }
+        { label: "pipeline", value: "local pdftotext / tesseract / ffmpeg+whisper via worker" }
       ],
-      next: [
-        type.safeNext,
-        "Do not paste secrets, private paths, credentials, or unreviewed media contents.",
-        "This panel records no artifact; use Guided Upload only for reviewed UTF-8 text."
-      ]
+      next: [type.safeNext || "Upload the file to start extraction."]
     });
   });
 })();
@@ -152,7 +170,9 @@ export function MediaImportMvp() {
     <section className="guidedManualText" id="media-import" data-media-import-mvp data-api-base-url={browserApiBaseUrl}>
       <div className="guidedManualNotice">
         <strong>PDF, image, audio, and video import.</strong>
-        <span>Preview media posture here. Collect reviewed extracted text locally; use Deep scan / Media Library for binary image and video artifacts.</span>
+        <span>
+          Upload the binary. Local tools extract text (PDF text layer, OCR, transcription). Original media and extracted text stay inside this IGY6 instance.
+        </span>
       </div>
       <form className="guidedManualForm" data-media-import-preview-form>
         <label>
@@ -165,26 +185,22 @@ export function MediaImportMvp() {
         </label>
         <p className="actionHint" data-media-import-type-status />
         <label>
-          <span>File label if no file selected</span>
+          <span>Optional label</span>
           <input name="media_label" placeholder="statement.pdf, screenshot.png, meeting-audio.wav" />
         </label>
         <label>
-          <span>Optional local file metadata preview</span>
+          <span>Media file</span>
           <input name="media_file" type="file" accept=".pdf,image/*,audio/*,video/*" />
         </label>
-        <label>
-          <span>Reviewed extracted text or transcript if already available</span>
-          <textarea name="media_extracted_text" rows={5} placeholder="Paste reviewed extracted text or transcript to collect locally." />
-        </label>
         <div className="guidedManualActions">
-          <button type="submit">Preview media import status</button>
-          <button type="button" data-media-collect-text>Collect extracted text</button>
-          <span>Binary parsing/OCR/transcription are not run here. Deep scan collects binary media artifacts.</span>
+          <button type="submit">Preview media status</button>
+          <button type="button" data-media-upload-binary>Upload media file</button>
+          <span>Extraction runs in the worker with tools installed at product install / image build.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-media-import-result>
         <strong>Ready</strong>
-        <span>Select a media type and preview support status, size bounds, and safe next steps.</span>
+        <span>Choose a file and upload. Work tab shows processing; Chat uses extracted evidence when ready.</span>
       </div>
       <DomJsonScript marker="data-media-import-types-json" json={mediaTypesJson} />
       <ClientScript script={script} />
