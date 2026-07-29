@@ -1,8 +1,8 @@
 # IGY6 Easy Installer for Windows (PowerShell)
-# IGY6 Easy Installer for Windows (PowerShell)
 # Builds the compiled 'igy6.exe' executable (Rust CLI) and installs it for easy use.
 # Running 'igy6' (or 'igy6 start') will start the full Docker stack (detached) and open your browser to the UI.
 # Requires: Rust (cargo via rustup), Docker Desktop (with Compose v2), PowerShell.
+# DIFF-268: installs/notes local media extraction tools; worker image carries the full set.
 
 $ErrorActionPreference = "Stop"
 
@@ -21,6 +21,34 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: docker not found. Please install Docker Desktop."
     exit 1
 }
+
+function Install-MediaTools {
+    Write-Host "Installing local media extraction tools when possible (PDF/OCR/ffmpeg/whisper)..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install -e --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>$null
+        winget install -e --id UB-Mannheim.TesseractOCR --accept-package-agreements --accept-source-agreements 2>$null
+        winget install -e --id oschwartz10612.Poppler --accept-package-agreements --accept-source-agreements 2>$null
+    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+        choco install ffmpeg tesseract poppler -y 2>$null
+    } else {
+        Write-Host "NOTE: winget/choco not found. Worker Docker image still installs media tools on rebuild."
+    }
+    if (Get-Command pip -ErrorAction SilentlyContinue) {
+        pip install --user openai-whisper 2>$null
+    } elseif (Get-Command pip3 -ErrorAction SilentlyContinue) {
+        pip3 install --user openai-whisper 2>$null
+    }
+    Write-Host "Media tool check (host):"
+    foreach ($tool in @("pdftotext", "tesseract", "ffmpeg", "whisper")) {
+        if (Get-Command $tool -ErrorAction SilentlyContinue) {
+            Write-Host "  $tool : ok"
+        } else {
+            Write-Host "  $tool : missing on host (worker image provides it after rebuild)"
+        }
+    }
+}
+
+Install-MediaTools
 
 # Build the executable
 Write-Host "Building igy6 CLI (release)..."
@@ -63,6 +91,8 @@ Write-Host "  igy6 --help"
 Write-Host "  igy6 stop"
 Write-Host ""
 Write-Host "Note: Keep this repo directory ($RepoRoot). Docker Desktop must be running."
+Write-Host "Rebuild worker so media tools are in the image:"
+Write-Host "  docker compose -f infra/docker-compose.yml build worker"
 Write-Host "First run bootstraps .env with password 'ThatDog123' etc."
 Write-Host "igy6 auto-picks WEB_PORT/APP_PORT if 3000/8000 are busy and verifies the IGY6 UI before opening the browser."
 Write-Host "The .exe is at: $InstallDir\igy6.exe"
