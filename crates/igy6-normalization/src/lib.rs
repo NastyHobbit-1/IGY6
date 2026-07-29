@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use igy6_media_extract::{extract_or_utf8, MediaExtractResult};
+
 const KNOWN_SENSITIVITY_LABELS: &[&str] = &["public", "internal", "sensitive", "secret"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +80,21 @@ pub fn normalize_utf8_bytes(bytes: &[u8]) -> TextNormalization {
     }
 }
 
+/// Normalize artifact bytes. Media types use local tools (pdftotext/tesseract/ffmpeg/whisper).
+/// Extracted text stays inside IGY6; this function does not transmit data externally.
+pub fn normalize_artifact_bytes(
+    bytes: &[u8],
+    mime_type: Option<&str>,
+    filename: Option<&str>,
+) -> (TextNormalization, MediaExtractResult) {
+    let extracted = extract_or_utf8(bytes, mime_type, filename);
+    let normalization = TextNormalization {
+        text: normalize_text(&extracted.text),
+        used_replacement: extracted.method == "utf8_lossy",
+    };
+    (normalization, extracted)
+}
+
 pub fn normalize_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
@@ -109,6 +126,45 @@ pub fn build_normalized_document_ref(
         sensitivity: classify_sensitivity_label(input.sensitivity.as_deref(), "internal"),
         metadata,
     }
+}
+
+/// Build a normalized document from raw bytes, running media extraction when needed.
+pub fn normalize_raw_artifact(
+    raw: &RawArtifactRef,
+    bytes: &[u8],
+    filename: Option<&str>,
+    title: Option<String>,
+    sensitivity: Option<String>,
+) -> NormalizedDocumentRef {
+    let (text_norm, extract) =
+        normalize_artifact_bytes(bytes, raw.mime_type.as_deref(), filename);
+    let document_type = match extract.method.as_str() {
+        "pdf_text_layer" => "pdf_extracted",
+        "image_ocr" => "image_ocr",
+        m if m.ends_with("_transcription") => "av_transcript",
+        "utf8_passthrough" | "utf8_lossy" => "text",
+        _ => "media",
+    }
+    .to_string();
+    let mut metadata = BTreeMap::new();
+    metadata.insert("extract_method".to_string(), extract.method.clone());
+    metadata.insert("extract_tool".to_string(), extract.tool.clone());
+    metadata.insert("extract_success".to_string(), extract.success.to_string());
+    metadata.insert("extract_detail".to_string(), extract.detail.clone());
+    if let Some(mime) = &raw.mime_type {
+        metadata.insert("source_mime_type".to_string(), mime.clone());
+    }
+    build_normalized_document_ref(
+        raw,
+        NormalizedDocumentInput {
+            text_content: text_norm.text,
+            title,
+            document_type,
+            language: Some("en".to_string()),
+            sensitivity,
+            metadata,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -192,5 +248,28 @@ mod tests {
         let normalized = normalize_utf8_bytes(&[0xff, b'a']);
         assert_eq!(normalized.text, "\u{fffd}a");
         assert!(normalized.used_replacement);
+    }
+
+    #[test]
+    fn normalize_artifact_bytes_handles_plain_text() {
+        let (norm, extract) =
+            normalize_artifact_bytes(b"hello media", Some("text/plain"), Some("note.txt"));
+        assert_eq!(norm.text, "hello media");
+        assert!(extract.success);
+    }
+
+    #[test]
+    fn normalize_raw_artifact_records_extract_metadata() {
+        let doc = normalize_raw_artifact(
+            &raw_ref(),
+            b"sample text",
+            Some("note.txt"),
+            Some("Title".to_string()),
+            Some("internal".to_string()),
+        );
+        assert_eq!(doc.title.as_deref(), Some("Title"));
+        assert_eq!(doc.text_content, "sample text");
+        assert!(doc.metadata.contains_key("extract_method"));
+        assert!(doc.metadata.contains_key("extract_tool"));
     }
 }
