@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 igy6-chunking = { path = "../igy6-chunking" }
+igy6-media-extract = { path = "../igy6-media-extract" }
 igy6-normalization = { path = "../igy6-normalization" }
 igy6-vector-memory = { path = "../igy6-vector-memory" }
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
