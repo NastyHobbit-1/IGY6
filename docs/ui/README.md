@@ -72,17 +72,18 @@ Data is where you register what IGY6 is allowed to use and start upload or colle
 
 Information lifecycle, sources, guided upload, conversation history import, user observation ingestion, browser/web/router import (grok full-access paths), media import, local project / PC diagnostics.
 
-Connector status matches DIFF-249: manual text paths implemented; browser_export / web_public / media / local paths use full-access + host bridge where configured.
+Connector status: manual text paths implemented; browser_export / web_public / media_file / local paths use full-access + host bridge where configured. Media import (DIFF-268) uploads the binary and runs local extraction in the worker (pdftotext, tesseract, ffmpeg+whisper) when tools are installed in the worker image / host.
 
 ### Buttons And Actions
 
 - Submit manual text / Import conversation / Record observation.
 - Deep fetch / Public fetch / Session fetch / Preview panels.
+- Media import: choose type, select file, Upload media file (stores binary; worker extracts text).
 - Save source review; approval-aware pending states.
 
 ### What To Do Here
 
-Use Data when you have authorized text or a URL you want IGY6 to remember or review. Then open Work to watch processing and Chat to ask questions.
+Use Data when you have authorized text, a media file, or a URL you want IGY6 to remember or review. Then open Work to watch processing and Chat to ask questions.
 
 ## Work
 
@@ -115,8 +116,8 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 
 ### Add data → process → ask
 
-1. Data → guided upload or web fetch.
-2. Work → wait for completed processing.
+1. Data → guided upload, media upload, or web fetch.
+2. Work → wait for completed processing (normalization / extraction for media).
 3. Chat → ask over evidence; save answer records when useful.
 
 ## Troubleshooting
@@ -124,7 +125,8 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 - UI does not open: `scripts/status.sh`, confirm `web` service, use `WEB_BASE_URL`.
 - Not ready: wait, then `scripts/post-cutover-smoke.sh --check`.
 - No results: confirm Data upload, then Work status.
-- Upload fails: UTF-8 text, source permission, approval if required.
+- Upload fails: UTF-8 text for paste paths; for media, confirm API is up and worker image was rebuilt after install so extraction tools are present.
+- Media extraction empty: rebuild worker (`docker compose -f infra/docker-compose.yml build worker && up -d worker`); optional host tools via `./install.sh` / `install.ps1`.
 
 ## Safety And Data Rules
 
@@ -132,12 +134,14 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 - Do not commit `.env`, secrets, or collected private data.
 - Old Python/FastAPI/Celery services are archived history, not active runtime.
 - Local-first and approval-gated for sensitive workflows.
+- Extracted OCR/transcript text and original binaries stay inside IGY6 only.
 
-## Current Limitations (aligned to DIFF-249)
+## Current Limitations (aligned to DIFF-268 / DIFF-249)
 
-- Core manual UTF-8 text paths are the most mature.
-- On `grok`, web/public URL, browser export, Session Fetch, media binary, and system/WiFi collection use full-access + host bridge.
-- Guided paste/preview panels remain partial for automatic OCR/transcription.
+- Core manual UTF-8 text paths remain the most mature for paste workflows.
+- On `grok`, web/public URL, browser export, Session Fetch, media binary, and system/WiFi collection use full-access + host bridge where required.
+- Media import is implemented: binary upload stores the original; worker normalization extracts text with local tools (pdftotext for PDF text layer, tesseract for images, ffmpeg+whisper for audio/video). Quality depends on those local engines, not cloud services. Worker image must be rebuilt after install so tools are present in the container.
+- Image-only PDFs with no text layer may yield empty extraction until page-render OCR is added in a later DIFF.
 - Host bridge is required for the strongest web tiers.
 - No external exfil; empty states are honest.
-- Refer to DIFF-249 capability table for exact status per item.
+- Refer to DIFF-249 capability table and DIFF-268 for exact status per item.
