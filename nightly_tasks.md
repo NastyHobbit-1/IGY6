@@ -109,4 +109,20 @@
 - Files changed: nightly_tasks.md, docs/diffs/DIFF-267-nightly-audit-2026-07-28.md
 - No remaining blockers. Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
 
+## 2026-07-29
+- Branch: grok
+- Full sync/inspection of grok branch (fresh recursive tree fetch via GitHub tools, tree_sha 7f6c74b122dda092e1a2ac0467aa95cb9e3f752c at audit start; 731 items). Latest commits are DIFF-268 series (local media extraction full integration).
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Project instructions (AGENTS.md, DIFF_PROCESS.md, BRANCH_POLICY.md), README.md, docs/WORKING.md, docs/ui/README.md, nightly_tasks.md, package.json, MediaImportMvp.tsx, igy6-media-extract, constants.ts, capability truth table, api proxies, ui-smoke scripts inspected.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet": **0 hits**. Backend routes, frontend tabs (Chat/Data/Work/Settings/More), pipelines, collection, security, reports, agent, graph, backups all present and wired. DIFF-268 media extraction crate + worker wiring + MediaImportMvp binary upload verified present.
+- **Issue found and repaired:** Post-DIFF-268 documentation/UI status drift. MEDIA_IMPORT_TYPES still said "partial" / "Local OCR is not run in-panel"; SOURCE_CONNECTOR_STATUS media_import partial; TERM_HELP normalizedDocument/manualUpload claimed UTF-8-only normalizer; docs/ui/README.md limitations still said partial OCR/transcription. Root cause: product landed in DIFF-268; status strings/docs not updated same day.
+- Repair Loop: Updated constants.ts (MEDIA_IMPORT_TYPES → implemented with accurate tool pipeline messages; media_import connector status → implemented; TERM_HELP source/manualUpload/normalizedDocument aligned). Updated docs/ui/README.md limitations and Data/media sections. Created DIFF-269-nightly-audit-2026-07-29.md. Verified against MediaImportMvp.tsx and crates/igy6-media-extract.
+- Maintenance/Completion/Improvement: Clearer end-user media import status messaging; core design preserved; no product behavior change beyond accurate labels/docs.
+- UI Verification: Media Import Upload media file labels match working binary upload + worker extraction path; tabs unchanged; no unfinished controls exposed; no duplication introduced.
+- Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands in DIFF-269 (include worker rebuild for tools).
+- Documentation: constants.ts, docs/ui/README.md, this nightly_tasks.md entry, DIFF-269.
+- Files changed: apps/web/src/app/components/constants.ts, docs/ui/README.md, nightly_tasks.md, docs/diffs/DIFF-269-nightly-audit-2026-07-29.md
+- No remaining blockers for this audit. Owner should rebuild worker image once after pull so extraction tools are present. Optional later: refresh CAP-019 in IGY6_CAPABILITY_TRUTH_TABLE.md (large historical table).
+- Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
+
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
