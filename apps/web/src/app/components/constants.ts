@@ -10,17 +10,17 @@ import type {
 export const TERM_HELP: Record<string, TermHelpContent> = {
   source: {
     title: "Source",
-    explanation: "A Source is a registered place IGY6 may collect or review data from. On the grok branch many more source types are now active for registration, dry-run preview, permissioned collection, artifact storage, and evidence item creation: browser_export, media_file, wifi_signal, stream_capture, plus the previous ones (manual_upload, conversation_history, user_observation, local_project, web_*, router_network, local_pc_diagnostics). Some deep extraction (full OCR/vision/audio for media, rich browser history parsing) remains collector-specific or deferred, but the provenance, artifact, collection_run, and basic evidence paths are real.",
+    explanation: "A Source is a registered place IGY6 may collect or review data from. On the grok branch many more source types are active for registration, dry-run preview, permissioned collection, artifact storage, and evidence item creation: browser_export, media_file, wifi_signal, stream_capture, plus manual_upload, conversation_history, user_observation, local_project, web_*, router_network, local_pc_diagnostics. Media binaries can be uploaded and extracted locally (pdftotext / tesseract / ffmpeg+whisper via the worker when tools are installed). Provenance, artifact, collection_run, and evidence paths are real.",
     manage: "Manage sources in Data & Knowledge; raw route controls are in Advanced.",
     purpose: "Sources define what evidence IGY6 is allowed to use before collection, normalization, search, reports, or review.",
     warning: "A registered source does not grant broad PC or account access; permissions and approvals still apply."
   },
   sourceType: {
     title: "Source Type",
-    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, local_project, user_observation, conversation_history, or planned/disabled browser, web, router, PC diagnostic, and media import types.",
+    explanation: "Source Type tells IGY6 what kind of registered source this is, such as manual_upload, media_file, local_project, user_observation, conversation_history, browser_export, web_public, and related types.",
     manage: "Choose the type when creating a source in Data & Knowledge or the advanced source API workflow.",
     purpose: "The type controls which collection workflow and safety expectations apply.",
-    warning: "Some source types are contract entries only and are not full collectors yet."
+    warning: "Some source types still have partial collector depth; check connector status in Data."
   },
   sourcePermission: {
     title: "Source Permission",
@@ -80,17 +80,17 @@ export const TERM_HELP: Record<string, TermHelpContent> = {
   },
   manualUpload: {
     title: "Manual Upload",
-    explanation: "Manual Upload collects UTF-8 text the user manually provides.",
-    manage: "Use the Data & Knowledge upload flow after creating a manual_upload source, permission, and approval if required.",
+    explanation: "Manual Upload collects UTF-8 text the user manually provides. Binary PDF/image/audio/video files use the Media Import panel (media_file source) instead; the worker extracts text with local tools.",
+    manage: "Use the Data guided text upload for paste, or Media Import for binary files after creating the matching source permission.",
     purpose: "It creates raw artifacts that can be normalized, chunked, embedded, and used as evidence.",
-    warning: "Current normalization supports UTF-8 text only, not binary/PDF/image/audio parsing."
+    warning: "Paste path expects UTF-8 text. For media binaries use Media Import so extraction runs in the worker."
   },
   localProject: {
     title: "Local Project",
     explanation: "Local Project is a source type for scoped files under a folder visible inside the container.",
     manage: "Create a local_project source and permission scope paths in Data & Knowledge or advanced route controls.",
     purpose: "It lets IGY6 collect authorized project files into local evidence.",
-    warning: "Paths must stay under the source location and binary files may fail UTF-8 normalization."
+    warning: "Paths must stay under the source location; non-text files may need media extraction tools in the worker."
   },
   rawArtifact: {
     title: "Raw Artifact",
@@ -101,10 +101,10 @@ export const TERM_HELP: Record<string, TermHelpContent> = {
   },
   normalizedDocument: {
     title: "Normalized Document",
-    explanation: "A Normalized Document is readable UTF-8 text extracted from a raw artifact.",
-    manage: "Review normalized documents in Data & Knowledge.",
+    explanation: "A Normalized Document is readable UTF-8 text derived from a raw artifact. Plain text passes through directly; PDF/image/audio/video bytes are extracted with local tools (pdftotext, tesseract, ffmpeg+whisper) when installed in the worker image.",
+    manage: "Review normalized documents in Data & Knowledge; watch Work for extraction/normalization status.",
     purpose: "Documents are the text source for chunks, evidence items, and retrieval.",
-    warning: "The current normalizer supports UTF-8 text only."
+    warning: "Extraction quality depends on local engines. Rebuild the worker image after install so tools are present. Image-only PDFs may need future page-render OCR."
   },
   chunk: {
     title: "Chunk",
@@ -443,12 +443,12 @@ export const SOURCE_CONNECTOR_STATUS: SourceConnectorStatus[] = [
   },
   {
     sourceType: "media_import",
-    status: "partial",
-    defaultScope: "User-selected PDF/image/audio/video metadata and safe extracted text.",
-    dryRun: "Media import panel reports type, size bound, and extraction posture.",
-    collect: "Reviewed text via manual_upload; binary media + full-res artifacts via full-access deep scan + Media Library on grok (PDF text extraction supported in artifacts for applicable paths).",
+    status: "implemented",
+    defaultScope: "User-selected PDF/image/audio/video binary plus optional label.",
+    dryRun: "Media import panel reports type, size bound, and local extraction posture.",
+    collect: "Binary upload via media_file source and /collection-runs/manual-upload; worker normalization extracts text with pdftotext / tesseract / ffmpeg+whisper (DIFF-268). Full-res artifacts also via full-access deep scan + Media Library.",
     sensitivity: "Media contents and labels are sensitive until reviewed.",
-    cleanupAudit: "Artifact/document/evidence lineage preserved through normalization pipeline."
+    cleanupAudit: "Artifact/document/evidence lineage preserved through normalization pipeline; extracted text stays inside IGY6."
   }
 ];
 
@@ -483,34 +483,34 @@ export const MEDIA_IMPORT_TYPES: MediaImportType[] = [
   {
     key: "pdf",
     label: "PDF",
-    status: "partial",
-    acceptedInput: "File label, size/type metadata, and user-provided extracted text.",
-    unsupportedReason: "Local PDF OCR is not run in-panel; paste reviewed extracted text to collect.",
-    safeNext: "Paste verified PDF text here and click Collect extracted text."
+    status: "implemented",
+    acceptedInput: "PDF binary (upload). Worker extracts text layer with pdftotext when installed.",
+    unsupportedReason: "Image-only PDFs with no text layer may return empty extraction until page-render OCR is added.",
+    safeNext: "Select a PDF and click Upload media file. Watch Work for normalization, then Chat over evidence."
   },
   {
     key: "image",
     label: "Image / screenshot",
-    status: "partial",
-    acceptedInput: "File label, size/type metadata, and optional user-provided OCR text.",
-    unsupportedReason: "Local OCR is not run in-panel; binary images are collected via Deep scan.",
-    safeNext: "Paste trusted OCR text and click Collect extracted text, or use Media Library after Deep scan."
+    status: "implemented",
+    acceptedInput: "Image binary (upload). Worker runs local OCR with tesseract when installed.",
+    unsupportedReason: "OCR quality depends on local tesseract language packs and image clarity.",
+    safeNext: "Select an image and click Upload media file. Watch Work for OCR, then Chat over evidence."
   },
   {
     key: "audio",
     label: "Audio",
-    status: "partial",
-    acceptedInput: "File label, size/type metadata, and optional user-provided transcript.",
-    unsupportedReason: "Local transcription is not run in-panel; paste reviewed transcript to collect.",
-    safeNext: "Paste a reviewed transcript and click Collect extracted text."
+    status: "implemented",
+    acceptedInput: "Audio binary (upload). Worker uses ffmpeg + local whisper for transcription when installed.",
+    unsupportedReason: "Transcript quality depends on local whisper install and audio clarity.",
+    safeNext: "Select an audio file and click Upload media file. Watch Work for transcription, then Chat over evidence."
   },
   {
     key: "video",
     label: "Video",
-    status: "partial",
-    acceptedInput: "File label, size/type metadata, and optional user-provided transcript or notes.",
-    unsupportedReason: "Local video transcription is not run in-panel; binary video is collected via Deep scan.",
-    safeNext: "Paste reviewed transcript/notes and click Collect extracted text, or use Media Library after Deep scan."
+    status: "implemented",
+    acceptedInput: "Video binary (upload). Worker extracts audio with ffmpeg and transcribes with local whisper when installed.",
+    unsupportedReason: "Transcript quality depends on local tools; long videos may take several minutes.",
+    safeNext: "Select a video and click Upload media file. Watch Work for extraction, then Chat over evidence."
   }
 ];
 
