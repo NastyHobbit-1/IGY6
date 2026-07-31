@@ -136,7 +136,7 @@ export function MediaImportMvp() {
         ],
         next: [
           "Open Work to watch normalization / extraction.",
-          "When complete, open Results / Chat and ask over the extracted evidence.",
+          "When complete, open Chat and ask over the extracted evidence.",
           "Original binary remains in the artifact store."
         ]
       });
@@ -207,4 +207,3 @@ export function MediaImportMvp() {
     </section>
   );
 }
-

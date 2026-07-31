@@ -125,4 +125,20 @@
 - No remaining blockers for this audit. Owner should rebuild worker image once after pull so extraction tools are present. Optional later: refresh CAP-019 in IGY6_CAPABILITY_TRUTH_TABLE.md (large historical table).
 - Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
 
+## 2026-07-30
+- Branch: grok
+- Full sync/inspection of grok branch (fresh recursive tree fetch via GitHub tools, tree_sha bd4d8482a7df6c29b2056242af155007857eff6d at audit start; 732 items). Latest commits DIFF-269 media status alignment + DIFF-268 media extraction.
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Project instructions (AGENTS.md, BRANCH_POLICY.md), README.md, docs/WORKING.md, docs/ui/README.md, nightly_tasks.md, package.json, MediaImportMvp.tsx, igy6-media-extract, constants.ts, capability truth table, api proxies inspected.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet": **0 hits** in apps/ and crates/. Backend routes, frontend tabs (Chat/Data/Work/Settings/More), pipelines, collection, security, reports, agent, graph, backups all present and wired. DIFF-268/269 media path consistent in UI and crates.
+- **Issue found and repaired:** Stale CAP-019 / media extraction claims in docs/runtime/IGY6_CAPABILITY_TRUTH_TABLE.md (still described extraction as deferred post-DIFF-246). Section 5/7/10 overclaim notes still prohibited claiming binary media parsing. MediaImportMvp success next-step still said "Results / Chat". Root cause: truth table not refreshed when DIFF-268 landed; optional follow-up from DIFF-269 completed here.
+- Repair Loop: Updated CAP-019 row and related sections in capability truth table; MediaImportMvp next-step → "Open Chat"; created DIFF-270-nightly-audit-2026-07-30.md. Verified against MediaImportMvp, media-extract crate, constants, docs/ui/README.
+- Maintenance/Completion/Improvement: Operator capability claims now match implemented media extraction; core design preserved.
+- UI Verification: Tabs unchanged; media upload path unchanged functionally; next-step label matches visible Chat tab; no unfinished controls exposed.
+- Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands in DIFF-270 (include worker rebuild for tools).
+- Documentation: docs/runtime/IGY6_CAPABILITY_TRUTH_TABLE.md, MediaImportMvp.tsx, this nightly_tasks.md entry, DIFF-270.
+- Files changed: docs/runtime/IGY6_CAPABILITY_TRUTH_TABLE.md, apps/web/src/app/components/MediaImportMvp.tsx, nightly_tasks.md, docs/diffs/DIFF-270-nightly-audit-2026-07-30.md
+- No remaining blockers for this audit. Owner should rebuild worker image once after pull so extraction tools are present.
+- Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
+
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
