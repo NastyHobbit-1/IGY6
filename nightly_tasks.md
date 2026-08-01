@@ -141,4 +141,20 @@
 - No remaining blockers for this audit. Owner should rebuild worker image once after pull so extraction tools are present.
 - Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
 
+## 2026-07-31
+- Branch: grok
+- Full sync/inspection of grok branch (fresh recursive tree fetch via GitHub tools; 733 items). Head at audit start: 81fae20aaa46666a086148f857f817a93eee1dc2 (DIFF-270). Latest product path still DIFF-268 media extraction + DIFF-269/270 status alignment.
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Project instructions (AGENTS.md, BRANCH_POLICY.md), README.md, docs/WORKING.md, docs/ui/README.md, docs/user-guide.md, nightly_tasks.md, package.json, HomePage.tsx, constants.ts, MediaImportMvp.tsx, capability truth table, api proxies, crates tree inspected.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet": **0 hits** in apps/ and crates/. Backend routes, frontend tabs (Chat/Data/Work/Settings/More), pipelines, collection, security, reports, agent, graph, backups all present and wired. Intentional partial connector statuses (local_project, router_network, local_pc_diagnostics) remain documented as bounded, not bugs.
+- **Issues found and repaired:** (1) README.md License section still said `[License info]` while LICENSE is MIT. (2) docs/user-guide.md still described Home / Add Data / Collector / Media Library / Work-Results-Evidence / Advanced as primary areas and mixed Assistant wording; product UI and other docs already use Chat / Data / Work / Settings / More.
+- Repair Loop: README license → MIT with LICENSE link; user-guide rewritten for visible tabs and operating flow matching HomePage.tsx / ui/README.md / WORKING.md; residual internal panel headings documented as intentional. Created DIFF-271-nightly-audit-2026-07-31.md. No product runtime code changes.
+- Maintenance/Completion/Improvement: Operator-facing guide accuracy improved; core design preserved.
+- UI Verification: Visible controls and tab labels unchanged in code; docs now match; no unfinished controls exposed; no duplication introduced.
+- Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands in DIFF-271.
+- Documentation: README.md, docs/user-guide.md, this nightly_tasks.md entry, DIFF-271.
+- Files changed: README.md, docs/user-guide.md, nightly_tasks.md, docs/diffs/DIFF-271-nightly-audit-2026-07-31.md
+- No remaining blockers for this audit. Owner should rebuild worker image once after pull if media extraction tools are needed in the container.
+- Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
+
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
