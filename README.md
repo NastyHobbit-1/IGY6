@@ -78,7 +78,7 @@ Text summary: User → Next.js UI → Rust API Gateway → Worker Daemon → (Po
 
 ## 📄 License
 
-[License info]
+MIT License — see [LICENSE](LICENSE).
 
 ---
 

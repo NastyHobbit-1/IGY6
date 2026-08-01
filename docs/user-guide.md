@@ -2,14 +2,15 @@
 
 **This guide is only about running and using the program on the grok branch.** Open the local web UI at the clear URL printed by the start command (normally http://127.0.0.1:3000 or the next free port it automatically switched to).
 
-The UI is deliberately simple and tabbed. On this branch the main areas are:
+The UI is deliberately simple and tabbed. Visible tab labels (from `HomePage.tsx`) are:
 
-- Home / overview — readiness, recent activity, quick status.
-- Add Data / Collector — deep thorough collection from any reachable target (local, web URLs, system, WiFi, etc.). It extracts complete info and pulls original/full-resolution images and videos directly from their sources.
-- Media Library — easy grid of every collected image and video. Click to view full/original resolution in a native browser viewer (real data from the artifact content endpoint). Refresh after scans.
-- Work / Results / Evidence — processing, evidence items, answers, reports, graph relationships.
-- Settings / User & Security (user section) — change your password (default "ThatDog123"), link or manage optional TOTP authenticator (off by default — works with any standard app like Google Authenticator or Authy), check status.
-- Advanced — raw diagnostics when you need them.
+- **Chat** (default) — evidence-grounded assistant, retrieval preview, web-fetch dock, LLM status, task history.
+- **Data** — sources, guided manual upload, conversation history, user observations, web/browser/router fetch, media import (PDF/image/audio/video), local project/PC diagnostics.
+- **Work** — processing queue, work items, pipeline status.
+- **Settings** — password/TOTP (User & Security), env dry-run, approvals, safety/policy, lifecycle audit.
+- **More** — diagnostics and advanced route console.
+
+Internal panel headings such as Home readiness, Add Data, Results/Evidence, and Advanced still appear inside content panels; the five tab labels above are what users click. Media Library (full-res images/videos) is reachable from Data / Chat workflows after deep collection or media import.
 
 ## Basic Operating Flow (Setup + Daily Use)
 
@@ -22,43 +23,41 @@ The UI is deliberately simple and tabbed. On this branch the main areas are:
 
 2. Open the URL in your browser. Use the password gate (default "ThatDog123"). If you have enabled TOTP, also supply a current code from your authenticator app for protected actions (deep collector, etc.).
 
-3. Use the Collector area to run deep scans on targets you care about (web pages, local folders, "everything", specific URLs, etc.). The process is thorough: it follows the target, extracts media at original/full res from the actual source, stores everything locally only with full provenance, and feeds evidence + graph.
+3. Use **Data** to register sources and bring in authorized information:
+   - Guided text upload, conversation history, user observations.
+   - Web fetch: Public fetch, Deep fetch, Session fetch (host bridge may be required for strongest tiers).
+   - Media import: upload PDF/image/audio/video; worker extracts text with local tools (pdftotext / tesseract / ffmpeg+whisper) when installed.
+   - Local project / PC diagnostics (bounded paths only).
 
-4. Go to the Media Library to browse and view the full-res images and videos that were collected.
+4. Open **Work** to watch normalization, extraction, chunking, and vector upsert status.
 
-5. Explore Results/Evidence for the extracted claims, relationships, and complete info (all tied together in the real pipelines).
+5. Open **Chat** to ask questions over local evidence, run retrieval preview, or use the web-fetch dock.
 
-6. In User & Security:
+6. In **Settings** → User & Security:
    - Change password anytime (enter current + new).
    - Generate secret + otpauth URL for any authenticator app (provide current password). Add it to your app, then confirm with a code from the app to enable TOTP. Once enabled, protected features will also require a current code.
    - Check status or re-link as needed. TOTP stays off until you explicitly link it.
 
-7. Stop with Ctrl+C or the stop/restart scripts.
+7. Use **More** only for diagnostics or the advanced route console when needed.
 
-All data (including full-res media artifacts, evidence, graph in Neo4j, audit) lives only inside your local instance under the data root you configured. The collector and library are real and end-to-end wired — no scaffolding.
+8. Stop with `igy6 stop` or the matching stop/restart scripts.
 
-Dynamic URLs: The program (web start + supporting scripts) always finds a free local port if the default is busy and clearly reports the usable http://127.0.0.1:PORT. Just use whatever it tells you.
+All data (including full-res media artifacts, evidence, graph in Neo4j, audit) lives only inside your local instance under the data root you configured. Collection, media import, and library paths are real and end-to-end wired.
+
+Dynamic URLs: The program always finds a free local port if the default is busy and clearly reports the usable http://127.0.0.1:PORT. Just use whatever it tells you.
 
 ## Key Features on This Branch
 
-- Deep & thorough scraping on whatever target you give it, with original/full-res images and videos fetched directly from their source.
-- Easy Image & Video Library with full-resolution viewing of collected media.
-- Password protection with simple changing in the User section.
-- Optional TOTP authenticator (off by default, link with any standard app, standard TOTP so Google Authenticator / Authy / etc. all work).
-- Everything tied real: collector creates artifacts (full bytes + mime/kind) → evidence → worker normalization/chunking/vectors → graph sync → visible in library and results with complete local audit.
-- Local-only by design. Dynamic clear local URLs. Simple focused UI for collection, media viewing, evidence, and security.
+- Deep & thorough collection on targets you authorize, with original/full-res images and videos fetched from their source when using full-access paths.
+- Media import with local extraction (PDF text layer, OCR, transcription) and artifact storage.
+- Password protection with simple changing in Settings → User & Security.
+- Optional TOTP authenticator (off by default, link with any standard app).
+- End-to-end pipeline: artifacts → documents → chunks → evidence → vectors/graph → Chat answers with local audit.
+- Local-only by design. Dynamic clear local URLs. Chat-first tabbed UI.
 
 Supporting scripts (smoke checks, diagnostics, backup, etc.) are optional and print clear status. Use them when you want extra visibility — not required for normal operation.
 
-All other documents in docs/ (user-guide, operations, ui guide, security-policy, runtime notes, truth table, diffs on this branch, etc.) have been updated to match this program-only, operating-focused view for the grok branch. No build or development content remains in the user-facing instructions.
-
-Start the program, unlock, collect deeply, view media in the library, manage your password and optional authenticator in User & Security. Everything just works locally and is auditable.
-5. Work & Processing: check collection and work status.
-6. Data & Knowledge -> Evidence: inspect created documents, chunks, evidence,
-   and source trails.
-7. Assistant: ask a question over local evidence.
-
-Field examples:
+## Guided Upload Field Examples
 
 - Source name: `Router Troubleshooting Notes` or `IGY6 Build Logs`
 - Source type: `manual_upload`
@@ -89,12 +88,12 @@ runtime records:
 python3 scripts/e2e-manual-upload-smoke.py --run
 ```
 
-The test keyword is `blue-raven-117`. If Assistant cannot find that keyword,
+The test keyword is `blue-raven-117`. If Chat cannot find that keyword,
 first check that worker processing created chunks/evidence.
 
 ## Processing Status
 
-Manual upload may create queued work before evidence exists. Check processing
+Manual upload or media import may create queued work before evidence exists. Check processing
 status with:
 
 ```bash
@@ -110,8 +109,8 @@ details, status meanings, and log commands.
 IGY6 does not call an external model by default. Local LLM support is optional,
 starts with Ollama on the user's machine, and remains disabled when
 `LLM_PROVIDER=none`. Evidence answers keep deterministic fallback. If a local
-provider is unavailable or timed out, Assistant reports fallback status instead
-of guessing. If no evidence exists, Assistant says insufficient evidence without
+provider is unavailable or timed out, Chat reports fallback status instead
+of guessing. If no evidence exists, Chat says insufficient evidence without
 calling the provider.
 
 Planned local defaults:
@@ -128,7 +127,7 @@ They must not execute actions or change approval requirements. See
 
 Settings shows provider `none` or `ollama`, local Ollama base URL, model name,
 health/status text, timeout, and evidence-required state. Advanced provider
-diagnostics are available without exposing tokens. Assistant shows the current
+diagnostics are available without exposing tokens. Chat shows the current
 answer mode: deterministic evidence, local LLM evidence-grounded, or unavailable.
 
 Examples:
@@ -200,7 +199,7 @@ IGY6 is local-first and evidence-only by default. The API path no longer uses
 FastAPI fallback after DIFF-138, but full Rust-only repository/runtime operation
 is not claimed while legacy Python/Celery services remain archived. It
 does not send evidence to an external model by default. It does not run
-arbitrary shell text from Assistant input.
+arbitrary shell text from Chat input.
 
 System-changing actions must clearly show approval requirements. Stack
 start/stop/recovery actions require approval and fixed allowlisted runtime
@@ -217,10 +216,9 @@ npm --prefix apps/web run typecheck
 # combined: npm --prefix apps/web run check
 ```
 
-The (static + runtime) checks verify the Home, Assistant, Data & Knowledge, Work & Processing,
-Reports, Safety & Audit, and Settings workflow contract. It also checks that
-Assistant action buttons start gated, Advanced panels preserve raw/debug
-controls, and manual upload guidance remains visible.
+The (static + runtime) checks verify the Chat, Data, Work, Settings, and More
+workflow contract. It also checks that Chat action buttons start gated, Advanced
+panels preserve raw/debug controls, and manual upload guidance remains visible.
 
 ## Runtime Smoke Check
 
@@ -281,3 +279,4 @@ Troubleshooting:
 - Phoenix `GET / 200 OK` log lines are normal local health/readiness probes.
 - For API logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 api`
 - For web logs: `docker compose -f infra/docker-compose.yml --env-file .env logs -f --tail=200 web`
+- Media extraction empty: rebuild worker so tools are present (`docker compose -f infra/docker-compose.yml build worker && up -d worker`); optional host tools via `./install.sh` / `install.ps1`.
