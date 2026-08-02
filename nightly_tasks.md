@@ -157,4 +157,20 @@
 - No remaining blockers for this audit. Owner should rebuild worker image once after pull if media extraction tools are needed in the container.
 - Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
 
+## 2026-08-01
+- Branch: grok
+- Full sync/inspection of grok branch (fresh recursive tree fetch via GitHub tools, tree_sha 250683ebb6265a0dfa026c3c02ec743763066b58; 734 items). Head at audit start includes DIFF-271.
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Project instructions (AGENTS.md, BRANCH_POLICY.md, DIFF_PROCESS.md), README.md, docs/WORKING.md, docs/ui/README.md, docs/user-guide.md, nightly_tasks.md, package.json, HomePage.tsx (tabs Chat/Data/Work/Settings/More confirmed), constants.ts (MEDIA_IMPORT_TYPES and SOURCE_CONNECTOR_STATUS aligned), capability truth table (CAP-019 post-DIFF-270), api proxies, crates tree, scripts inspected.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet"|"partial fix": **0 hits** in apps/ and crates/. Backend routes (gateway + apps/web/src/app/api/*), frontend panels, processing pipelines (worker, normalization, chunking, vector-memory, evidence-answer, llm, media-extract), collection (full-access, host-bridge, media, browser, local, manual, bypass-intel), security (password/TOTP), reports/experiments/predictions/agent/task-plans, graph/lineage, backups/diagnostics, settings/env, chat/retrieval/evidence-answer all present and wired. Intentional partial connector statuses (local_project, router_network, local_pc_diagnostics) remain documented as bounded, not bugs.
+- **No issues found.** Prior DIFFs (264–271) already aligned user-facing docs, media status, license, and user-guide. No code or documentation defects requiring repair this cycle.
+- Repair Loop: N/A (clean).
+- Maintenance/Completion/Improvement: End-user friendliness verified solid; core design and architecture preserved; no new product enhancements this cycle.
+- UI Verification: Every visible control has clear purpose; labels match docs and tab bar (Chat/Data/Work/Settings/More); residual internal headings (Add Data, Results) intentional and documented; no unnecessary duplication; features grouped correctly; no unfinished or non-functional controls exposed.
+- Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands: `git checkout grok && cp .env.example .env && ./install.sh && igy6 start && npm --prefix apps/web run check && cargo test --workspace && scripts/post-cutover-smoke.sh --check` (rebuild worker if media tools needed).
+- Documentation: this nightly_tasks.md entry; created DIFF-272-nightly-audit-2026-08-01.md.
+- Files changed: nightly_tasks.md, docs/diffs/DIFF-272-nightly-audit-2026-08-01.md
+- No remaining blockers for this audit.
+- Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
+
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
