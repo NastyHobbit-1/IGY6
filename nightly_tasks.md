@@ -132,7 +132,7 @@
 - Project instructions (AGENTS.md, BRANCH_POLICY.md), README.md, docs/WORKING.md, docs/ui/README.md, nightly_tasks.md, package.json, MediaImportMvp.tsx, igy6-media-extract, constants.ts, capability truth table, api proxies inspected.
 - Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet": **0 hits** in apps/ and crates/. Backend routes, frontend tabs (Chat/Data/Work/Settings/More), pipelines, collection, security, reports, agent, graph, backups all present and wired. DIFF-268/269 media path consistent in UI and crates.
 - **Issue found and repaired:** Stale CAP-019 / media extraction claims in docs/runtime/IGY6_CAPABILITY_TRUTH_TABLE.md (still described extraction as deferred post-DIFF-246). Section 5/7/10 overclaim notes still prohibited claiming binary media parsing. MediaImportMvp success next-step still said "Results / Chat". Root cause: truth table not refreshed when DIFF-268 landed; optional follow-up from DIFF-269 completed here.
-- Repair Loop: Updated CAP-019 row and related sections in capability truth table; MediaImportMvp next-step → "Open Chat"; created DIFF-270-nightly-audit-2026-07-30.md. Verified against MediaImportMvp, media-extract crate, constants, docs/ui/README.
+- Repair Loop: Updated CAP-019 row and related sections in capability truth table; MediaImport success next-step → "Open Chat"; created DIFF-270-nightly-audit-2026-07-30.md. Verified against MediaImportMvp, media-extract crate, constants, docs/ui/README.
 - Maintenance/Completion/Improvement: Operator capability claims now match implemented media extraction; core design preserved.
 - UI Verification: Tabs unchanged; media upload path unchanged functionally; next-step label matches visible Chat tab; no unfinished controls exposed.
 - Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands in DIFF-270 (include worker rebuild for tools).
@@ -250,6 +250,22 @@
 - Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands: `git checkout grok && cp .env.example .env && ./install.sh && igy6 start && npm --prefix apps/web run check && cargo test --workspace && scripts/post-cutover-smoke.sh --check` (rebuild worker if media tools needed).
 - Documentation: this nightly_tasks.md entry (completes DIFF-277).
 - Files changed: nightly_tasks.md
+- No remaining blockers for this audit.
+- Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
+
+## 2026-08-07
+- Branch: grok
+- Full sync/inspection of grok branch (fresh recursive tree fetch via GitHub tools, head SHA af68be2a66f3cb9a299d681267708d4360b80ca4 including DIFF-277 completion; 740 items).
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Project instructions (AGENTS.md, BRANCH_POLICY.md, DIFF_PROCESS.md), README.md, docs/WORKING.md, docs/ui/README.md, docs/user-guide.md, nightly_tasks.md, HomePage.tsx (tabs Chat/Data/Work/Settings/More confirmed), package.json, constants.ts (MEDIA_IMPORT_TYPES and SOURCE_CONNECTOR_STATUS aligned), api proxies, crates tree, scripts inspected.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|broken|not-implemented|dead|fake|unfinished|stub|dummy|unimplemented|XXX|HACK|"coming soon"|"not yet"|"partial fix": **0 hits**. Backend routes (gateway + apps/web/src/app/api/*), frontend panels, processing pipelines (worker, normalization, chunking, vector-memory, evidence-answer, llm, media-extract), collection (full-access, host-bridge, media, browser, local, manual, bypass-intel), security (password/TOTP), reports/experiments/predictions/agent/task-plans, graph/lineage, backups/diagnostics, settings/env, chat/retrieval/evidence-answer all present and wired. Intentional partial connector statuses remain documented as bounded, not bugs.
+- **No issues found.** Prior DIFFs (264–277) already aligned user-facing docs, media status, license, user-guide, and capability claims. No code or documentation defects requiring repair this cycle.
+- Repair Loop: N/A (clean).
+- Maintenance/Completion/Improvement: End-user friendliness verified solid; core design and architecture preserved; no new product enhancements this cycle.
+- UI Verification: Every visible control has clear purpose; labels match docs and tab bar (Chat/Data/Work/Settings/More); residual internal headings (Add Data, Results, Home, Advanced) intentional and documented in ui/README.md; no unnecessary duplication; features grouped correctly; no unfinished or non-functional controls exposed.
+- Testing: Static inspections + code searches passed. Sandbox blocks live execution (no Rust/Node/Docker in agent env). Exact local commands: `git checkout grok && cp .env.example .env && ./install.sh && igy6 start && npm --prefix apps/web run check && cargo test --workspace && scripts/post-cutover-smoke.sh --check` (rebuild worker if media tools needed).
+- Documentation: this nightly_tasks.md entry; created DIFF-278-nightly-audit-2026-08-07.md.
+- Files changed: nightly_tasks.md, docs/diffs/DIFF-278-nightly-audit-2026-08-07.md
 - No remaining blockers for this audit.
 - Next: Continue nightly RITR exclusively on grok; local re-run verification matrix when possible.
 
