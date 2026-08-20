@@ -93,7 +93,7 @@ After adding data, check Work. Open Chat when completed. Treat repeated failures
 
 ## Settings
 
-Settings contains safety, approval, policy, password/TOTP, and local `.env` configuration. Dry-run verification is required before save. Approvals for collection can be decided here without pasting raw IDs into More.
+Settings contains safety, approval, policy, password/TOTP, local `.env` configuration, and troubleshooting logs. Dry-run verification is required before save. Approvals for collection can be decided here without pasting raw IDs into More. Startup and error logs live under `IGY6_DATA_ROOT/ops/` (`startup.log`, `error.log`) and are shown in Settings → Troubleshooting.
 
 ## More (diagnostics)
 
@@ -127,6 +127,7 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 - No results: confirm Data upload, then Work status.
 - Upload fails: UTF-8 text for paste paths; for media, confirm API is up and worker image was rebuilt after install so extraction tools are present.
 - Media extraction empty: rebuild worker (`docker compose -f infra/docker-compose.yml build worker && up -d worker`); optional host tools via `./install.sh` / `install.ps1`.
+- Operator logs: Settings → Troubleshooting, or `IGY6_DATA_ROOT/ops/startup.log` and `ops/error.log`. Sensitive values are redacted.
 
 ## Safety And Data Rules
 

@@ -127,6 +127,8 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/memory/graph/lineage/sync"),
     ("GET", "/memory/graph/nodes/{node_label}/{node_id}/relationships"),
     ("GET", "/memory/vector/chunks"),
+    ("GET", "/ops/runtime-logs"),
+    ("POST", "/ops/runtime-logs/append"),
     ("POST", "/memory/vector/chunks/ensure"),
     ("POST", "/memory/vector/chunks/search"),
     ("POST", "/memory/vector/chunks/upsert"),
@@ -302,6 +304,13 @@ pub fn handle_gateway_request_with_db(
     _fallback_origin: &str,
     database_url: Option<&str>,
 ) -> GatewayResponse {
+    if request.method == "GET" && request.path.starts_with("/ops/runtime-logs") {
+        return runtime_logs_response(&request.path);
+    }
+    if request.method == "POST" && request.path.starts_with("/ops/runtime-logs/append") {
+        return runtime_logs_append_response(&request.body);
+    }
+
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/") => json_response(
             200,
@@ -535,7 +544,7 @@ pub fn handle_gateway_request_with_db(
             }
         }
         ("GET", "/memory/vector/chunks") => {
-            json_response(200, "OK", vector_collection_status_json(), false)
+            json_response(200, "OK", vector_collection_status_live_json(), false)
         }
         ("GET", "/memory/graph/schema") => {
             json_response(200, "OK", graph_schema_status_json(), false)
@@ -12114,6 +12123,187 @@ fn collection_normalization_work_payload(
     })
 }
 
+const OPS_LOG_MAX_BYTES: usize = 512 * 1024;
+const OPS_LOG_MAX_LINE_CHARS: usize = 2_000;
+const OPS_LOG_MAX_RETURN_LINES: usize = 200;
+
+fn ops_log_timestamp() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}.{:03}Z", elapsed.as_secs(), elapsed.subsec_millis())
+}
+
+fn redact_ops_log_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    if [
+        "password",
+        "token",
+        "secret",
+        "key=",
+        "database_url",
+        "cookie",
+        "credential",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return "[REDACTED sensitive-looking log line]".to_string();
+    }
+    line.to_string()
+}
+
+fn truncate_ops_log_file(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= OPS_LOG_MAX_BYTES as u64 {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let keep_from = content
+        .len()
+        .saturating_sub(OPS_LOG_MAX_BYTES / 2)
+        .min(content.len());
+    let trimmed = &content[content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= keep_from)
+        .unwrap_or(keep_from)..];
+    let _ = fs::write(path, trimmed);
+}
+
+pub fn append_runtime_ops_log(kind: &str, component: &str, level: &str, message: &str) {
+    let file_name = if kind == "error" {
+        "error.log"
+    } else {
+        "startup.log"
+    };
+    let ops_dir = artifact_data_root().join("ops");
+    if fs::create_dir_all(&ops_dir).is_err() {
+        return;
+    }
+    let path = ops_dir.join(file_name);
+    let sanitized = redact_ops_log_line(
+        &message
+            .replace('\r', " ")
+            .replace('\n', " ")
+            .chars()
+            .take(OPS_LOG_MAX_LINE_CHARS)
+            .collect::<String>(),
+    );
+    let line = format!(
+        "{} [{component}] [{level}] {sanitized}\n",
+        ops_log_timestamp()
+    );
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+    truncate_ops_log_file(&path);
+}
+
+fn tail_ops_log_lines(path: &Path, limit: usize) -> (bool, Vec<String>) {
+    if !path.is_file() {
+        return (false, Vec::new());
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return (true, Vec::new());
+    };
+    let lines = content
+        .lines()
+        .map(redact_ops_log_line)
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(limit);
+    (true, lines[start..].to_vec())
+}
+
+fn runtime_logs_query_limit(path: &str) -> usize {
+    path.split('?')
+        .nth(1)
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                if key == "limit" {
+                    value.parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(120)
+        .clamp(1, OPS_LOG_MAX_RETURN_LINES)
+}
+
+fn runtime_logs_response(path: &str) -> GatewayResponse {
+    let limit = runtime_logs_query_limit(path);
+    let ops_dir = artifact_data_root().join("ops");
+    let startup_path = ops_dir.join("startup.log");
+    let error_path = ops_dir.join("error.log");
+    let (startup_exists, startup_lines) = tail_ops_log_lines(&startup_path, limit);
+    let (error_exists, error_lines) = tail_ops_log_lines(&error_path, limit);
+    let payload = serde_json::json!({
+        "limit": limit,
+        "startup_log": {
+            "path": "ops/startup.log",
+            "exists": startup_exists,
+            "lines": startup_lines,
+        },
+        "error_log": {
+            "path": "ops/error.log",
+            "exists": error_exists,
+            "lines": error_lines,
+        },
+    });
+    json_response(200, "OK", payload.to_string(), false)
+}
+
+fn runtime_logs_append_response(body: &str) -> GatewayResponse {
+    let parsed = serde_json::from_str::<Value>(body).unwrap_or(Value::Null);
+    let component = parsed
+        .get("component")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .chars()
+        .take(64)
+        .collect::<String>();
+    let level = parsed
+        .get("level")
+        .and_then(Value::as_str)
+        .unwrap_or("error")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    let message = parsed
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("missing message")
+        .chars()
+        .take(OPS_LOG_MAX_LINE_CHARS)
+        .collect::<String>();
+    if message.trim().is_empty() || message == "missing message" {
+        return json_response(
+            422,
+            "Unprocessable Entity",
+            "{\"detail\":\"message is required\"}".to_string(),
+            false,
+        );
+    }
+    let kind = if level.eq_ignore_ascii_case("error") {
+        "error"
+    } else {
+        "startup"
+    };
+    append_runtime_ops_log(kind, &component, &level, &message);
+    json_response(200, "OK", "{\"status\":\"recorded\"}".to_string(), false)
+}
+
 pub(crate) fn artifact_data_root() -> PathBuf {
     if let Ok(artifact_store_path) = env::var("ARTIFACT_STORE_PATH") {
         let path = PathBuf::from(artifact_store_path);
@@ -14109,7 +14299,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 pub fn help_text() -> &'static str {
-    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET/POST /evidence-answers and answer detail reads\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /evidence/items/{evidence_item_id}/review-state bounded evidence correction/supersession review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
+    "igy6-gateway\n\nUsage:\n  igy6-gateway [--bind 0.0.0.0:8000]\n  igy6-gateway --help\n\nRoutes:\n  GET /\n  GET /health/live\n  GET /health/ready\n  GET /rust-migration/status\n  GET /agent/capabilities\n  POST /agent/intent\n  GET/POST /agent/task-plans and task plan detail reads\n  POST /agent/task-plans/{task_plan_id}/evidence-summary safe evidence readiness summary\n  POST /agent/task-plans/{task_plan_id}/work-spec bounded work spec proposal\n  POST /agent/task-plans/{task_plan_id}/work-item approval-gated work creation\n  POST /chat/retrieval-preview\n  POST /chat/evidence-answer\n  GET/POST /evidence-answers and answer detail reads\n  POST /approvals\n  POST /feedback\n  POST /outcomes\n  GET/POST /analysis patterns and GET analysis hypotheses/predictions/recommendations\n  GET/POST /reports and report detail reads\n  GET/POST /sources and selected source detail/permission reads\n  POST /sources/{source_id}/review-state bounded source trust/sensitivity review updates\n  POST /evidence/items/{evidence_item_id}/review-state bounded evidence correction/supersession review updates\n  POST /work-items creation only\n  GET /settings/env\n  GET /memory/vector/chunks\n  GET /ops/runtime-logs\n  POST /ops/runtime-logs/append\n  GET /memory/graph/schema\n  GET /approvals and approval detail reads\n  GET /work-items and work item detail reads\n  GET /evidence documents/items/chunks/claims and detail reads\n  GET /artifacts, /audit-events, /collection-runs, /feedback, /outcomes and detail reads\n\nUnsupported routes return a Rust 404; FastAPI fallback is removed.\n"
 }
 
 fn settings_env_status_json() -> String {
@@ -14326,11 +14516,76 @@ fn vector_collection_status_json() -> String {
     let qdrant_url = env::var("QDRANT_URL").unwrap_or_else(|_| "http://qdrant:6333".to_string());
     let reachability = tcp_reachability_from_url(&qdrant_url);
     format!(
-        "{{\"collection_name\":\"{}\",\"exists\":false,\"detail\":{{\"rust_gateway_status\":\"read_only_status\",\"configured_url\":\"{}\",\"tcp_reachable\":{},\"collection_existence_verified\":false,\"note\":\"Rust gateway does not create, mutate, or inspect Qdrant collections in DIFF-108.\"}}}}",
+        "{{\"collection_name\":\"{}\",\"exists\":false,\"detail\":{{\"configured_url\":\"{}\",\"tcp_reachable\":{},\"collection_existence_verified\":false,\"note\":\"Qdrant collection status could not be verified.\"}}}}",
         escape_json(&collection_name),
         escape_json(&redact_url(&qdrant_url)),
         reachability
     )
+}
+
+fn vector_collection_status_live_json() -> String {
+    let settings = match qdrant_settings_from_env() {
+        Ok(settings) => settings,
+        Err(_) => return vector_collection_status_json(),
+    };
+    let tcp_reachable = tcp_reachability_from_url(&settings.base_url);
+    if !tcp_reachable {
+        return serde_json::json!({
+            "collection_name": settings.collection_name,
+            "exists": false,
+            "detail": {
+                "configured_url": redact_url(&settings.base_url),
+                "tcp_reachable": false,
+                "collection_existence_verified": false,
+                "note": "Qdrant is not reachable from the gateway.",
+            }
+        })
+        .to_string();
+    }
+
+    match vector_collection_status_from_qdrant(&settings) {
+        Ok(body) => {
+            let Ok(mut value) = serde_json::from_str::<Value>(&body) else {
+                return body;
+            };
+            let detail = value
+                .as_object_mut()
+                .and_then(|object| object.get_mut("detail"))
+                .and_then(Value::as_object_mut);
+            if let Some(detail) = detail {
+                detail.insert(
+                    "configured_url".to_string(),
+                    Value::String(redact_url(&settings.base_url)),
+                );
+                detail.insert("tcp_reachable".to_string(), Value::Bool(true));
+                detail.insert(
+                    "collection_existence_verified".to_string(),
+                    Value::Bool(true),
+                );
+            } else if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "detail".to_string(),
+                    serde_json::json!({
+                        "configured_url": redact_url(&settings.base_url),
+                        "tcp_reachable": true,
+                        "collection_existence_verified": true,
+                    }),
+                );
+            }
+            value.to_string()
+        }
+        Err(_) => serde_json::json!({
+            "collection_name": settings.collection_name,
+            "exists": false,
+            "detail": {
+                "configured_url": redact_url(&settings.base_url),
+                "tcp_reachable": true,
+                "collection_existence_verified": false,
+                "note": "Qdrant is reachable but collection status could not be verified.",
+            }
+        })
+        .to_string(),
+    }
 }
 
 fn graph_schema_status_json() -> String {
@@ -14999,6 +15254,77 @@ mod tests {
         assert_eq!(response.status_code, 502);
         assert!(!response.proxied_to_fallback);
         assert!(response.body.contains("database error"));
+    }
+
+    #[test]
+    fn runtime_logs_route_returns_startup_and_error_sections() {
+        let temp_root = env::temp_dir().join(format!(
+            "igy6-runtime-logs-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let ops_dir = temp_root.join("ops");
+        fs::create_dir_all(&ops_dir).expect("ops dir");
+        fs::write(
+            ops_dir.join("startup.log"),
+            "1.0Z [igy6-cli] [info] stack started\n",
+        )
+        .expect("startup log");
+        fs::write(
+            ops_dir.join("error.log"),
+            "2.0Z [gateway] [error] sample failure\n",
+        )
+        .expect("error log");
+        let previous_artifact = env::var("ARTIFACT_STORE_PATH").ok();
+        let previous_artifact_root = env::var("IGY6_ARTIFACT_DATA_ROOT").ok();
+        let previous_data_root = env::var("IGY6_DATA_ROOT").ok();
+        env::remove_var("ARTIFACT_STORE_PATH");
+        env::remove_var("IGY6_ARTIFACT_DATA_ROOT");
+        env::set_var("IGY6_DATA_ROOT", &temp_root);
+
+        let response = handle_gateway_request_with_db(
+            &request("GET", "/ops/runtime-logs?limit=10", ""),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+
+        match previous_artifact {
+            Some(value) => env::set_var("ARTIFACT_STORE_PATH", value),
+            None => env::remove_var("ARTIFACT_STORE_PATH"),
+        }
+        match previous_artifact_root {
+            Some(value) => env::set_var("IGY6_ARTIFACT_DATA_ROOT", value),
+            None => env::remove_var("IGY6_ARTIFACT_DATA_ROOT"),
+        }
+        match previous_data_root {
+            Some(value) => env::set_var("IGY6_DATA_ROOT", value),
+            None => env::remove_var("IGY6_DATA_ROOT"),
+        }
+        let _ = fs::remove_dir_all(&temp_root);
+
+        assert_eq!(response.status_code, 200);
+        assert!(response.body.contains("\"startup_log\""));
+        assert!(response.body.contains("stack started"));
+        assert!(response.body.contains("sample failure"));
+    }
+
+    #[test]
+    fn vector_collection_status_live_does_not_stub_diff108_read_only() {
+        let response = handle_gateway_request_with_db(
+            &request("GET", "/memory/vector/chunks", ""),
+            None,
+            NO_FALLBACK_ORIGIN,
+            None,
+        );
+        assert_eq!(response.status_code, 200);
+        assert!(!response.proxied_to_fallback);
+        assert!(response.body.contains("\"collection_name\""));
+        assert!(response.body.contains("collection_existence_verified"));
+        assert!(!response.body.contains("DIFF-108"));
+        assert!(!response.body.contains("read_only_status"));
     }
 
     #[test]
@@ -16809,6 +17135,8 @@ mod tests {
                 "/memory/graph/nodes/{node_label}/{node_id}/relationships",
             ),
             ("GET", "/memory/vector/chunks"),
+            ("GET", "/ops/runtime-logs"),
+            ("POST", "/ops/runtime-logs/append"),
             ("POST", "/memory/vector/chunks/ensure"),
             ("POST", "/memory/vector/chunks/search"),
             ("POST", "/memory/vector/chunks/upsert"),

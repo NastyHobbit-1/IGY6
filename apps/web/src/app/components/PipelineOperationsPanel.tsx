@@ -40,7 +40,6 @@ export function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<Wo
       show("Dispatching " + workItemId + "...");
       try {
         show("Dispatch: " + JSON.stringify(await postJson("/work-items/" + encodeURIComponent(workItemId) + "/dispatch", {})));
-        window.setTimeout(() => window.location.reload(), 900);
       } catch (e) {
         show(String(e));
       } finally {

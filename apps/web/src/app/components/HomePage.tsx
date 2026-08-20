@@ -44,6 +44,7 @@ import { SourceCollectionApprovalReview } from "./SourceCollectionApprovalReview
 import { SourceDetailPanel } from "./SourceDetailPanel";
 import { SourceEvidenceHistory } from "./SourceEvidenceHistory";
 import { SourceTrustSensitivityManagement } from "./SourceTrustSensitivityManagement";
+import { TroubleshootingLogsPanel } from "./TroubleshootingLogsPanel";
 import { UnifiedChatHub } from "./UnifiedChatHub";
 import { UserObservationIngestion } from "./UserObservationIngestion";
 import { UserSecurityPanel } from "./UserSecurityPanel";
@@ -777,17 +778,21 @@ export async function HomePage() {
                   <label><span>Supporting evidence ids</span><input name="hypothesis_evidence_ids" placeholder="evidence-id-1, evidence-id-2" /></label>
                   <button type="submit">Record hypothesis</button>
                 </form>
+                <p className="actionHint" data-hypothesis-create-result>Record a hypothesis without reloading the page.</p>
                 <ClientScript script={`
 (() => {
   const form = document.querySelector("[data-hypothesis-create-form]");
   if (!form || form.getAttribute("data-wired") === "true") return;
   form.setAttribute("data-wired", "true");
   const apiBaseUrl = form.getAttribute("data-api-base-url");
+  const result = document.querySelector("[data-hypothesis-create-result]");
+  const show = (message) => { if (result) result.textContent = message; };
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const text = form.querySelector("[name='hypothesis_text']")?.value?.trim() || "";
     const evidenceIds = (form.querySelector("[name='hypothesis_evidence_ids']")?.value || "").split(",").map((item) => item.trim()).filter(Boolean);
     if (!text) return;
+    show("Recording hypothesis...");
     try {
       const response = await fetch(apiBaseUrl + "/analysis/hypotheses", {
         method: "POST",
@@ -796,9 +801,11 @@ export async function HomePage() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(JSON.stringify(payload));
-      window.location.reload();
+      const id = payload.id ? " id " + payload.id : "";
+      show("Hypothesis recorded" + id + ". Refresh the browser when you want the list redrawn.");
+      form.reset();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Hypothesis create failed");
+      show(error instanceof Error ? error.message : "Hypothesis create failed");
     }
   });
 })();
@@ -915,6 +922,7 @@ export async function HomePage() {
           <BypassIntelPanel />
           <SettingsPanel envSettings={envSettings} />
           <UserSecurityPanel />
+          <TroubleshootingLogsPanel />
 
           <section className="panel workflowSection tabContent" id="safety-audit" data-tab-panel="settings">
             <div className="panelHeader">

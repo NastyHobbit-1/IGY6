@@ -45,7 +45,6 @@ export function SourceCollectionApprovalReview({ approvals }: { approvals: ApiRe
           buttons.forEach((candidate) => {
             if (candidate.getAttribute("data-approval-id") === approvalId) candidate.disabled = true;
           });
-          window.setTimeout(() => window.location.reload(), 900);
         }
       } catch (error) {
         show("Approval decision error", { detail: error instanceof Error ? error.message : "Unknown error" });

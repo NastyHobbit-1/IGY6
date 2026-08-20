@@ -7,7 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use igy6_config::{render_cli_report, validate_repo_config};
 use igy6_policy::{ActionRisk, ApprovalRequirement};
@@ -101,7 +101,26 @@ where
         CommandAction::RunFixedArgv(argv) => {
             run_fixed_argv(argv, &repo_root, DEFAULT_SCRIPT_TIMEOUT)
         }
-        CommandAction::StartWithBrowser => start_stack_and_open_browser(&repo_root),
+        CommandAction::StartWithBrowser => {
+            log_startup_step(&repo_root, "igy6 start invoked");
+            match start_stack_and_open_browser(&repo_root) {
+                Ok(outcome) => {
+                    log_startup_step(
+                        &repo_root,
+                        outcome
+                            .stdout
+                            .lines()
+                            .next()
+                            .unwrap_or("start complete"),
+                    );
+                    Ok(outcome)
+                }
+                Err(error) => {
+                    log_cli_error(&repo_root, &error.to_string());
+                    Err(error)
+                }
+            }
+        }
     }
 }
 
@@ -387,6 +406,96 @@ struct RuntimePorts {
     api_port: u16,
     web_url: String,
     api_url: String,
+}
+
+const OPS_LOG_MAX_BYTES: usize = 512 * 1024;
+const OPS_LOG_MAX_LINE_CHARS: usize = 2_000;
+
+fn ops_log_timestamp() -> String {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}.{:03}Z", elapsed.as_secs(), elapsed.subsec_millis())
+}
+
+fn igy6_data_root(repo_root: &Path) -> PathBuf {
+    let env_file = repo_root.join(".env");
+    let content = fs::read_to_string(&env_file).unwrap_or_default();
+    read_env_value(&content, "IGY6_DATA_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.join("../IGY6_Data"))
+}
+
+fn truncate_ops_log_file(path: &Path) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() <= OPS_LOG_MAX_BYTES as u64 {
+        return;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let keep_from = content.len().saturating_sub(OPS_LOG_MAX_BYTES / 2);
+    let trimmed = &content[content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= keep_from)
+        .unwrap_or(keep_from)..];
+    let _ = fs::write(path, trimmed);
+}
+
+pub fn append_ops_log(data_root: &Path, kind: &str, component: &str, level: &str, message: &str) {
+    let file_name = if kind == "error" {
+        "error.log"
+    } else {
+        "startup.log"
+    };
+    let ops_dir = data_root.join("ops");
+    if fs::create_dir_all(&ops_dir).is_err() {
+        return;
+    }
+    let path = ops_dir.join(file_name);
+    let sanitized = redact_sensitive_output(
+        &message
+            .replace('\r', " ")
+            .replace('\n', " ")
+            .chars()
+            .take(OPS_LOG_MAX_LINE_CHARS)
+            .collect::<String>(),
+    );
+    let line = format!(
+        "{} [{component}] [{level}] {sanitized}\n",
+        ops_log_timestamp()
+    );
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+    truncate_ops_log_file(&path);
+}
+
+fn log_startup_step(repo_root: &Path, message: &str) {
+    append_ops_log(
+        &igy6_data_root(repo_root),
+        "startup",
+        "igy6-cli",
+        "info",
+        message,
+    );
+}
+
+fn log_cli_error(repo_root: &Path, message: &str) {
+    append_ops_log(
+        &igy6_data_root(repo_root),
+        "error",
+        "igy6-cli",
+        "error",
+        message,
+    );
 }
 
 fn read_env_value(content: &str, key: &str) -> Option<String> {
@@ -790,6 +899,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
 
     // Start the stack detached (builds if needed). Uses "docker compose" (works on Docker Desktop Windows too)
     println!("Starting IGY6 stack (detached mode)...");
+    log_startup_step(repo_root, "docker compose up -d --build");
     let up_status = Command::new("docker")
         .args([
             "compose",
@@ -818,6 +928,10 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
 
     println!("Web UI is ready at {}", ports.web_url);
     println!("API is ready at {}", ports.api_url);
+    log_startup_step(
+        repo_root,
+        &format!("web UI ready at {} ; API at {}", ports.web_url, ports.api_url),
+    );
 
     match webbrowser::open(&ports.web_url) {
         Ok(_) => println!("Opened browser to the IGY6 UI."),
@@ -829,6 +943,10 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
 
     println!("\nIGY6 is running (Rust gateway + worker, Next.js UI).");
     println!("- View logs: docker compose -f infra/docker-compose.yml --env-file .env logs -f web api worker");
+    println!(
+        "- Troubleshooting logs: {} (startup.log, error.log) and Settings → Troubleshooting",
+        igy6_data_root(repo_root).join("ops").display()
+    );
     println!("- Stop: igy6 stop");
     println!("- Password: ThatDog123 (change in User & Security)");
     println!("- Telemetry is disabled.");
@@ -1088,6 +1206,31 @@ mod tests {
       },
       "archive_plan": {"move": [], "keep": [], "rewrite": [], "create_if_missing": []}
     }"#;
+
+    #[test]
+    fn append_ops_log_writes_redacted_lines() {
+        let mut path = env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        path.push(format!("igy6-ops-log-{unique}"));
+        fs::create_dir_all(&path).expect("temp dir");
+        append_ops_log(&path, "startup", "igy6-cli", "info", "normal startup line");
+        append_ops_log(
+            &path,
+            "error",
+            "igy6-cli",
+            "error",
+            "DATABASE_URL=postgres://secret",
+        );
+        let startup = fs::read_to_string(path.join("ops/startup.log")).expect("startup log");
+        let error_log = fs::read_to_string(path.join("ops/error.log")).expect("error log");
+        fs::remove_dir_all(&path).expect("cleanup");
+        assert!(startup.contains("normal startup line"));
+        assert!(error_log.contains("[REDACTED sensitive-looking output]"));
+        assert!(!error_log.contains("postgres://secret"));
+    }
 
     #[test]
     fn help_and_version_are_available() {

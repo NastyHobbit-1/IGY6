@@ -114,8 +114,22 @@ export type VectorCollectionStatus = {
   detail?: {
     tcp_reachable?: boolean;
     collection_existence_verified?: boolean;
+    configured_url?: string;
     note?: string;
   };
+};
+
+export type RuntimeLogSection = {
+  path: string;
+  exists: boolean;
+  lines: string[];
+};
+
+export type RuntimeLogsResponse = {
+  limit: number;
+  startup_log: RuntimeLogSection;
+  error_log: RuntimeLogSection;
+  error?: string;
 };
 
 export type GraphSchemaStatus = {

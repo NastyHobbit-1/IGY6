@@ -72,7 +72,6 @@ export function ImprovementExperimentReview({
           status_note: "Updated from Improvement and experiment review panel"
         });
         show("Experiment status updated", "Status changed to " + status + ".", payload);
-        window.setTimeout(() => window.location.reload(), 900);
       } catch (error) {
         show("Experiment status failed", String(error));
       } finally {

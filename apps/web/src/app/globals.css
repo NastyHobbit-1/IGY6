@@ -1563,6 +1563,16 @@ a {
   white-space: pre-wrap;
 }
 
+.troubleshootingLogGrid article {
+  display: grid;
+  gap: 8px;
+}
+
+.troubleshootingLogGrid pre {
+  min-height: 140px;
+  max-height: 280px;
+}
+
 .agentCommandPanel {
   display: grid;
   gap: 14px;

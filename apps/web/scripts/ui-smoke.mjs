@@ -119,7 +119,9 @@ const requiredApiRoutes = [
   "chat/retrieval-preview/route.ts",
   "settings/env/route.ts",
   "settings/env/verify/route.ts",
-  "settings/env/apply/route.ts"
+  "settings/env/apply/route.ts",
+  "ops/runtime-logs/route.ts",
+  "ops/runtime-logs/append/route.ts"
 ];
 
 for (const route of requiredApiRoutes) {
@@ -202,9 +204,14 @@ includesAll("settings hub navigation", uiCorpus, [
   "SettingsHubNav",
   "settingsHubNav",
   "UserSecurityPanel",
+  "TroubleshootingLogsPanel",
   "data-settings-wired",
+  "data-troubleshooting-logs",
+  "data-log-refresh",
+  "/api/ops/runtime-logs",
   "Configuration",
   "User &amp; Security",
+  "Troubleshooting",
   "Safety & Audit"
 ]);
 
