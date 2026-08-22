@@ -2,7 +2,7 @@ import type { SourceRecord, ApprovalRecord, ApiResult } from "./types";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function UserObservationIngestion({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const observationSources = sources.data
     .filter((source) => source.enabled && source.source_type === "user_observation")
     .map((source) => ({

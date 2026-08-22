@@ -2,7 +2,7 @@ import { MEDIA_IMPORT_TYPES } from "./constants";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function MediaImportMvp() {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const mediaTypesJson = JSON.stringify(MEDIA_IMPORT_TYPES).replace(/</g, "\\u003c");
   const script = `
 (() => {

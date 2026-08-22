@@ -773,7 +773,7 @@ export async function HomePage() {
                   ))}
                 </div>
                 {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
-                <form className="guidedManualForm" data-hypothesis-create-form data-api-base-url={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}>
+                <form className="guidedManualForm" data-hypothesis-create-form data-api-base-url="/api">
                   <label><span>New hypothesis</span><textarea name="hypothesis_text" rows={2} placeholder="Describe a testable hypothesis grounded in local evidence." /></label>
                   <label><span>Supporting evidence ids</span><input name="hypothesis_evidence_ids" placeholder="evidence-id-1, evidence-id-2" /></label>
                   <button type="submit">Record hypothesis</button>

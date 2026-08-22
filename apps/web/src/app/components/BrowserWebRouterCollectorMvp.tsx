@@ -4,7 +4,7 @@ import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 import { WebFetchToolsPanels } from "./WebFetchToolsPanels";
 
 export function BrowserWebRouterCollectorMvp() {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const importTypesJson = JSON.stringify(BROWSER_WEB_ROUTER_IMPORT_TYPES).replace(/</g, "\\u003c");
 
   const script = `

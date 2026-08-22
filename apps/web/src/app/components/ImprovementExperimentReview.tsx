@@ -12,7 +12,7 @@ export function ImprovementExperimentReview({
   improvements: ApiResult<ImprovementRecord[]>;
   experiments: ApiResult<ExperimentRecord[]>;
 }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const recentImprovements = improvements.data.slice(0, 6);
   const recentExperiments = experiments.data.slice(0, 6);
   const script = `

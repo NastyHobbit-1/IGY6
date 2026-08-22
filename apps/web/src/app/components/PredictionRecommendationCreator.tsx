@@ -14,7 +14,7 @@ export function PredictionRecommendationCreator({
   reports: ApiResult<ReportRecord[]>;
   taskPlans: ApiResult<AgentTaskPlanRecord[]>;
 }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const defaultEvidenceIds = evidenceItems.data.slice(0, 3).map((item) => item.id);
   const answerEvidenceIds = evidenceAnswers.data.flatMap((answer) => answer.evidence_item_ids ?? []).slice(0, 3);
   const suggestedEvidenceIds = defaultEvidenceIds.length > 0 ? defaultEvidenceIds : answerEvidenceIds;

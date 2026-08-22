@@ -4,7 +4,7 @@ import { StatusPill } from "./ui/StatusPill";
 import { EmptyState } from "./ui/EmptyState";
 
 export function SourceCollectionApprovalReview({ approvals }: { approvals: ApiResult<ApprovalRecord[]> }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const collectionApprovals = approvals.data
     .filter((approval) => approval.request_type === "manual_upload_collection" || approval.request_type === "agent_action")
     .slice(0, 12);
