@@ -57,6 +57,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/user/change-password"),
     ("POST", "/user/generate-totp"),
     ("POST", "/user/confirm-totp"),
+    ("POST", "/user/verify-unlock"),
     // Full-access and local-scan collection (grok branch)
     ("POST", "/collection-runs/full-access"),
     ("POST", "/collection-runs/full-local-scan"),
@@ -431,6 +432,10 @@ pub fn handle_gateway_request_with_db(
         },
         ("POST", "/user/confirm-totp") => {
             let resp_body = user_confirm_totp(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+            json_response(200, "OK", resp_body, false)
+        },
+        ("POST", "/user/verify-unlock") => {
+            let resp_body = user_verify_unlock(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
             json_response(200, "OK", resp_body, false)
         },
         ("POST", "/evidence/documents") => {
@@ -12569,6 +12574,27 @@ fn user_change_password(body: &str) -> Result<String, GatewayError> {
     Ok(serde_json::json!({"status": "password changed"}).to_string())
 }
 
+fn user_verify_unlock(body: &str) -> Result<String, GatewayError> {
+    let obj: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+
+    let cfg = load_user_config();
+    if current != cfg.password {
+        return Ok(serde_json::json!({"status":"unauthorized"}).to_string());
+    }
+    if cfg.totp_enabled {
+        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+            return Ok(serde_json::json!({"status":"unauthorized"}).to_string());
+        }
+    }
+    Ok(serde_json::json!({"status":"ok","totp_enabled":cfg.totp_enabled}).to_string())
+}
+
 fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
     let obj: serde_json::Value =
         serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
@@ -17337,6 +17363,7 @@ mod tests {
             ("POST", "/user/change-password"),
             ("POST", "/user/generate-totp"),
             ("POST", "/user/confirm-totp"),
+            ("POST", "/user/verify-unlock"),
             ("POST", "/collection-runs/full-access"),
             ("POST", "/collection-runs/full-local-scan"),
             ("GET", "/host-bridge/status"),
