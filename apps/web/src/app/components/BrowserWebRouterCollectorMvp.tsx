@@ -204,8 +204,23 @@ export function BrowserWebRouterCollectorMvp() {
   const openViewer = () => {
     const v = document.getElementById("media-viewer");
     if (!v) return;
+    const gate = async () => {
+      try {
+        const status = await (await fetch("/api/user/status")).json();
+        if (!status.password_set) { alert("Set a program password first in Settings → User & Security."); return false; }
+        const current = prompt("Enter current program password:");
+        if (!current) return false;
+        if (status.totp_enabled) {
+          const totp = prompt("Enter current TOTP code:") || "";
+          if (!totp) return false;
+        }
+        return true;
+      } catch { return false; }
+    };
     v.style.display='block'; v.innerHTML = 'Loading...';
-    fetch('/api/artifacts')
+    gate().then(ok => {
+      if (!ok) { v.style.display='none'; return; }
+      fetch('/api/artifacts')
       .then(r => r.json())
       .then(as => {
         if (!Array.isArray(as)) as = [];
@@ -230,6 +245,7 @@ export function BrowserWebRouterCollectorMvp() {
         v.addEventListener("click", () => { v.style.display='none'; }, { once: true });
       })
       .catch(e => { const v = document.getElementById("media-viewer"); if (v) v.innerHTML = 'Error: '+e; });
+    });
   };
   tools.querySelector("[data-open-media-library]")?.addEventListener("click", openViewer);
   tools.querySelector("[data-run-deep-scan]")?.addEventListener("click", async () => {
