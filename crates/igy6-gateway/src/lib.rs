@@ -61,6 +61,7 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("POST", "/collection-runs/full-access"),
     ("POST", "/collection-runs/full-local-scan"),
     // Host bridge reach probe (grok branch)
+    ("GET", "/host-bridge/status"),
     ("POST", "/host-bridge/ensure-max-reach"),
     // Bypass intel utilities (existing internal handlers)
     ("GET", "/bypass-intel/status"),
@@ -17338,6 +17339,7 @@ mod tests {
             ("POST", "/user/confirm-totp"),
             ("POST", "/collection-runs/full-access"),
             ("POST", "/collection-runs/full-local-scan"),
+            ("GET", "/host-bridge/status"),
             ("POST", "/host-bridge/ensure-max-reach"),
             ("GET", "/bypass-intel/status"),
             ("GET", "/bypass-intel/playbook"),
