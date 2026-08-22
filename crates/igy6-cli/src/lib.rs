@@ -875,7 +875,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
             if !content.contains("GROK BRANCH NOTE") {
                 content.push_str(&format!(
                     "\n# GROK BRANCH NOTE (auto-added by igy6 installer)\n\
-                     # Default program password is ThatDog123 (change in UI User & Security after first unlock).\n\
+                     # Set a program password in Settings → User & Security after first start.\n\
                      # All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI.\n\
                      # Data lives under {} (including full-res images/videos from safe sources only).\n\
                      # Telemetry disabled.\n",
@@ -886,10 +886,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
             fs::write(&env_file, content)
                 .map_err(|e| CliError::ProcessLaunch(format!("Failed to write .env: {}", e)))?;
 
-            println!(
-                "Created .env with grok defaults (password: ThatDog123, data dir: {})",
-                data_dir
-            );
+            println!("Created .env with grok defaults (data dir: {})", data_dir);
         }
     }
 
@@ -948,7 +945,7 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
         igy6_data_root(repo_root).join("ops").display()
     );
     println!("- Stop: igy6 stop");
-    println!("- Password: ThatDog123 (change in User & Security)");
+    println!("- Set a program password in Settings → User & Security");
     println!("- Telemetry is disabled.");
 
     Ok(CliOutcome::success(format!(

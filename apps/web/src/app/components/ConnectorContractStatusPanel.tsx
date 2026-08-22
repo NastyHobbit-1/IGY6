@@ -8,7 +8,7 @@ export function ConnectorContractStatusPanel() {
         <h3>Source And Connector Contract</h3>
         <StatusPill state="implemented" />
       </div>
-      <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. GROK FULL ACCESS (password "ThatDog123", deep scrape full res media, Media Library view, polished easy UI, real tied pipelines, local only secure): this surface now aggressively collects from any accessible source (local FS, web, system, browser data if present) and keeps 100% of it inside IGY6. No data leaves the instance.</p>
+      <p className="actionHint">Every collector must satisfy this contract before it becomes an active product path. This surface collects from supported sources (local files, web, system exports, browser exports when present) and keeps 100% of it inside IGY6. No data leaves the instance.</p>
       <div className="fieldGuide">
         {CONNECTOR_CONTRACT_STEPS.map((step) => (
           <article key={step.key}>

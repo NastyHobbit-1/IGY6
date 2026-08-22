@@ -2,7 +2,7 @@
 
 This guide explains the web interface in plain language for the running program on the grok branch.
 
-The program is password protected (default "ThatDog123"). Optional TOTP authenticator support is off by default until you link it in the User & Security section (works with any standard authenticator app). All data stays local only. The UI automatically uses a clear free local URL (dynamic port switching with clear printed address if the preferred port is busy).
+The program is password protected (set on first run). Optional TOTP authenticator support is off by default until you link it in the User & Security section (works with any standard authenticator app). All data stays local only. The UI automatically uses a clear free local URL (dynamic port switching with clear printed address if the preferred port is busy).
 
 ## Start & Open
 

@@ -22,7 +22,7 @@ Safety:
   - Does not delete volumes or images.
   - Does not overwrite an existing .env.
   - Prints Docker Compose errors directly.
-  - After bootstrap, all deep collection, Media Library, password change ("ThatDog123"), TOTP linking, etc. is done from the web UI (no further cmdline needed).
+  - After bootstrap, all deep collection, Media Library, password/TOTP linking, etc. is done from the web UI (no further cmdline needed).
 EOF
 }
 

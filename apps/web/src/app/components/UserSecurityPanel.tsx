@@ -8,6 +8,19 @@ export function UserSecurityPanel() {
   if (!root || root.getAttribute("data-user-security-wired") === "true") return;
   root.setAttribute("data-user-security-wired", "true");
 
+  // Initial UI state based on whether a password is set yet.
+  (async () => {
+    try {
+      const status = await (await fetch("/api/user/status")).json();
+      if (!status.password_set) {
+        const curRow = root.querySelector("#igy6-cur-password")?.closest("label");
+        if (curRow) curRow.style.display = "none";
+        const button = root.querySelector("[data-user-change-password]");
+        if (button) button.textContent = "Set password";
+      }
+    } catch { /* ignore */ }
+  })();
+
   root.querySelector("[data-user-change-password]")?.addEventListener("click", async () => {
     const current = document.getElementById("igy6-cur-password")?.value ?? "";
     const next = document.getElementById("igy6-new-password")?.value ?? "";
@@ -67,7 +80,7 @@ export function UserSecurityPanel() {
       </div>
       <div className="guidedManualNotice">
         <strong>Local program password and optional TOTP.</strong>
-        <span>Default password is <code>ThatDog123</code> until you change it. TOTP stays off until you link an authenticator app.</span>
+        <span>Set a program password here. TOTP stays off until you link an authenticator app.</span>
       </div>
       <div className="settingsActions userSecurityActions">
         <label>

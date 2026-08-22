@@ -8,7 +8,7 @@ This is the single reference for **install → run → use → verify → develo
 |------|---------|--------------|
 | 1. Install CLI | Windows: `.\install.ps1` · Linux/macOS: `./install.sh` | Builds `igy6`, adds to PATH, sets `IGY6_REPO` |
 | 2. Start stack | `igy6 start` | Bootstrap `.env`, auto ports, Docker up, schema, open browser |
-| 3. Use UI | Open printed `WEB_BASE_URL` (default password `ThatDog123`) | Chat-first workspace |
+| 3. Use UI | Open printed `WEB_BASE_URL` (set password in Settings) | Chat-first workspace |
 | 4. Optional LLM | Run Ollama locally; `igy6 start` auto-enables if API is up | Or `scripts/ollama-local-setup.ps1 -Install` |
 | 5. Stop | `igy6 stop` | `docker compose down` |
 
@@ -171,7 +171,7 @@ The UI server-fetches most data via `API_BASE_URL`. Client-side buttons use `/ap
 
 After `install.ps1` / `install.sh` and `igy6 start`, you get:
 
-1. `.env` bootstrapped (password `ThatDog123`, data root, ports)
+1. `.env` bootstrapped (data root, ports; set password in UI)
 2. Docker stack built and started (web, api, worker, postgres, qdrant, neo4j, …)
 3. PostgreSQL schema applied on first start
 4. Browser opened to the **IGY6** UI (not Open WebUI) at `WEB_BASE_URL`
@@ -268,11 +268,11 @@ cargo build -p igy6-cli --release
 
 ---
 
-## Default credentials
+## Authentication
 
-- Program password: `ThatDog123` (change in Settings → User & Security)
-- TOTP: off until you link an authenticator
-- Postgres/Neo4j: see `.env` (local-only defaults)
+- Set a program password in Settings → User & Security on first run.
+- TOTP: off until you link an authenticator.
+- Postgres/Neo4j: see `.env` (local-only defaults).
 
 ---
 

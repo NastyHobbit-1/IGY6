@@ -179,62 +179,7 @@ export function BrowserWebRouterCollectorMvp() {
 })();
 `;
 
-  const grokToolsScript = `
-(() => {
-  const root = document.querySelector("[data-grok-tools]");
-  if (!root || root.getAttribute("data-grok-tools-wired") === "true") return;
-  root.setAttribute("data-grok-tools-wired", "true");
-
-  root.querySelector("[data-grok-auth-status]")?.addEventListener("click", async () => {
-    alert("Status: " + JSON.stringify(await (await fetch("/api/user/status")).json()));
-  });
-
-  root.querySelector("[data-grok-open-media]")?.addEventListener("click", () => {
-    window.grokLoadMedia = async () => {
-      const c = document.createElement("div");
-      c.innerHTML = "<div class='skeletonBlock' aria-busy='true'><span class='skeleton'></span><span class='skeleton'></span><span class='skeleton skeletonShort'></span></div>";
-      document.body.appendChild(c);
-      try {
-        const r = await fetch("/api/artifacts");
-        let as = await r.json();
-        if (!Array.isArray(as)) as = [];
-        const ms = as.filter((a) => String(a.mime_type || "").toLowerCase().match(/^(image|video)/));
-        c.innerHTML = ms.map((a) =>
-          "<div style='border:1px solid #0f0;margin:2px;padding:2px;cursor:pointer' data-grok-media-id='" + a.id + "' data-grok-media-mime='" + (a.mime_type || "") + "'>" + (a.mime_type || "") + " " + a.id + "</div>"
-        ).join("") || "No media yet (run deep scan).";
-        c.querySelectorAll("[data-grok-media-id]").forEach((node) => {
-          node.addEventListener("click", () => {
-            window.grokViewMedia(node.getAttribute("data-grok-media-id"), node.getAttribute("data-grok-media-mime"));
-          });
-        });
-      } catch (e) {
-        c.innerHTML = "Err " + e;
-      }
-    };
-    window.grokLoadMedia();
-  });
-
-  root.querySelector("[data-grok-deep-scan]")?.addEventListener("click", () => {
-    const p = prompt("Password?");
-    if (p !== "ThatDog123") {
-      alert("Wrong pass");
-      return;
-    }
-    fetch("/api/collection-runs/full-access", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requested_by_actor_id: "ui", password: "ThatDog123", scope: "everything" })
-    })
-      .then((r) => r.json())
-      .then(() => alert("Deep scan started. Refresh lib for full res images/videos from sources."));
-  });
-
-  document.querySelector("[data-grok-media-viewer]")?.addEventListener("click", () => {
-    const el = document.getElementById("grok-media-viewer");
-    if (el) el.style.display = "none";
-  });
-})();
-`;
+  // Removed dev-only grok tools block with hardcoded password.
 
   return (
     <section className="guidedManualText" id="browser-web-router-import" data-browser-web-router-mvp data-api-base-url={browserApiBaseUrl}>
@@ -244,32 +189,6 @@ export function BrowserWebRouterCollectorMvp() {
         <span>Paste authorized page, web, or router text here. Preview first, then collect through the real local ingestion pipeline.</span>
       </div>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
-        {/* Added by grok: password protected deep full res media library + polished controls */}
-        <div style={{margin:'4px 0',padding:'4px',border:'1px solid lime',fontSize:'0.8em'}} data-grok-tools>
-          <strong>Media Library (images/videos collected - full/orig res viewer)</strong>
-          <div style={{marginTop:'0.5rem',padding:'0.5rem',border:'1px solid #0af',background:'#001122',color:'white',fontSize:'0.85em'}}>
-            <b>User &amp; Security</b> (use Settings → User &amp; Security for password/TOTP)<br/>
-            <span>Quick auth status:</span>
-            <button type="button" data-grok-auth-status>Auth Status</button>
-          </div>
-          <button type="button" data-grok-open-media>Open Media Library</button>
-          <button type="button" data-grok-deep-scan>Deep Thorough Scan (full res media + complete info)</button>
-        </div>
-        <div id="grok-media-viewer" data-grok-media-viewer style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}}></div>
-        <ClientScript script={`window.grokViewMedia = window.grokViewMedia || async function(id, mime) {
-            const v = document.getElementById('grok-media-viewer'); if(!v) return;
-            v.style.display='block'; v.innerHTML = 'Loading full res...';
-            try {
-              const c = await fetch('/api/artifacts/'+id+'/content'); const cj = await c.json();
-              const pre = cj.data_url_prefix || ('data:'+ (cj.mime_type||mime) +';base64,');
-              if ((mime||'').toLowerCase().indexOf('image')>=0) {
-                v.innerHTML = '<img src="'+pre+cj.base64_content+'" style="max-width:100%" /><br><small>Full res from source. Right click save or close.</small>';
-              } else {
-                v.innerHTML = '<video src="'+pre+cj.base64_content+'" controls style="max-width:100%" /><br><small>Original res video.</small>';
-              }
-            } catch(e) { v.innerHTML = 'Error loading: '+e; }
-          };`} />
-        <ClientScript script={grokToolsScript} />
         <label>
           <span>Import type</span>
           <select name="bwr_type" defaultValue="browser_page_text">

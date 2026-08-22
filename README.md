@@ -11,7 +11,7 @@ On the `grok` branch: Full-access deep collection via Rust gateway + host bridge
 - **Deep Thorough Collection**: Crawl URLs, local paths, system state, WiFi — fetch full-resolution images/videos directly from sources.
 - **Media Library**: Grid view of all collected media with original quality viewers.
 - **Evidence-First Architecture**: Artifacts → Documents → Chunks → Vectors → Graph (Neo4j) → Answers with provenance.
-- **Security**: Password-protected UI (default: `ThatDog123`), optional TOTP 2FA.
+- **Security**: Password-protected UI (set on first run), optional TOTP 2FA.
 - **Local-Only**: All data stays under `IGY6_DATA_ROOT`. No cloud, no telemetry by default.
 - **Dynamic Ports**: Automatically uses free ports for UI and API.
 - **Modular Rust Crates**: High-performance gateway, worker, LLM routing, chunking, vector memory, etc.
@@ -38,7 +38,7 @@ On the `grok` branch: Full-access deep collection via Rust gateway + host bridge
    - Opens browser automatically to local UI.
    - Uses free ports if defaults busy.
 
-4. **Unlock**: Use password `ThatDog123` (change in Settings).
+4. **Unlock**: On first visit, set a program password in Settings → User & Security.
 
 See [docs/WORKING.md](docs/WORKING.md) for full flow and verification.
 

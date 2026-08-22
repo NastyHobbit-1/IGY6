@@ -1,6 +1,6 @@
 # Security Policy (grok branch)
 
-On this branch the program is password protected (default "ThatDog123") with easy password changing in the User & Security UI section. Optional TOTP authenticator support (any standard app) is off by default until explicitly linked.
+On this branch the program is password protected (set on first run) with easy password changing in the User & Security UI section. Optional TOTP authenticator support (any standard app) is off by default until explicitly linked.
 
 ## Core Posture (grok branch)
 
@@ -13,10 +13,10 @@ On this branch the program is password protected (default "ThatDog123") with eas
 
 ## Password & Authenticator
 
-- Default password "ThatDog123".
+- Set a program password on first run via Settings → User & Security.
 - Change password anytime via the User section (requires current password; TOTP code if enabled).
 - TOTP (standard RFC 6238) is off by default. Generate secret/otpauth URL (any authenticator app works — Google Authenticator, Authy, etc.), add it, then confirm a code to enable. Once on, protected actions also require a current code.
-- Status and linking are exposed via /user/status, /user/generate-totp, /user/confirm-totp, /user/change-password (all require current credentials).
+- Status and linking are exposed via /user/status, /user/generate-totp, /user/confirm-totp, /user/change-password (all require current credentials once initialized).
 
 ## Collection & Media
 
@@ -27,7 +27,7 @@ On this branch the program is password protected (default "ThatDog123") with eas
 ## Operational Security
 
 - Start with scripts/run.sh after preparing your data root.
-- Unlock the UI with current password (and TOTP code when enabled).
+- Unlock protected features with the current password (and TOTP code when enabled).
 - Use the collector responsibly — it will ingest anything reachable.
 - Manage password and optional authenticator in the User & Security section.
 - Keep your IGY6_DATA_ROOT on trusted storage with proper permissions.
