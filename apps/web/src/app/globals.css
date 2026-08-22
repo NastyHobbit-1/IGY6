@@ -502,11 +502,11 @@ a {
   margin-top: 14px;
 }
 
-.chatFirstShell .mainConsole:has(#tab-results:checked) .compactTopBar {
+.chatFirstShell .mainConsole:has(#tab-chat:checked) .compactTopBar {
   margin-bottom: 0;
 }
 
-.chatFirstShell .mainConsole:has(#tab-results:checked) .compactTopBar .simpleModeToggle {
+.chatFirstShell .mainConsole:has(#tab-chat:checked) .compactTopBar .simpleModeToggle {
   display: inline-flex;
 }
 
@@ -1791,10 +1791,9 @@ a {
   outline: none;
 }
 
-.productTabs:has(#tab-home:checked) label[for="tab-home"],
 .productTabs:has(#tab-add-data:checked) label[for="tab-add-data"],
 .productTabs:has(#tab-work:checked) label[for="tab-work"],
-.productTabs:has(#tab-results:checked) label[for="tab-results"],
+.productTabs:has(#tab-chat:checked) label[for="tab-chat"],
 .productTabs:has(#tab-settings:checked) label[for="tab-settings"],
 .productTabs:has(#tab-advanced:checked) label[for="tab-advanced"] {
   border-color: rgba(96, 165, 250, 0.38);
@@ -1806,10 +1805,9 @@ a {
   display: none;
 }
 
-.mainConsole:has(#tab-home:checked) [data-tab-panel="home"],
 .mainConsole:has(#tab-add-data:checked) [data-tab-panel="add-data"],
 .mainConsole:has(#tab-work:checked) [data-tab-panel="work"],
-.mainConsole:has(#tab-results:checked) [data-tab-panel="results"],
+.mainConsole:has(#tab-chat:checked) [data-tab-panel="results"],
 .mainConsole:has(#tab-settings:checked) [data-tab-panel="settings"],
 .mainConsole:has(#tab-advanced:checked) [data-tab-panel="advanced"] {
   display: grid;
@@ -2308,7 +2306,7 @@ body.minimal-ui-mode .minimalWorkspace {
 }
 
 body.minimal-ui-mode .productTabs,
-body.minimal-ui-mode #home,
+body.minimal-ui-mode #chat-readiness,
 body.minimal-ui-mode .chatWebFetchDock,
 body.minimal-ui-mode .journeyStrip,
 body.minimal-ui-mode .leftSidebar .compactNav,

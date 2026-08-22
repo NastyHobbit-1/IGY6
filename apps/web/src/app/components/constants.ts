@@ -1066,18 +1066,18 @@ export const MINIMAL_UI_TOGGLE_SCRIPT = `
 export const WORKSPACE_HASH_ROUTER_SCRIPT = `
 (() => {
   const routes = {
-    "chat-web-fetch": "tab-results",
+    "chat-web-fetch": "tab-chat",
     "browser-web-router-import": "tab-add-data",
     "uploads-collection": "tab-add-data",
     "sources-panel": "tab-add-data",
     "data-knowledge": "tab-add-data",
-    "evidence-panel": "tab-results",
-    "memory-panel": "tab-results",
+    "evidence-panel": "tab-chat",
+    "memory-panel": "tab-chat",
     "work-processing": "tab-work",
     "settings": "tab-settings",
     "user-security": "tab-settings",
     "advanced-diagnostics": "tab-advanced",
-    "assistant": "tab-results"
+    "assistant": "tab-chat"
   };
   const applyHash = () => {
     const id = (location.hash || "").replace(/^#/, "");

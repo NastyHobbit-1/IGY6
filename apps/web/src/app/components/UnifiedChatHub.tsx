@@ -329,7 +329,7 @@ export function UnifiedChatHub({
   const navigationFromMessage = (text) => {
     const lower = text.toLowerCase();
     if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(web fetch|auto bypass|bypass fetch|fetch tools)\\b/.test(lower)) {
-      return navigateTo("tab-results", "chat-web-fetch");
+      return navigateTo("tab-chat", "chat-web-fetch");
     }
     if (/\\b(open|show|go to)\\b/.test(lower) && /\\b(uploads|guided upload)\\b/.test(lower)) {
       return navigateTo("tab-add-data", "uploads-collection");
@@ -353,14 +353,14 @@ export function UnifiedChatHub({
     }
     if (/\\b(add data|upload|new source|import data|bring in)\\b/.test(lower)) return navigateTo("tab-add-data", "uploads-collection");
     if (/\\b(auto bypass|full auto bypass|bypass fetch|fetch public|web fetch)\\b/.test(lower) && !extractUrl(text)) {
-      return navigateTo("tab-results", "chat-web-fetch");
+      return navigateTo("tab-chat", "chat-web-fetch");
     }
     if (/\\b(processing|work queue|work item|check processing|pipeline)\\b/.test(lower)) return navigateTo("tab-work", "work-processing");
     if (/\\b(settings|password|totp|llm provider|environment)\\b/.test(lower)) return navigateTo("tab-settings", "settings");
     if (/\\b(approval|safety|audit)\\b/.test(lower)) return navigateTo("tab-settings", "safety-audit");
     if (/\\b(diagnostics|advanced|service readiness)\\b/.test(lower)) return navigateTo("tab-advanced", "advanced-diagnostics");
-    if (/\\b(evidence library|documents|reports|memory)\\b/.test(lower)) return navigateTo("tab-results", "evidence-panel");
-    if (/\\b(open chat|back to chat)\\b/.test(lower)) return navigateTo("tab-results", "assistant");
+    if (/\\b(evidence library|documents|reports|memory)\\b/.test(lower)) return navigateTo("tab-chat", "evidence-panel");
+    if (/\\b(open chat|back to chat)\\b/.test(lower)) return navigateTo("tab-chat", "assistant");
     return false;
   };
 
@@ -396,7 +396,7 @@ export function UnifiedChatHub({
         "What I can do",
         "Talk normally — paste a link and say what you want from it, ask questions about stuff you've saved, paste notes to add, check what's still processing, or open settings. If I'm unsure, I'll ask a plain question instead of making you learn command names."
       );
-      addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+      addAction("Open web fetch tools", () => navigateTo("tab-chat", "chat-web-fetch"));
       addAction("Show project health", () => handleSend("Show project health."));
       return true;
     }
@@ -420,7 +420,7 @@ export function UnifiedChatHub({
         addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
       } catch (error) {
         appendMessage("assistant", "Deep fetch failed", error instanceof Error ? error.message : "Unknown error");
-        addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+        addAction("Open web fetch tools", () => navigateTo("tab-chat", "chat-web-fetch"));
       }
       setStatus("Ready");
       return true;
@@ -456,7 +456,7 @@ export function UnifiedChatHub({
         addAction("Check processing", () => navigateTo("tab-work", "work-processing"));
       } catch (error) {
         appendMessage("assistant", "Deep fetch failed", error instanceof Error ? error.message : "Unknown error");
-        addAction("Open web fetch tools", () => navigateTo("tab-results", "chat-web-fetch"));
+        addAction("Open web fetch tools", () => navigateTo("tab-chat", "chat-web-fetch"));
       }
       setStatus("Ready");
       return true;
@@ -467,7 +467,7 @@ export function UnifiedChatHub({
       const authorization = extractBearer(text);
       if (!cookie && !authorization) {
         fillWebFetchField("bypass_page_url", url);
-        navigateTo("tab-results", "chat-web-fetch");
+        navigateTo("tab-chat", "chat-web-fetch");
         appendMessage(
           "assistant",
           "Session needed",

@@ -213,14 +213,14 @@ export async function HomePage() {
         </div>
 
         <div className="sidebarActions">
-          <label className="sidebarButton primary" htmlFor="tab-results">Open chat</label>
+          <label className="sidebarButton primary" htmlFor="tab-chat">Open chat</label>
           <button type="button" className="sidebarButton" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
         </div>
 
         <p className="sidebarHint" data-minimal-ui-hint>Say what you want in chat — I&apos;ll ask plain questions when I&apos;m not sure what you mean.</p>
 
         <nav className="navSection compactNav" aria-label="Workspace views">
-          <label htmlFor="tab-results">Chat</label>
+          <label htmlFor="tab-chat">Chat</label>
           <label htmlFor="tab-add-data">Data</label>
           <label htmlFor="tab-work">Work</label>
           <label htmlFor="tab-settings">Settings</label>
@@ -263,11 +263,11 @@ export async function HomePage() {
         <section className="productTabs compactTabs" aria-label="Main dashboard tabs">
           <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" />
-          <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" defaultChecked />
+          <input className="tabInput" id="tab-chat" name="main-dashboard-tab" type="radio" defaultChecked />
           <input className="tabInput" id="tab-settings" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-advanced" name="main-dashboard-tab" type="radio" />
           <nav className="tabList" aria-label="Main dashboard">
-            <label role="tab" htmlFor="tab-results">Chat</label>
+            <label role="tab" htmlFor="tab-chat">Chat</label>
             <label role="tab" htmlFor="tab-add-data">Data</label>
             <label role="tab" htmlFor="tab-work">Work</label>
             <label role="tab" htmlFor="tab-settings">Settings</label>
@@ -275,7 +275,7 @@ export async function HomePage() {
           </nav>
         </section>
 
-        <section className="panel workflowHero tabContent" id="home" data-tab-panel="results">
+        <section className="panel workflowHero tabContent" id="chat-readiness" data-tab-panel="results">
           <div className="panelHeader">
             <div>
               <p className="eyebrow">Home</p>
@@ -317,7 +317,7 @@ export async function HomePage() {
               <span>3</span>
               <h3>Ask with evidence</h3>
               <p>{sources.data.length === 0 ? "Add a data source first." : evidenceItems.data.length === 0 ? "Add approved text and check processing." : "Ask a question over local evidence."}</p>
-              <label htmlFor="tab-results">Open Chat</label>
+              <label htmlFor="tab-chat">Open Chat</label>
             </article>
           </div>
         </section>
@@ -554,10 +554,10 @@ export async function HomePage() {
             </details>
           </section>
 
-          <section className="panel tabContent" id="evidence-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="evidence-panel" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+              <p className="eyebrow">Chat</p>
                 <h2><HelpHeading term="evidenceItem">Evidence And Documents</HelpHeading></h2>
               </div>
               {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
@@ -696,10 +696,10 @@ export async function HomePage() {
             </section>
           </section>
 
-          <section className="panel tabContent" id="memory-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="memory-panel" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+              <p className="eyebrow">Chat</p>
                 <h2><HelpHeading term="vectorMemory">Search Memory And Findings</HelpHeading></h2>
               </div>
               {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
@@ -1053,7 +1053,7 @@ export async function HomePage() {
           <section className="panel workflowSection tabContent" id="reports" data-tab-panel="results">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+                <p className="eyebrow">Chat</p>
                 <h2>Reports</h2>
               </div>
               {reports.error ? <span className="errorText">{reports.error}</span> : <StatusPill state={`${reports.data.length}-reports`} />}
