@@ -4,6 +4,10 @@ Use this baseline in every future Codex prompt for IGY6 work.
 
 This file is branch-local build-agent instruction material for the active `grok` branch. It must stay on `grok` unless a later DIFF explicitly changes the branch policy. Do not promote this file to `main` under DIFF-294.
 
+## Current Active DIFF
+
+- DIFF-294 — Production-Readiness and Productization (Active, change-bearing)
+
 ## Required Opening Context
 
 You are working in the IGY6 repository.
@@ -66,7 +70,7 @@ Current active runtime posture:
 - Legacy Python/Celery worker is archived and inactive.
 - Celery beat is inactive/retired from active Compose runtime.
 
-Supporting services include PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix.
+Supporting services include PostgreSQL, Qdrant, Neo4j, MLflow, and Phoenix.
 
 Do not claim unsupported capabilities. The strongest current product path is UTF-8 text-oriented workflows: source/upload, artifact/document/chunk/evidence/vector processing, evidence answers, reports, audit records, approvals, and local diagnostics where implemented.
 
@@ -127,14 +131,16 @@ Rules:
 
 The UI is a normal-user tabbed dashboard, not a developer-only console.
 
-Current tabs:
+Current visible tabs in the grok UI:
 
-- Home
-- Add Data
+- Chat (default)
+- Data
 - Work
-- Results
 - Settings
-- Advanced
+- More
+
+Note: internal panel sections still use headings like Home readiness, Add Data,
+Results/Evidence, and Advanced; the tab bar labels above are what users see.
 
 Rules:
 
@@ -209,7 +215,7 @@ Every Codex final response should include:
 
 Before asking to promote work to `main`, verify:
 
-- work is committed on `dev`
+- work is committed on `grok`
 - one commit or clearly identified commit range contains the runtime/product change
 - dev-only files are not part of the commit to promote
 - clean branch from `main` can cherry-pick the intended commit
@@ -217,4 +223,4 @@ Before asking to promote work to `main`, verify:
 - `git diff --check` passes
 - active DIFF result and verification result are complete
 
-Promotion must be via clean branch and PR into `main`, never by merging `dev` into `main`.
+Promotion must be via clean branch and PR into `main`, never by merging `grok` into `main`.
