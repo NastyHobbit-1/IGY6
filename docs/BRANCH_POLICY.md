@@ -30,10 +30,10 @@ This document defines the current branch boundary for IGY6.
 
 `grok` is the ongoing work branch for development and build-agent assisted work.
 
-`grok` may contain development-only build instructions and agent coordination
+`grok` may contain build-agent instruction material and agent coordination
 material.
 
-Do not remove private/dev/build instruction files from `grok`.
+Do not remove private build-agent instruction files from `grok`.
 
 `grok` must not be merged directly into `main`.
 
@@ -48,8 +48,8 @@ explicitly instructs it.
 
 Under DIFF-294, promotion to `main` is out of scope. Later, only necessary
 public/runtime-safe files should be selectively promoted to `main` when the
-owner explicitly requests promotion. Any promotion must exclude
-private/dev/build instruction files.
+owner explicitly requests promotion. Any promotion must exclude private
+build-agent instruction files.
 
 ## Forbidden Main Files
 
@@ -66,4 +66,4 @@ The following are not allowed on `main` unless a later DIFF explicitly changes t
 - `docs/plans/DEV_BRANCH_POLICY.md`
 - `docs/plans/IGY6_DEV_BUILD_PLAN.md`
 
-Private/dev/build instruction files stay on `grok`.
+Private build-agent instruction files stay on `grok`.

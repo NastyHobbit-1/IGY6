@@ -217,7 +217,7 @@ Before asking to promote work to `main`, verify:
 
 - work is committed on `grok`
 - one commit or clearly identified commit range contains the runtime/product change
-- dev-only files are not part of the commit to promote
+- branch-local build-agent instruction files are not part of the commit to promote
 - clean branch from `main` can cherry-pick the intended commit
 - forbidden-file check passes
 - `git diff --check` passes
