@@ -1,8 +1,6 @@
 import { proxyToRust } from "@/lib/rust-api";
 
-type Params = { params: { report_id: string } };
-
-export async function POST(request: Request, { params }: Params): Promise<Response> {
+export async function POST(request: Request, { params }: any): Promise<Response> {
   const reportId = params.report_id;
   if (!reportId) {
     return Response.json({ detail: "report_id is required" }, { status: 400 });

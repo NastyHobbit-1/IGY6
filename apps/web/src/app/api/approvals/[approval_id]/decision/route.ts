@@ -1,8 +1,6 @@
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
 
-type Params = { params: { approval_id: string } };
-
-export async function POST(request: Request, { params }: Params): Promise<Response> {
+export async function POST(request: Request, { params }: any): Promise<Response> {
   const approvalId = params.approval_id;
   if (!approvalId) {
     return Response.json({ detail: "approval_id is required" }, { status: 400 });
