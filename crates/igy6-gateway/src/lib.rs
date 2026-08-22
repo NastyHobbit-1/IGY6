@@ -52,6 +52,20 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
+    // User/TOTP security routes (grok branch)
+    ("GET", "/user/status"),
+    ("POST", "/user/change-password"),
+    ("POST", "/user/generate-totp"),
+    ("POST", "/user/confirm-totp"),
+    // Full-access and local-scan collection (grok branch)
+    ("POST", "/collection-runs/full-access"),
+    ("POST", "/collection-runs/full-local-scan"),
+    // Host bridge reach probe (grok branch)
+    ("POST", "/host-bridge/ensure-max-reach"),
+    // Bypass intel utilities (existing internal handlers)
+    ("GET", "/bypass-intel/status"),
+    ("GET", "/bypass-intel/playbook"),
+    ("POST", "/bypass-intel/harvest"),
     ("POST", "/media/import"),
     ("GET", "/agent/capabilities"),
     ("GET", "/agent/task-plans"),
@@ -17313,6 +17327,24 @@ mod tests {
             host_port_from_url("bolt://neo4j:7687"),
             Some(("neo4j".to_string(), 7687))
         );
+    }
+
+    #[test]
+    fn native_route_table_includes_security_full_access_host_bridge_and_bypass_intel() {
+        for expected in [
+            ("GET", "/user/status"),
+            ("POST", "/user/change-password"),
+            ("POST", "/user/generate-totp"),
+            ("POST", "/user/confirm-totp"),
+            ("POST", "/collection-runs/full-access"),
+            ("POST", "/collection-runs/full-local-scan"),
+            ("POST", "/host-bridge/ensure-max-reach"),
+            ("GET", "/bypass-intel/status"),
+            ("GET", "/bypass-intel/playbook"),
+            ("POST", "/bypass-intel/harvest"),
+        ] {
+            assert!(RUST_NATIVE_ROUTES.contains(&expected), "{expected:?}");
+        }
     }
 
     fn request(method: &str, path: &str, body: &str) -> GatewayRequest {
