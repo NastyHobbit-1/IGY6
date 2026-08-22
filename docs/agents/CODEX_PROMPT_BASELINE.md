@@ -2,7 +2,7 @@
 
 Use this baseline in every future Codex prompt for IGY6 work.
 
-This file is dev-only build-agent instruction material. It must stay on `dev` unless a later DIFF explicitly changes the branch policy. Do not promote this file to `main`.
+This file is branch-local build-agent instruction material for the active `grok` branch. It must stay on `grok` unless a later DIFF explicitly changes the branch policy. Do not promote this file to `main` under DIFF-294.
 
 ## Required Opening Context
 
@@ -20,11 +20,10 @@ Do not start implementation from memory, ambition, or inferred intent. Verify th
 
 ## Branch Rules
 
-- Work on `dev` for development and build-agent assisted work.
-- Do not merge `dev` into `main`.
-- Do not add dev-only instruction files to `main`.
-- Runtime/product work must be promoted to `main` through a clean branch from `main` and a cherry-pick of only the scoped runtime/product commit.
-- If promotion to `main` is needed, recommend or create a clean branch from `main`, cherry-pick only the allowed commit, and verify forbidden files are absent.
+- Work on `grok` only. Do not develop on other branches unless explicitly authorized by a later DIFF.
+- Do not merge `grok` into `main`.
+- Do not add build-agent instruction files to `main`.
+- Under DIFF-294, promotion to `main` is out of scope. If a later DIFF authorizes promotion, do so via a clean branch from `main` and cherry-pick only the scoped runtime/product commit; verify forbidden files are absent.
 
 Forbidden on `main` unless a later DIFF explicitly changes policy:
 
