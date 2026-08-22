@@ -388,6 +388,7 @@ pub fn handle_gateway_request_with_db(
             full_access_collection_response(&request.body, database_url)
         }
         ("POST", "/host-bridge/ensure-max-reach") => host_bridge_ensure_max_reach_response(),
+        ("GET", "/host-bridge/status") => host_bridge_status_response(),
         ("GET", "/bypass-intel/status") => {
             json_response(200, "OK", bypass_intel::bypass_intel_status_json(), false)
         }
@@ -2948,15 +2949,96 @@ fn wait_for_host_bridge_ready(max_wait_secs: u64) -> Result<(), GatewayError> {
     ))
 }
 
-fn host_bridge_ensure_max_reach_response() -> GatewayResponse {
-    write_route_response(wait_for_host_bridge_ready(45).map(|()| {
-        serde_json::json!({
-            "ok": true,
-            "status": "ready",
-            "host_bridge": "reachable"
+fn host_bridge_status_response() -> GatewayResponse {
+    json_response(200, "OK", host_bridge_status_json(), false)
+}
+
+fn host_bridge_http_request(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    read_timeout_secs: u64,
+) -> Result<(u16, String), GatewayError> {
+    let token = host_bridge_token()?;
+    let (host, port) = host_bridge_listen_addr()?;
+    let mut stream = TcpStream::connect((host.as_str(), port))
+        .map_err(|error| GatewayError::Conflict(format!("Host bridge is unavailable: {error}")))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(read_timeout_secs)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+    let body_text = body.unwrap_or("");
+    let request = if body.is_some() {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_text}",
+            body_text.len()
+        )
+    } else {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        )
+    };
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| GatewayError::Conflict(format!("failed to write host bridge request: {e}")))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| GatewayError::Conflict(format!("failed to read host bridge response: {e}")))?;
+    let status_code = response
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or(500);
+    let body_start = response.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+    let body = response[body_start..].to_string();
+    Ok((status_code, body))
+}
+
+fn host_bridge_status_json() -> String {
+    // Default payload
+    let mut host = "127.0.0.1".to_string();
+    let mut port = 0u16;
+    let listen = host_bridge_listen_addr();
+    if let Ok((h, p)) = &listen {
+        host = h.clone();
+        port = *p;
+    }
+    if !host_bridge_tcp_probe() {
+        return serde_json::json!({
+            "reachable": false,
+            "host": host,
+            "port": port,
+            "reason": "tcp_probe_failed"
         })
-        .to_string()
-    }))
+        .to_string();
+    }
+    // Try /health
+    let (health_code, health_body) = match host_bridge_http_request("GET", "/health", None, 5) {
+        Ok(pair) => pair,
+        Err(_) => (502, String::new()),
+    };
+    // Try /capabilities
+    let (caps_code, caps_body) =
+        match host_bridge_http_request("GET", "/capabilities", None, 5) {
+            Ok(pair) => pair,
+            Err(_) => (502, String::new()),
+        };
+    serde_json::json!({
+        "reachable": health_code == 200,
+        "host": host,
+        "port": port,
+        "health_raw": if health_body.is_empty() { serde_json::Value::Null } else { serde_json::json!(health_body) },
+        "capabilities_raw": if caps_body.is_empty() { serde_json::Value::Null } else { serde_json::json!(caps_body) }
+    })
+    .to_string()
+}
+
+fn host_bridge_ensure_max_reach_response() -> GatewayResponse {
+    write_route_response(wait_for_host_bridge_ready(45).map(|()| host_bridge_status_json()))
 }
 
 fn invoke_host_bridge_action(

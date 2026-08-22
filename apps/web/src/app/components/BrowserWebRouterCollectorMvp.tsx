@@ -188,6 +188,81 @@ export function BrowserWebRouterCollectorMvp() {
         <strong>Manual paste, preview, and collect</strong>
         <span>Paste authorized page, web, or router text here. Preview first, then collect through the real local ingestion pipeline.</span>
       </div>
+      <details className="panelInset" style={{margin:'6px 0'}} open={false}>
+        <summary><strong>Media tools</strong> <em>(local only)</em></summary>
+        <div className="stack" data-product-tools>
+          <button type="button" data-open-media-library>Open Media Library</button>
+          <button type="button" data-run-deep-scan>Deep Thorough Scan</button>
+          <p className="actionHint">Deep scan requires a program password (and TOTP if enabled). It prepares host-bridge if needed, then runs strongest-tier collection.</p>
+        </div>
+        <div id="media-viewer" data-media-viewer style={{display:'none',position:'fixed',top:'10%',left:'10%',width:'80%',height:'80%',background:'#000',color:'#0f0',zIndex:99999,padding:'1rem',overflow:'auto'}} />
+        <ClientScript script={`
+(function(){
+  const tools = document.querySelector("[data-product-tools]");
+  if (!tools || tools.getAttribute("data-wired") === "true") return;
+  tools.setAttribute("data-wired","true");
+  const openViewer = () => {
+    const v = document.getElementById("media-viewer");
+    if (!v) return;
+    v.style.display='block'; v.innerHTML = 'Loading...';
+    fetch('/api/artifacts')
+      .then(r => r.json())
+      .then(as => {
+        if (!Array.isArray(as)) as = [];
+        const ms = as.filter(a => String(a.mime_type||'').toLowerCase().match(/^(image|video)/));
+        v.innerHTML = (ms.map(a => "<div style='border:1px solid #0f0;margin:2px;padding:2px;cursor:pointer' data-media-id='"+a.id+"' data-media-mime='"+(a.mime_type||"")+"'>"+(a.mime_type||"")+" "+a.id+"</div>").join("")) || "No media yet.";
+        v.querySelectorAll("[data-media-id]").forEach(node => {
+          node.addEventListener("click", async () => {
+            const id = node.getAttribute("data-media-id");
+            const mime = node.getAttribute("data-media-mime")||"";
+            v.innerHTML = 'Loading full res...';
+            try {
+              const c = await fetch('/api/artifacts/'+id+'/content'); const cj = await c.json();
+              const pre = cj.data_url_prefix || ('data:'+ (cj.mime_type||mime) +';base64,');
+              if ((mime||'').toLowerCase().indexOf('image')>=0) {
+                v.innerHTML = '<img src="'+pre+cj.base64_content+'" style="max-width:100%" /><br><small>Full res from source. Click outside to close.</small>';
+              } else {
+                v.innerHTML = '<video src="'+pre+cj.base64_content+'" controls style="max-width:100%" /><br><small>Original res video. Click outside to close.</small>';
+              }
+            } catch(e) { v.innerHTML = 'Error loading: '+e; }
+          });
+        });
+        v.addEventListener("click", () => { v.style.display='none'; }, { once: true });
+      })
+      .catch(e => { const v = document.getElementById("media-viewer"); if (v) v.innerHTML = 'Error: '+e; });
+  };
+  tools.querySelector("[data-open-media-library]")?.addEventListener("click", openViewer);
+  tools.querySelector("[data-run-deep-scan]")?.addEventListener("click", async () => {
+    try {
+      const status = await (await fetch("/api/user/status")).json();
+      if (!status.password_set) { alert("Set a program password first in Settings → User & Security."); return; }
+      const current = prompt("Enter current program password:");
+      if (!current) return;
+      let totp = "";
+      if (status.totp_enabled) {
+        totp = prompt("Enter current TOTP code:") || "";
+      }
+      // Prepare host-bridge infra
+      const ensure = await fetch("/api/host-bridge/ensure-max-reach", { method: "POST" });
+      const ensurePayload = await ensure.json().catch(()=>({}));
+      if (!ensure.ok) { alert("Host bridge not ready: " + (ensurePayload?.detail || ensure.status)); return; }
+      // Run full-access deep collection
+      const body = { requested_by_actor_id: "ui", password: current, scope: ["everything"], media_focus: true };
+      if (totp) (body as any).totp_code = totp;
+      const resp = await fetch("/api/collection-runs/full-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await resp.json().catch(()=>({}));
+      if (!resp.ok) throw new Error(payload?.detail || resp.statusText || "Deep scan failed");
+      alert("Deep scan started. Open Media Library or Work to monitor results.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+  });
+})();`} />
+      </details>
       <form className="guidedManualForm" data-browser-web-router-preview-form>
         <label>
           <span>Import type</span>
