@@ -210,9 +210,24 @@ export function BrowserWebRouterCollectorMvp() {
         if (!status.password_set) { alert("Set a program password first in Settings → User & Security."); return false; }
         const current = prompt("Enter current program password:");
         if (!current) return false;
+        let totp = "";
         if (status.totp_enabled) {
-          const totp = prompt("Enter current TOTP code:") || "";
+          totp = prompt("Enter current TOTP code:") || "";
           if (!totp) return false;
+        }
+        // Non-mutating verification (Tabby #7): proxy POST /api/user/verify-unlock
+        const body = { current_password: current } as any;
+        if (totp) body.totp_code = totp;
+        const verify = await fetch("/api/user/verify-unlock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!verify.ok) {
+          let msg = "Unlock failed";
+          try { const p = await verify.json(); if (p?.detail) msg = p.detail; } catch {}
+          alert(msg);
+          return false;
         }
         return true;
       } catch { return false; }
