@@ -261,7 +261,6 @@ export async function HomePage() {
         </header>
 
         <section className="productTabs compactTabs" aria-label="Main dashboard tabs">
-          <input className="tabInput" id="tab-home" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" defaultChecked />
@@ -276,7 +275,7 @@ export async function HomePage() {
           </nav>
         </section>
 
-        <section className="panel workflowHero tabContent" id="home" data-tab-panel="home">
+        <section className="panel workflowHero tabContent" id="home" data-tab-panel="results">
           <div className="panelHeader">
             <div>
               <p className="eyebrow">Home</p>
@@ -318,7 +317,7 @@ export async function HomePage() {
               <span>3</span>
               <h3>Ask with evidence</h3>
               <p>{sources.data.length === 0 ? "Add a data source first." : evidenceItems.data.length === 0 ? "Add approved text and check processing." : "Ask a question over local evidence."}</p>
-              <label htmlFor="tab-results">Open Results</label>
+              <label htmlFor="tab-results">Open Chat</label>
             </article>
           </div>
         </section>
