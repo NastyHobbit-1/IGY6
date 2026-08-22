@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use igy6_artifacts::ArtifactStore;
 use igy6_chunking::{plan_document_chunks, ChunkPlan, ChunkingError, EvidencePlan};
+use igy6_media_extract::extract_or_utf8;
 use igy6_normalization::{
     build_normalized_document_ref, NormalizedDocumentInput, NormalizedDocumentRef, RawArtifactRef,
 };
@@ -16,8 +18,6 @@ use igy6_vector_memory::{
     collection_status_request, embed_text_local, ensure_collection_request, upsert_points_request,
     ChunkVectorPoint, HttpMethod, HttpRequestPlan, QdrantSettings, VectorMemoryError,
 };
-use igy6_media_extract::extract_or_utf8;
-use igy6_artifacts::ArtifactStore;
 use postgres::{Client, NoTls};
 use serde_json::{json, Value};
 
@@ -3426,7 +3426,11 @@ pub fn plan_collection_normalization_execution(
         let extract = extract_or_utf8(
             &artifact.bytes,
             artifact.mime_type.as_deref(),
-            if filename_hint.is_empty() { None } else { Some(filename_hint) },
+            if filename_hint.is_empty() {
+                None
+            } else {
+                Some(filename_hint)
+            },
         );
         let text_content = extract.text;
         let document_id = generated_document_ids

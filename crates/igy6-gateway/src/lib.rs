@@ -1195,12 +1195,8 @@ fn media_import(body: &str, database_url: Option<&str>) -> Result<String, Gatewa
     let media_label = optional_string_field_with_max(&object, "label", "media-import", 255)?;
     let media_type = optional_string_field_with_max(&object, "media_type", "pdf", 32)?;
     let filename = optional_string_field_with_max(&object, "filename", "upload.bin", 255)?;
-    let mime_type = optional_string_field_with_max(
-        &object,
-        "mime_type",
-        "application/octet-stream",
-        255,
-    )?;
+    let mime_type =
+        optional_string_field_with_max(&object, "mime_type", "application/octet-stream", 255)?;
     let content_base64 = optional_nullable_string_field(&object, "content_base64")?;
     let requested_by_actor_id =
         optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
@@ -1222,10 +1218,11 @@ fn media_import(body: &str, database_url: Option<&str>) -> Result<String, Gatewa
             "approval_required": false,
             "created_by_actor_id": requested_by_actor_id
         }
-    }).to_string();
+    })
+    .to_string();
     let created_source_json = create_source(&source_body, Some(database_url))?;
-    let created_source: Value =
-        serde_json::from_str(&created_source_json).map_err(|e| GatewayError::Conflict(e.to_string()))?;
+    let created_source: Value = serde_json::from_str(&created_source_json)
+        .map_err(|e| GatewayError::Conflict(e.to_string()))?;
     let source_id = created_source
         .get("id")
         .and_then(Value::as_str)
@@ -1261,8 +1258,12 @@ fn media_import(body: &str, database_url: Option<&str>) -> Result<String, Gatewa
               "extract_pipeline": "local_tools"
             },
             "requested_by_actor_id": requested_by_actor_id
-        }).to_string();
-        Some(create_manual_upload_collection(&manual_upload_body, Some(database_url))?)
+        })
+        .to_string();
+        Some(create_manual_upload_collection(
+            &manual_upload_body,
+            Some(database_url),
+        )?)
     } else {
         None
     };
@@ -12302,11 +12303,7 @@ pub fn append_runtime_ops_log(kind: &str, component: &str, level: &str, message:
         "{} [{component}] [{level}] {sanitized}\n",
         ops_log_timestamp()
     );
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
     truncate_ops_log_file(&path);

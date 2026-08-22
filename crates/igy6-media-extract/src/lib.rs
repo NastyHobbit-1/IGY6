@@ -32,7 +32,9 @@ pub fn tool_availability() -> ToolAvailability {
         pdftotext: command_exists("pdftotext"),
         tesseract: command_exists("tesseract"),
         ffmpeg: command_exists("ffmpeg"),
-        whisper: command_exists("whisper") || command_exists("whisper-cli") || command_exists("whisper.cpp"),
+        whisper: command_exists("whisper")
+            || command_exists("whisper-cli")
+            || command_exists("whisper.cpp"),
     }
 }
 
@@ -40,12 +42,18 @@ fn command_exists(name: &str) -> bool {
     Command::new(name)
         .arg("--version")
         .output()
-        .map(|output| output.status.success() || !output.stderr.is_empty() || !output.stdout.is_empty())
+        .map(|output| {
+            output.status.success() || !output.stderr.is_empty() || !output.stdout.is_empty()
+        })
         .unwrap_or_else(|_| {
             Command::new(name)
                 .arg("-version")
                 .output()
-                .map(|output| output.status.success() || !output.stderr.is_empty() || !output.stdout.is_empty())
+                .map(|output| {
+                    output.status.success()
+                        || !output.stderr.is_empty()
+                        || !output.stdout.is_empty()
+                })
                 .unwrap_or(false)
         })
 }
@@ -123,7 +131,8 @@ fn extract_pdf(path: &Path) -> MediaExtractResult {
             mime_type: "application/pdf".to_string(),
             tool: "pdftotext".to_string(),
             success: false,
-            detail: "pdftotext not installed; run product install / rebuild worker image".to_string(),
+            detail: "pdftotext not installed; run product install / rebuild worker image"
+                .to_string(),
         };
     }
     let mut cmd = Command::new("pdftotext");
@@ -140,9 +149,13 @@ fn extract_pdf(path: &Path) -> MediaExtractResult {
         Ok((stdout, stderr, ok)) => {
             // OCR fallback page-by-page is heavy; report honestly and try tesseract on rendered page if available later.
             let detail = if !ok {
-                format!("pdftotext failed: {}", stderr.chars().take(400).collect::<String>())
+                format!(
+                    "pdftotext failed: {}",
+                    stderr.chars().take(400).collect::<String>()
+                )
             } else if stdout.trim().is_empty() {
-                "PDF has no extractable text layer; image-only PDF may need OCR of rendered pages".to_string()
+                "PDF has no extractable text layer; image-only PDF may need OCR of rendered pages"
+                    .to_string()
             } else {
                 "pdftotext returned content".to_string()
             };
@@ -174,7 +187,8 @@ fn extract_image_ocr(path: &Path, mime: &str) -> MediaExtractResult {
             mime_type: mime.to_string(),
             tool: "tesseract".to_string(),
             success: false,
-            detail: "tesseract not installed; run product install / rebuild worker image".to_string(),
+            detail: "tesseract not installed; run product install / rebuild worker image"
+                .to_string(),
         };
     }
     let mut cmd = Command::new("tesseract");
@@ -198,7 +212,10 @@ fn extract_image_ocr(path: &Path, mime: &str) -> MediaExtractResult {
             mime_type: mime.to_string(),
             tool: "tesseract".to_string(),
             success: false,
-            detail: format!("tesseract failed: {}", stderr.chars().take(400).collect::<String>()),
+            detail: format!(
+                "tesseract failed: {}",
+                stderr.chars().take(400).collect::<String>()
+            ),
         },
         Err(error) => MediaExtractResult {
             text: String::new(),
@@ -377,7 +394,11 @@ pub fn extract_text_from_media(
 }
 
 /// Convenience: prefer media extraction, else UTF-8 normalization.
-pub fn extract_or_utf8(bytes: &[u8], mime_type: Option<&str>, filename: Option<&str>) -> MediaExtractResult {
+pub fn extract_or_utf8(
+    bytes: &[u8],
+    mime_type: Option<&str>,
+    filename: Option<&str>,
+) -> MediaExtractResult {
     let mime = mime_type.unwrap_or("application/octet-stream");
     let name = filename.unwrap_or("upload.bin");
     let kind = classify_media(mime, name);
