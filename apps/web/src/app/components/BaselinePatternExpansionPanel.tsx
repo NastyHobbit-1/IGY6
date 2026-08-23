@@ -31,7 +31,7 @@ export function BaselinePatternExpansionPanel({
   outcomes: ApiResult<OutcomeRecord[]>;
   feedback: ApiResult<FeedbackRecord[]>;
 }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const sourceById = new Map(sources.data.map((source) => [source.id, source]));
   const evidenceById = new Map(evidenceItems.data.map((item) => [item.id, item]));
   const sourceCountFor = (ids: string[]) => new Set(ids.map((id) => evidenceById.get(id)?.source_id).filter(Boolean)).size;

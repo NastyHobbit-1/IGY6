@@ -25,7 +25,7 @@ export function PredictionRecommendationOutcomeReview({
   improvements: ApiResult<ImprovementRecord[]>;
   calibrationSummary: ApiResult<CalibrationSummary>;
 }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const records = [
     ...predictions.data.slice(0, 8).map((prediction) => ({
       type: "prediction",

@@ -17,6 +17,7 @@ export function ChatRetrievalPreview() {
   const apiBaseUrl = form?.getAttribute("data-api-base-url");
   let lastPayload = null;
   let lastQuestion = "";
+  let lastRequest = null;
 
   if (!form || !message || !limit || !status || !results || !apiBaseUrl) {
     return;
@@ -274,6 +275,48 @@ export function ChatRetrievalPreview() {
     return item;
   };
 
+  const showSkeleton = () => {
+    const wrap = document.createElement("div");
+    wrap.className = "skeletonBlock";
+    const line = document.createElement("span");
+    line.className = "skeleton";
+    const line2 = document.createElement("span");
+    line2.className = "skeleton";
+    const short = document.createElement("span");
+    short.className = "skeleton skeletonShort";
+    wrap.append(line, line2, short);
+    results.appendChild(wrap);
+    return wrap;
+  };
+
+  const showRetry = (label, handler) => {
+    const box = document.createElement("div");
+    box.className = "guidedManualActions";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label || "Retry";
+    btn.addEventListener("click", handler);
+    box.appendChild(btn);
+    results.appendChild(box);
+    return box;
+  };
+
+  const showIdle = () => {
+    if (!results) return null;
+    const idle = document.createElement("article");
+    idle.className = "item evidenceItem";
+    idle.setAttribute("data-chat-idle", "");
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = "Ask over evidence";
+    const detail = document.createElement("span");
+    detail.textContent = "Type a question and click Ask over evidence to preview retrieval. Save the answer to keep a history record.";
+    body.append(title, detail);
+    idle.appendChild(body);
+    results.appendChild(idle);
+    return idle;
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.textContent = "Retrieving context";
@@ -282,20 +325,20 @@ export function ChatRetrievalPreview() {
     results.removeAttribute("data-hit-count");
     lastPayload = null;
     lastQuestion = message.value.trim();
+    lastRequest = { message: lastQuestion, limit: Number(limit.value || 5) };
     if (saveStatus) saveStatus.textContent = "Run retrieval before saving an answer record.";
 
+    const skeleton = showSkeleton();
     try {
       const response = await fetch(apiBaseUrl + "/chat/retrieval-preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: message.value,
-          limit: Number(limit.value || 5)
-        })
+        body: JSON.stringify(lastRequest)
       });
 
       if (!response.ok) {
         status.textContent = "Error: " + response.status + " " + response.statusText;
+        if (skeleton && skeleton.parentNode) skeleton.parentNode.removeChild(skeleton);
         const error = document.createElement("article");
         error.className = "item evidenceItem";
         error.setAttribute("data-retrieval-review-error", "");
@@ -303,10 +346,11 @@ export function ChatRetrievalPreview() {
         const title = document.createElement("strong");
         title.textContent = "Retrieval failed";
         const detail = document.createElement("span");
-        detail.textContent = "No evidence-backed review is available until the retrieval request succeeds.";
+        detail.textContent = "Unable to retrieve local evidence. Check that the local API and memory are ready, then retry.";
         body.append(title, detail);
         error.appendChild(body);
         results.appendChild(error);
+        showRetry("Retry retrieval", () => form.requestSubmit());
         return;
       }
 
@@ -317,14 +361,27 @@ export function ChatRetrievalPreview() {
       status.textContent = "answer_status: " + answerStatus + " | hits: " + hits.length;
       results.setAttribute("data-answer-status", answerStatus);
       results.setAttribute("data-hit-count", String(hits.length));
+      if (skeleton && skeleton.parentNode) skeleton.parentNode.removeChild(skeleton);
       results.appendChild(renderReviewSummary(payload, hits));
       results.appendChild(renderAnswerPacket(payload, hits));
 
       if (hits.length > 0) {
         hits.forEach((hit, index) => results.appendChild(renderHit(hit, index)));
+      } else {
+        const empty = document.createElement("article");
+        empty.className = "item evidenceItem";
+        const body = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = "No matching evidence";
+        const detail = document.createElement("span");
+        detail.textContent = "Try a more specific question, or add/process data under Chat → Add Data.";
+        body.append(title, detail);
+        empty.appendChild(body);
+        results.appendChild(empty);
       }
     } catch (error) {
       status.textContent = "Error: " + (error instanceof Error ? error.message : "Unknown error");
+      if (skeleton && skeleton.parentNode) skeleton.parentNode.removeChild(skeleton);
       const item = document.createElement("article");
       item.className = "item evidenceItem";
       item.setAttribute("data-retrieval-review-error", "");
@@ -332,10 +389,11 @@ export function ChatRetrievalPreview() {
       const title = document.createElement("strong");
       title.textContent = "Retrieval failed";
       const detail = document.createElement("span");
-      detail.textContent = "No evidence-backed review is available until the local API responds.";
+      detail.textContent = "No evidence-backed review is available until the local API responds. Retry when ready.";
       body.append(title, detail);
       item.appendChild(body);
       results.appendChild(item);
+      showRetry("Retry retrieval", () => form.requestSubmit());
     }
   });
 
@@ -344,6 +402,7 @@ export function ChatRetrievalPreview() {
       if (saveStatus) saveStatus.textContent = "Ask over evidence before saving an answer record.";
       return;
     }
+    saveButton.disabled = true;
     if (saveStatus) saveStatus.textContent = "Saving answer record";
     try {
       const response = await fetch(apiBaseUrl + "/evidence-answers", {
@@ -355,10 +414,22 @@ export function ChatRetrievalPreview() {
       if (!response.ok) {
         throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
       }
-      if (saveStatus) saveStatus.textContent = "Saved answer record " + (payload.id || "recorded") + ". Refresh Results to see it in history.";
+      if (saveStatus) saveStatus.textContent = "Saved answer record " + (payload.id || "recorded") + ". Refresh Chat to see it in history.";
     } catch (error) {
-      if (saveStatus) saveStatus.textContent = "Answer record save failed: " + (error instanceof Error ? error.message : "Unknown error");
+      if (saveStatus) saveStatus.textContent = "Answer record save failed. Retry when ready.";
+      const footerRetry = document.createElement("div");
+      footerRetry.className = "guidedManualActions";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Retry save";
+      btn.addEventListener("click", async () => {
+        footerRetry.remove();
+        saveButton.click();
+      });
+      footerRetry.appendChild(btn);
+      results.appendChild(footerRetry);
     }
+    saveButton.disabled = false;
   });
 })();
 `;
@@ -395,6 +466,26 @@ export function ChatRetrievalPreview() {
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <ClientScript script={script} />
+      <ClientScript script={`
+      (() => {
+        const results = document.querySelector("[data-chat-preview-results]");
+        const wired = results?.getAttribute("data-idle-wired") === "true";
+        if (!results || wired) return;
+        results.setAttribute("data-idle-wired", "true");
+        if (results.children.length === 0) {
+          const idle = document.createElement("article");
+          idle.className = "item evidenceItem";
+          const body = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = "Idle";
+          const detail = document.createElement("span");
+          detail.textContent = "Ask a question, then click Ask over evidence. Your local data is used for retrieval; empty results mean insufficient evidence.";
+          body.append(title, detail);
+          idle.appendChild(body);
+          results.appendChild(idle);
+        }
+      })();
+      `} />
     </section>
   );
 }

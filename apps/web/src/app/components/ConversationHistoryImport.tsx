@@ -2,7 +2,7 @@ import type { SourceRecord, ApprovalRecord, ApiResult } from "./types";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function ConversationHistoryImport({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const conversationSources = sources.data
     .filter((source) => source.enabled && source.source_type === "conversation_history")
     .map((source) => ({
@@ -193,7 +193,7 @@ export function ConversationHistoryImport({ sources, approvals }: { sources: Api
           writeResult(
             "Approval pending",
             "A matching conversation history collection approval is already pending. The pasted text was not uploaded before approval.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -220,7 +220,7 @@ export function ConversationHistoryImport({ sources, approvals }: { sources: Api
           writeResult(
             "Approval pending",
             "IGY6 created the conversation history source context and requested collection approval. The pasted text was not uploaded because this permission requires an approved approval record.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -248,7 +248,7 @@ export function ConversationHistoryImport({ sources, approvals }: { sources: Api
       writeResult(
         "Conversation history submitted",
         "IGY6 accepted the pasted UTF-8 conversation text and queued normalization work for local evidence processing.",
-        ["Open Work and look for the work item below.", "When the work item completes, open Results to inspect documents, chunks, and evidence.", "Use Ask over evidence after results appear."],
+        ["Open Work and look for the work item below.", "When the work item completes, open Chat to inspect documents, chunks, and evidence.", "Use Ask over evidence after results appear."],
         { source: { name: source.name, type: source.source_type, id: source.id }, upload },
         [
           { label: "source", value: source.id },
@@ -348,7 +348,7 @@ export function ConversationHistoryImport({ sources, approvals }: { sources: Api
         </label>
         <div className="guidedManualActions">
           <button type="submit" data-conversation-history-submit>Import conversation text</button>
-          <span>Next: Work for processing, Results for evidence. No account or browser access is used.</span>
+          <span>Next: Work for processing, Chat for evidence. No account or browser access is used.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-conversation-history-result>

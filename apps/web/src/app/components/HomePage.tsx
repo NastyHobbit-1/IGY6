@@ -213,14 +213,14 @@ export async function HomePage() {
         </div>
 
         <div className="sidebarActions">
-          <label className="sidebarButton primary" htmlFor="tab-results">Open chat</label>
+          <label className="sidebarButton primary" htmlFor="tab-chat">Open chat</label>
           <button type="button" className="sidebarButton" data-minimal-ui-toggle aria-pressed="false">Simple mode</button>
         </div>
 
         <p className="sidebarHint" data-minimal-ui-hint>Say what you want in chat — I&apos;ll ask plain questions when I&apos;m not sure what you mean.</p>
 
         <nav className="navSection compactNav" aria-label="Workspace views">
-          <label htmlFor="tab-results">Chat</label>
+          <label htmlFor="tab-chat">Chat</label>
           <label htmlFor="tab-add-data">Data</label>
           <label htmlFor="tab-work">Work</label>
           <label htmlFor="tab-settings">Settings</label>
@@ -261,14 +261,13 @@ export async function HomePage() {
         </header>
 
         <section className="productTabs compactTabs" aria-label="Main dashboard tabs">
-          <input className="tabInput" id="tab-home" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-add-data" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-work" name="main-dashboard-tab" type="radio" />
-          <input className="tabInput" id="tab-results" name="main-dashboard-tab" type="radio" defaultChecked />
+          <input className="tabInput" id="tab-chat" name="main-dashboard-tab" type="radio" defaultChecked />
           <input className="tabInput" id="tab-settings" name="main-dashboard-tab" type="radio" />
           <input className="tabInput" id="tab-advanced" name="main-dashboard-tab" type="radio" />
           <nav className="tabList" aria-label="Main dashboard">
-            <label role="tab" htmlFor="tab-results">Chat</label>
+            <label role="tab" htmlFor="tab-chat">Chat</label>
             <label role="tab" htmlFor="tab-add-data">Data</label>
             <label role="tab" htmlFor="tab-work">Work</label>
             <label role="tab" htmlFor="tab-settings">Settings</label>
@@ -276,10 +275,10 @@ export async function HomePage() {
           </nav>
         </section>
 
-        <section className="panel workflowHero tabContent" id="home" data-tab-panel="home">
+        <section className="panel workflowHero tabContent" id="chat-readiness" data-tab-panel="chat">
           <div className="panelHeader">
             <div>
-              <p className="eyebrow">Home</p>
+              <p className="eyebrow">Chat</p>
               <h2>System Ready</h2>
             </div>
             <StatusPill state={health.data.status} />
@@ -294,7 +293,7 @@ export async function HomePage() {
             ))}
           </section>
           <p className="readinessSummary">System ready. Background worker ready. {pendingApprovals.length > 0 ? "Review pending approvals before sensitive collection." : "No approval needs attention right now."}</p>
-          <section className="metrics compact" aria-label="Home overview">
+          <section className="metrics compact" aria-label="Chat overview">
             <article><span>Service readiness</span><strong>{Object.keys(checks).length ? `${Object.values(checks).filter((check) => check.status === "ok").length}/${Object.keys(checks).length}` : "Unknown"}</strong></article>
             <article><span>Recent data activity</span><strong>{recentRuns.length + recentArtifacts.length}</strong></article>
             <article><span>Recent work</span><strong>{recentWorkItems.length}</strong></article>
@@ -318,12 +317,12 @@ export async function HomePage() {
               <span>3</span>
               <h3>Ask with evidence</h3>
               <p>{sources.data.length === 0 ? "Add a data source first." : evidenceItems.data.length === 0 ? "Add approved text and check processing." : "Ask a question over local evidence."}</p>
-              <label htmlFor="tab-results">Open Results</label>
+              <label htmlFor="tab-chat">Open Chat</label>
             </article>
           </div>
         </section>
 
-        <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="results">
+        <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="chat">
           <MinimalWorkspacePanel
             sourceCount={sources.data.length}
             evidenceCount={evidenceItems.data.length}
@@ -555,10 +554,10 @@ export async function HomePage() {
             </details>
           </section>
 
-          <section className="panel tabContent" id="evidence-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="evidence-panel" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+              <p className="eyebrow">Chat</p>
                 <h2><HelpHeading term="evidenceItem">Evidence And Documents</HelpHeading></h2>
               </div>
               {[documents.error, chunks.error, evidenceItems.error, claims.error].filter(Boolean).length > 0 ? (
@@ -697,10 +696,10 @@ export async function HomePage() {
             </section>
           </section>
 
-          <section className="panel tabContent" id="memory-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="memory-panel" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+              <p className="eyebrow">Chat</p>
                 <h2><HelpHeading term="vectorMemory">Search Memory And Findings</HelpHeading></h2>
               </div>
               {[vectorCollection.error, graphSchema.error, patterns.error, hypotheses.error, predictions.error, recommendations.error].filter(Boolean).length > 0 ? (
@@ -773,7 +772,7 @@ export async function HomePage() {
                   ))}
                 </div>
                 {recentHypotheses.length === 0 ? <EmptyState label="No hypotheses recorded yet." /> : null}
-                <form className="guidedManualForm" data-hypothesis-create-form data-api-base-url={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}>
+                <form className="guidedManualForm" data-hypothesis-create-form data-api-base-url="/api">
                   <label><span>New hypothesis</span><textarea name="hypothesis_text" rows={2} placeholder="Describe a testable hypothesis grounded in local evidence." /></label>
                   <label><span>Supporting evidence ids</span><input name="hypothesis_evidence_ids" placeholder="evidence-id-1, evidence-id-2" /></label>
                   <button type="submit">Record hypothesis</button>
@@ -910,7 +909,7 @@ export async function HomePage() {
                 {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
               </div>
             </section>
-            <p className="actionHint">Use Pipeline operations in Results → Memory for search, vector ensure, and one-click dispatch on queued work items.</p>
+            <p className="actionHint">Use Pipeline operations in Chat → Memory for search, vector ensure, and one-click dispatch on queued work items.</p>
             <details className="advancedPanel">
               <summary>Advanced: dispatch controls, work item IDs, and raw queue JSON</summary>
               <p>Route: POST /work-items/:work_item_id/dispatch. Pipeline operations panel also exposes dispatch for queued items.</p>
@@ -1051,10 +1050,10 @@ export async function HomePage() {
             </details>
           </section>
 
-          <section className="panel workflowSection tabContent" id="reports" data-tab-panel="results">
+          <section className="panel workflowSection tabContent" id="reports" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
-                <p className="eyebrow">Results</p>
+                <p className="eyebrow">Chat</p>
                 <h2>Reports</h2>
               </div>
               {reports.error ? <span className="errorText">{reports.error}</span> : <StatusPill state={`${reports.data.length}-reports`} />}

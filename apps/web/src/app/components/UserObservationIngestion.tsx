@@ -2,7 +2,7 @@ import type { SourceRecord, ApprovalRecord, ApiResult } from "./types";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function UserObservationIngestion({ sources, approvals }: { sources: ApiResult<SourceRecord[]>; approvals: ApiResult<ApprovalRecord[]> }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const observationSources = sources.data
     .filter((source) => source.enabled && source.source_type === "user_observation")
     .map((source) => ({
@@ -201,7 +201,7 @@ export function UserObservationIngestion({ sources, approvals }: { sources: ApiR
           writeResult(
             "Approval pending",
             "A matching user observation collection approval is already pending. The observation text was not uploaded before approval.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -228,7 +228,7 @@ export function UserObservationIngestion({ sources, approvals }: { sources: ApiR
           writeResult(
             "Approval pending",
             "IGY6 created the user observation source context and requested collection approval. The observation text was not uploaded because this permission requires an approved approval record.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -256,7 +256,7 @@ export function UserObservationIngestion({ sources, approvals }: { sources: ApiR
       writeResult(
         "Observation submitted",
         "IGY6 accepted the owner-provided UTF-8 observation and queued normalization work for local evidence processing. This records context; it does not automatically verify truth.",
-        ["Open Work and look for the work item below.", "When the work item completes, open Results to inspect documents, chunks, and evidence.", "Use source and evidence review states when observations need correction or verification later."],
+        ["Open Work and look for the work item below.", "When the work item completes, open Chat to inspect documents, chunks, and evidence.", "Use source and evidence review states when observations need correction or verification later."],
         { source: { name: source.name, type: source.source_type, id: source.id }, upload },
         [
           { label: "source", value: source.id },
@@ -364,7 +364,7 @@ export function UserObservationIngestion({ sources, approvals }: { sources: ApiR
         </label>
         <div className="guidedManualActions">
           <button type="submit" data-user-observation-submit>Record observation</button>
-          <span>Next: Work for processing, Results for evidence. User-provided context is not automatic verification.</span>
+          <span>Next: Work for processing, Chat for evidence. User-provided context is not automatic verification.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-user-observation-result>

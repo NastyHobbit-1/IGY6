@@ -121,7 +121,7 @@ export function workItemGuidance(workItem: WorkItemRecord): { outcome: string; n
     case "completed":
       return {
         outcome: "Processing completed successfully.",
-        next: "Open Results to inspect documents, chunks, evidence, and Ask over evidence."
+        next: "Open Chat to inspect documents, chunks, evidence, and Ask over evidence."
       };
     case "failed":
       return {
