@@ -263,7 +263,9 @@ explicit `scope_json.paths` for a registered `local_project` source. It rejects
 disabled or mismatched sources, skips symlinks and non-files, enforces file
 count and size limits, stores collected bytes in the local content-addressed
 artifact store, records raw artifact metadata, records a queued
-`collection_normalization` work item with collected raw artifact IDs, and emits
+`collection_normalization` work item with collected UTF-8 text raw artifact IDs
+(binary/non‑UTF‑8 artifacts are preserved as raw artifacts and audited but are
+not enqueued for text normalization), and emits
 audit events. It does not normalize content, generate chunks/evidence, dispatch
 worker jobs directly from the API. The collection summary
 exposes `normalization_work_item_id`. The route requires the source permission

@@ -2044,12 +2044,29 @@ fn create_local_project_collection(
         .iter()
         .map(|_| generated_record_id("artifact"))
         .collect::<Vec<_>>();
+    // DIFF-294: Only enqueue UTF-8 artifacts for normalization to keep the
+    // worker text pipeline deterministic. Binary artifacts are preserved and
+    // audited but skipped for normalization.
+    let text_raw_artifact_ids = collected_files
+        .files
+        .iter()
+        .enumerate()
+        .filter_map(|(index, file)| {
+            if file.is_utf8 {
+                Some(raw_artifact_ids[index].clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
     let work_item_id = generated_record_id("work");
     let summary_json = serde_json::json!({
         "mode": "local_project_collection",
         "source_permission_id": permission.id,
         "total_files": collected_files.total_files,
         "collected_files": collected_files.files.len(),
+        "text_artifacts": text_raw_artifact_ids.len(),
+        "non_text_artifacts": collected_files.files.len().saturating_sub(text_raw_artifact_ids.len()),
         "skipped_files": collected_files.skipped_files,
         "would_normalize": true,
         "normalization_input_type": "utf_8_text",
@@ -2112,7 +2129,7 @@ fn create_local_project_collection(
         &collection_run_id,
         &source,
         &permission.id,
-        &raw_artifact_ids,
+        &text_raw_artifact_ids,
         "local_project_collection",
     );
     transaction
@@ -2126,7 +2143,7 @@ fn create_local_project_collection(
         &payload.requested_by_actor_id,
         &work_item_id,
         &collection_run_id,
-        &raw_artifact_ids,
+        &text_raw_artifact_ids,
     )?;
     let response_body = collection_run_response_json(&mut transaction, &collection_run_id)?;
     transaction
@@ -8925,6 +8942,10 @@ struct CollectedLocalProjectFile {
     source_path: String,
     relative_path: String,
     stored: StoredArtifact,
+    // DIFF-294: mark whether this artifact's bytes are valid UTF-8 so we can
+    // enqueue only text artifacts for normalization while still preserving
+    // binary artifacts as stored evidence.
+    is_utf8: bool,
 }
 
 struct LocalProjectCollectionResult {
@@ -12198,11 +12219,7 @@ pub fn append_runtime_ops_log(kind: &str, component: &str, level: &str, message:
         "{} [{component}] [{level}] {sanitized}\n",
         ops_log_timestamp()
     );
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
     truncate_ops_log_file(&path);
@@ -12604,6 +12621,7 @@ fn collect_local_project_files(
         let stored = store
             .write_bytes(&content)
             .map_err(|error| GatewayError::Conflict(error.to_string()))?;
+        let is_utf8 = std::str::from_utf8(&content).is_ok();
         let relative_path = resolved
             .strip_prefix(&source_root)
             .map_err(|_| GatewayError::Validation("file escapes source location".to_string()))?
@@ -12613,6 +12631,7 @@ fn collect_local_project_files(
             source_path: resolved.to_string_lossy().to_string(),
             relative_path,
             stored,
+            is_utf8,
         });
     }
     Ok(LocalProjectCollectionResult {
