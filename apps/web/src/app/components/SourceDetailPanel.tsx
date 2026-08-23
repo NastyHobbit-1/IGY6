@@ -37,7 +37,7 @@ export function SourceDetailPanel({
     const safeNextAction = !source.enabled
       ? "Source is disabled. Review trust/sensitivity before future collection."
       : sourceEvidence.length > 0
-        ? "Open Results to inspect linked evidence or ask over evidence."
+        ? "Open Chat to inspect linked evidence or ask over evidence."
         : sourceRuns.length > 0
           ? "Open Work to check processing before expecting evidence."
           : "Use Guided Upload, Conversation History Import, or User Observation Ingestion if this source type is supported.";

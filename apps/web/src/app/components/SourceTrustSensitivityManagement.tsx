@@ -126,7 +126,7 @@ export function SourceTrustSensitivityManagement({
     <section className="guidedManualText sourceReviewManagement" data-source-review-management>
       <div className="guidedManualNotice">
         <strong>Source trust and sensitivity</strong>
-        <span>Review source state for future use. This does not delete sources, rewrite historical evidence, or silently hide evidence from Results.</span>
+        <span>Review source state for future use. This does not delete sources, rewrite historical evidence, or silently hide evidence from Chat.</span>
       </div>
       {sources.error ? <p className="errorText">Source state could not be loaded: {sources.error}</p> : null}
       <section className="stack" aria-label="Source review summary">

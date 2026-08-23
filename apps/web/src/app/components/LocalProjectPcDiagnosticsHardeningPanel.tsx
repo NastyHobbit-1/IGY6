@@ -134,7 +134,7 @@ export function LocalProjectPcDiagnosticsHardeningPanel({
         { label: "would collect", value: mode.collect },
         { label: "will not collect", value: mode.excluded }
       ],
-      next: ["Click Collect scoped import when the preview looks correct.", "Processing appears in Work; evidence appears in Results."]
+      next: ["Click Collect scoped import when the preview looks correct.", "Processing appears in Work; evidence appears under Chat."]
     });
   });
   root.querySelector("[data-lp-collect]")?.addEventListener("click", async () => {
@@ -191,7 +191,7 @@ export function LocalProjectPcDiagnosticsHardeningPanel({
             { label: "collection run", value: collection?.id || "not returned" },
             { label: "files", value: String(collection?.summary_json?.collected_files ?? "unknown") }
           ],
-          next: ["Open Work to watch processing.", "Open Results when evidence is ready."]
+        next: ["Open Work to watch processing.", "Open Chat when evidence is ready."]
         });
       } else {
         const created = await postJson("/sources", {
@@ -225,7 +225,7 @@ export function LocalProjectPcDiagnosticsHardeningPanel({
             { label: "collection run", value: upload?.id || "not returned" },
             { label: "work item", value: upload?.summary_json?.normalization_work_item_id || "not returned" }
           ],
-          next: ["Open Work to watch processing.", "Open Results when evidence is ready."]
+        next: ["Open Work to watch processing.", "Open Chat when evidence is ready."]
         });
       }
     } catch (error) {

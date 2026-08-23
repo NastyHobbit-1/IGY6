@@ -1807,7 +1807,7 @@ a {
 
 .mainConsole:has(#tab-add-data:checked) [data-tab-panel="add-data"],
 .mainConsole:has(#tab-work:checked) [data-tab-panel="work"],
-.mainConsole:has(#tab-chat:checked) [data-tab-panel="results"],
+.mainConsole:has(#tab-chat:checked) [data-tab-panel="chat"],
 .mainConsole:has(#tab-settings:checked) [data-tab-panel="settings"],
 .mainConsole:has(#tab-advanced:checked) [data-tab-panel="advanced"] {
   display: grid;
@@ -2316,7 +2316,7 @@ body.minimal-ui-mode .chatContextPanels {
   display: none !important;
 }
 
-body.minimal-ui-mode .tabContent:not([data-tab-panel="results"]) {
+body.minimal-ui-mode .tabContent:not([data-tab-panel="chat"]) {
   display: none !important;
 }
 

@@ -275,7 +275,7 @@ export async function HomePage() {
           </nav>
         </section>
 
-        <section className="panel workflowHero tabContent" id="chat-readiness" data-tab-panel="results">
+        <section className="panel workflowHero tabContent" id="chat-readiness" data-tab-panel="chat">
           <div className="panelHeader">
             <div>
               <p className="eyebrow">Home</p>
@@ -322,7 +322,7 @@ export async function HomePage() {
           </div>
         </section>
 
-        <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="results">
+        <section className="chatStage workflowSection tabContent" id="assistant" data-tab-panel="chat">
           <MinimalWorkspacePanel
             sourceCount={sources.data.length}
             evidenceCount={evidenceItems.data.length}
@@ -554,7 +554,7 @@ export async function HomePage() {
             </details>
           </section>
 
-        <section className="panel tabContent" id="evidence-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="evidence-panel" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
               <p className="eyebrow">Chat</p>
@@ -696,7 +696,7 @@ export async function HomePage() {
             </section>
           </section>
 
-        <section className="panel tabContent" id="memory-panel" data-tab-panel="results">
+        <section className="panel tabContent" id="memory-panel" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
               <p className="eyebrow">Chat</p>
@@ -909,7 +909,7 @@ export async function HomePage() {
                 {recentWorkItems.length === 0 ? <EmptyState label="No work items recorded yet." /> : null}
               </div>
             </section>
-            <p className="actionHint">Use Pipeline operations in Results → Memory for search, vector ensure, and one-click dispatch on queued work items.</p>
+            <p className="actionHint">Use Pipeline operations in Chat → Memory for search, vector ensure, and one-click dispatch on queued work items.</p>
             <details className="advancedPanel">
               <summary>Advanced: dispatch controls, work item IDs, and raw queue JSON</summary>
               <p>Route: POST /work-items/:work_item_id/dispatch. Pipeline operations panel also exposes dispatch for queued items.</p>
@@ -1050,7 +1050,7 @@ export async function HomePage() {
             </details>
           </section>
 
-          <section className="panel workflowSection tabContent" id="reports" data-tab-panel="results">
+          <section className="panel workflowSection tabContent" id="reports" data-tab-panel="chat">
             <div className="panelHeader">
               <div>
                 <p className="eyebrow">Chat</p>

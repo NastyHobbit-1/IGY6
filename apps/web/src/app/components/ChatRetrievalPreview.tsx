@@ -355,7 +355,7 @@ export function ChatRetrievalPreview() {
       if (!response.ok) {
         throw new Error(response.status + " " + response.statusText + ": " + JSON.stringify(payload));
       }
-      if (saveStatus) saveStatus.textContent = "Saved answer record " + (payload.id || "recorded") + ". Refresh Results to see it in history.";
+      if (saveStatus) saveStatus.textContent = "Saved answer record " + (payload.id || "recorded") + ". Refresh Chat to see it in history.";
     } catch (error) {
       if (saveStatus) saveStatus.textContent = "Answer record save failed: " + (error instanceof Error ? error.message : "Unknown error");
     }

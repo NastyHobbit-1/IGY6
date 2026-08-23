@@ -174,7 +174,7 @@ export function GuidedManualTextUpload({ sources, approvals }: { sources: ApiRes
           writeResult(
             "Approval pending",
             "A matching manual text collection approval is already pending. The text was not uploaded before approval.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval: pendingApproval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -200,7 +200,7 @@ export function GuidedManualTextUpload({ sources, approvals }: { sources: ApiRes
           writeResult(
             "Approval pending",
             "IGY6 created the manual text source context and requested collection approval. The text was not uploaded because this permission requires an approved approval record.",
-            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears in Results."],
+            ["Open Settings to approve or deny the pending collection request.", "After approving it, return to this guided form and submit again; IGY6 will use the matching approved approval automatically.", "Processing status appears in Work after collection, and evidence appears under Chat."],
             { source: { name: source.name, type: source.source_type }, permission: { approval_required: permission.approval_required }, approval },
             [
               { label: "source", value: source.name + " (" + source.source_type + ")" },
@@ -231,7 +231,7 @@ export function GuidedManualTextUpload({ sources, approvals }: { sources: ApiRes
       writeResult(
         "Manual text submitted",
         "IGY6 accepted the UTF-8 text and queued normalization work for background processing.",
-        ["Open Work and look for the work item below.", "When the work item completes, open Results to inspect documents, chunks, and evidence.", "Use Ask over evidence after results appear."],
+        ["Open Work and look for the work item below.", "When the work item completes, open Chat to inspect documents, chunks, and evidence.", "Use Ask over evidence after results appear."],
         { source: { name: source.name, type: source.source_type, id: source.id }, upload },
         [
           { label: "source", value: source.id },
@@ -308,7 +308,7 @@ export function GuidedManualTextUpload({ sources, approvals }: { sources: ApiRes
         </label>
         <div className="guidedManualActions">
           <button type="submit" data-guided-manual-submit>Submit manual text</button>
-          <span>Next: Work for processing, Results for evidence.</span>
+          <span>Next: Work for processing, Chat for evidence.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-guided-manual-result>

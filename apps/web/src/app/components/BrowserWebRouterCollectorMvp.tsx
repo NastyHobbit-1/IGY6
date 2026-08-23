@@ -142,7 +142,7 @@ export function BrowserWebRouterCollectorMvp() {
       ],
       next: [
         "Click Collect pasted text when the preview looks correct.",
-        "Processing appears in Work; evidence appears in Results after normalization completes."
+        "Processing appears in Work; evidence appears under Chat after normalization completes."
       ]
     });
     if (scopeInput) scopeInput.setAttribute("data-last-previewed", "true");
@@ -163,7 +163,7 @@ export function BrowserWebRouterCollectorMvp() {
           { label: "collection run", value: resultPayload.upload?.id || "not returned" },
           { label: "work item", value: summary.normalization_work_item_id || "not returned" }
         ],
-        next: ["Open Work to watch processing.", "Open Results and Chat when evidence is ready."]
+        next: ["Open Work to watch processing.", "Open Chat when evidence is ready."]
       });
     } catch (error) {
       renderResult({
