@@ -28,11 +28,17 @@ export function MvpActionConsole() {
   const bind = (selector, handler) => {
     root.querySelector(selector)?.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const form = event.currentTarget;
+      const btn = form && form.querySelector ? form.querySelector("button[type='submit']") : null;
+      const originalText = btn ? btn.textContent : "";
+      if (btn) { btn.disabled = true; btn.textContent = "Running..."; }
       try {
         const result = await handler();
         show("Done", result);
       } catch (error) {
         show("Error", String(error));
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = originalText || "Run"; }
       }
     });
   };
