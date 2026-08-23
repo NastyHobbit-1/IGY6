@@ -74,10 +74,18 @@ main() {
   fi
   if [[ "${1:-}" == "--check" ]]; then
     echo "bootstrap-profile check:"
-    echo "  .env      : $([[ -f \"$ENV_FILE\" ]] && echo present || echo missing)"
-    echo "  docker    : $(command -v docker >/dev/null 2>&1 && echo ok || echo missing)"
-    echo "  cargo     : $(command -v cargo >/dev/null 2>&1 && echo ok || echo missing)"
-    echo "  profiles  : $(ls -1 \"$PROFILES_DIR\"/*.env 2>/dev/null | wc -l | tr -d ' ') available"
+    local env_present="missing"
+    [[ -f "$ENV_FILE" ]] && env_present="present"
+    local docker_state="missing"
+    command -v docker >/dev/null 2>&1 && docker_state="ok"
+    local cargo_state="missing"
+    command -v cargo >/dev/null 2>&1 && cargo_state="ok"
+    local profile_count
+    profile_count="$(find "$PROFILES_DIR" -maxdepth 1 -name '*.env' 2>/dev/null | wc -l | tr -d ' ')"
+    echo "  .env      : $env_present"
+    echo "  docker    : $docker_state"
+    echo "  cargo     : $cargo_state"
+    echo "  profiles  : $profile_count available"
     exit 0
   fi
   if [[ "${1:-}" == "--wizard" ]]; then

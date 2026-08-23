@@ -21,8 +21,8 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker not found. Please install Docker and Docker Compose."
-  exit 1
+  echo "NOTE: docker not found. You can still build/install the IGY6 CLI now."
+  echo "      To run the stack later, install Docker + Compose v2 first."
 fi
 
 install_media_tools() {
