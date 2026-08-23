@@ -8,7 +8,7 @@ PROFILES_DIR="${REPO_ROOT}/configs/profiles"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/bootstrap-profile.sh [--wizard|--check] [quick-start|standard|advanced|expert]
+  scripts/bootstrap-profile.sh [--wizard|--check|--restore [latest|FILE]] [quick-start|standard|advanced|expert]
 
 Applies a configuration profile to .env idempotently (adds or updates known keys).
 Profiles live under configs/profiles/*.env. Existing unrelated keys are preserved.
@@ -16,6 +16,7 @@ Profiles live under configs/profiles/*.env. Existing unrelated keys are preserve
 Options:
   --wizard   Interactive selection (safe re-run; records last choice).
   --check    Print environment readiness summary (no changes).
+  --restore  Restore .env from a backup. Use 'latest' (default) or provide a FILE name.
   --help     Show help.
 
 Profiles:
@@ -24,6 +25,54 @@ Profiles:
   advanced      Single-user, approvals on, with advanced knobs (commented)
   expert        Multi-user capable; external models still blocked by default
 EOF
+}
+
+resolve_backup_base() {
+  local data_root
+  if [[ -f "$ENV_FILE" ]]; then
+    data_root="$(grep -E '^[[:space:]]*(export[[:space:]]+)?IGY6_DATA_ROOT=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '\"')"
+  fi
+  if [[ -n "${data_root:-}" ]]; then
+    printf '%s\n' "${data_root}/ops/env-backups"
+  else
+    printf '%s\n' "${REPO_ROOT}/.igy6-backups/env"
+  fi
+}
+
+list_backups_sorted() {
+  local base; base="$(resolve_backup_base)"
+  find "$base" -maxdepth 1 -type f -name 'env-*.bak' 2>/dev/null | sort -r
+}
+
+restore_backup() {
+  local which="${1:-latest}"
+  local base; base="$(resolve_backup_base)"
+  local src=""
+  mkdir -p "$base"
+  if [[ "$which" == "latest" || -z "$which" ]]; then
+    src="$(list_backups_sorted | head -n1)"
+    [[ -n "$src" ]] || { echo "ERROR: No backups found in $base"; exit 1; }
+  else
+    if [[ "$which" == /* || "$which" == .*/* ]]; then
+      src="$which"
+    else
+      src="${base}/${which}"
+    fi
+    [[ -f "$src" ]] || { echo "ERROR: Backup not found: $src"; exit 1; }
+  fi
+  echo "Restoring from backup: $src"
+  # Safety backup of current .env (if present)
+  if [[ -f "$ENV_FILE" ]]; then
+    local ts; ts="$(date -u +"%Y%m%dT%H%M%SZ")"
+    cp -f "$ENV_FILE" "${base}/env-${ts}-pre-restore.bak"
+    echo "Safety backup written: ${base}/env-${ts}-pre-restore.bak"
+  fi
+  # Atomic restore
+  local tmp_env; tmp_env="${ENV_FILE}.restore.$$"
+  cp -f "$src" "$tmp_env"
+  mv -f "$tmp_env" "$ENV_FILE"
+  echo "Restore complete: ${ENV_FILE}"
+  echo "Note: Restart the IGY6 stack to apply environment changes."
 }
 
 apply_profile() {
@@ -111,6 +160,10 @@ main() {
     echo "  docker    : $docker_state"
     echo "  cargo     : $cargo_state"
     echo "  profiles  : $profile_count available"
+    exit 0
+  fi
+  if [[ "${1:-}" == "--restore" ]]; then
+    restore_backup "${2:-latest}"
     exit 0
   fi
   if [[ "${1:-}" == "--wizard" ]]; then
