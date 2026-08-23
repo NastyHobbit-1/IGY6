@@ -25,7 +25,7 @@ Internal panel headings such as Home readiness, Add Data, Results/Evidence, and 
 
 3. Use **Data** to register sources and bring in authorized information:
    - Guided text upload, conversation history, user observations.
-   - Web fetch: Public fetch, Deep fetch, Session fetch (host bridge may be required for strongest tiers).
+   - Web fetch: Public fetch, Automated deep fetch, Session-assisted fetch (host bridge may be required for strongest tiers).
    - Media import: upload PDF/image/audio/video; worker extracts text with local tools (pdftotext / tesseract / ffmpeg+whisper) when installed.
    - Local project / PC diagnostics (bounded paths only).
 

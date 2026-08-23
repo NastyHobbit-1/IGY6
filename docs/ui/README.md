@@ -46,7 +46,7 @@ Chat is the default tab. It answers questions over local evidence and surfaces n
 ### Main Sections
 
 - Unified chat hub with plain-language requests.
-- Chat web-fetch dock (public / deep / session fetch).
+- Chat web-fetch dock (public / automated deep / session-assisted fetch).
 - Retrieval preview and evidence answer history.
 - Missing-evidence prompts and local LLM status.
 - Agent command / task plan history (collapsed).
@@ -56,7 +56,7 @@ A separate Home readiness strip still exists in the page markup for system statu
 ### What To Do Here
 
 - Ask over evidence after data has been processed.
-- Run public/deep/session fetch when you have a URL.
+- Run public/automated deep/session-assisted fetch when you have a URL.
 - Follow onboarding chips if sources or evidence are empty.
 
 ### Empty, Loading, And Error States
@@ -77,7 +77,7 @@ Connector status: manual text paths implemented; browser_export / web_public / m
 ### Buttons And Actions
 
 - Submit manual text / Import conversation / Record observation.
-- Deep fetch / Public fetch / Session fetch / Preview panels.
+- Automated deep fetch / Public fetch / Session-assisted fetch / Preview panels.
 - Media import: choose type, select file, Upload media file (stores binary; worker extracts text).
 - Save source review; approval-aware pending states.
 
@@ -140,7 +140,7 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 ## Current Limitations (aligned to DIFF-268 / DIFF-249)
 
 - Core manual UTF-8 text paths remain the most mature for paste workflows.
-- On `grok`, web/public URL, browser export, Session Fetch, media binary, and system/WiFi collection use full-access + host bridge where required.
+- On `grok`, web/public URL, browser export, session-assisted fetch, media binary, and system/WiFi collection use full-access + host bridge where required.
 - Media import is implemented: binary upload stores the original; worker normalization extracts text with local tools (pdftotext for PDF text layer, tesseract for images, ffmpeg+whisper for audio/video). Quality depends on those local engines, not cloud services. Worker image must be rebuilt after install so tools are present in the container.
 - Image-only PDFs with no text layer may yield empty extraction until page-render OCR is added in a later DIFF.
 - Host bridge is required for the strongest web tiers.

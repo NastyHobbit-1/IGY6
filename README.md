@@ -4,7 +4,7 @@
 
 **IGY6 ("I Got Your Six")** is a private, local-first evidence collection, analysis, and decision-support platform. Built for thorough data ingestion, provenance tracking, and evidence-grounded reasoning — all running entirely on your hardware with zero external data exfiltration.
 
-On the `grok` branch: Full-access deep collection via Rust gateway + host bridge (web/public URLs with Deep Fetch / Public Fetch, browser exports, authorized Session Fetch, media binary collection, WiFi/system snapshots, local paths), full-resolution media library for collected images/videos, password + optional TOTP, Rust backend. Many advanced paths require host bridge / approval / explicit scope. See DIFF-249 and docs/ui/README.md.
+On the `grok` branch: Full-access deep collection via Rust gateway + host bridge (web/public URLs with Automated deep fetch / Public fetch, browser exports, authorized session-assisted fetch, media binary collection, WiFi/system snapshots, local paths), full-resolution media library for collected images/videos, password + optional TOTP, Rust backend. Many advanced paths require host bridge / approval / explicit scope. See DIFF-249 and docs/ui/README.md.
 
 ## ✨ Key Features
 
