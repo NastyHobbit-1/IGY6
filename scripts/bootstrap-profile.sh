@@ -41,7 +41,9 @@ resolve_backup_base() {
 
 list_backups_sorted() {
   local base; base="$(resolve_backup_base)"
-  find "$base" -maxdepth 1 -type f -name 'env-*.bak' 2>/dev/null | sort -r
+  # Sort by modification time (newest first). Name sort is incorrect when suffixes differ.
+  # Use GNU find's %T@ (epoch seconds with fraction) to ensure stable ordering.
+  find "$base" -maxdepth 1 -type f -name 'env-*.bak' -printf '%T@ %p\n' 2>/dev/null | sort -nr | cut -d' ' -f2-
 }
 
 restore_backup() {
