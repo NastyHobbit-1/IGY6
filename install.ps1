@@ -106,3 +106,5 @@ Write-Host "  pwsh scripts/ollama-local-setup.ps1 -Install -Model qwen2.5-coder:
 Write-Host "If Ollama is already running, igy6 start auto-enables LLM_PROVIDER=ollama."
 Write-Host ""
 Write-Host "Full working guide: docs/WORKING.md"
+Write-Host "Profile options: docs/config/PROFILES.md"
+Write-Host "Config reference: docs/config/ENV_REFERENCE.md"

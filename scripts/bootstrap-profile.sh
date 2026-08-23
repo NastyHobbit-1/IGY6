@@ -32,7 +32,12 @@ apply_profile() {
   [[ -f "${profile_path}" ]] || { echo "ERROR: Unknown profile: ${profile_name}" >&2; exit 1; }
   [[ -f "${ENV_FILE}" ]] || { echo "ERROR: Missing .env at ${ENV_FILE}. Create it first (e.g. igy6 start)." >&2; exit 1; }
   echo "Applying profile '${profile_name}' to ${ENV_FILE} ..."
-  # For each KEY=VALUE line (non-comment) set or update the key in .env
+  # Atomic apply: work on a temp copy, then move into place
+  local tmp_env
+  tmp_env="${ENV_FILE}.tmp.$$"
+  cp -f "${ENV_FILE}" "${tmp_env}"
+  trap 'rm -f "'"${tmp_env}"'" 2>/dev/null || true' EXIT
+  # For each KEY=VALUE line (non-comment) set or update the key in temp
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     [[ "${line}" =~ ^[[:space:]]*# ]] && continue
@@ -41,12 +46,15 @@ apply_profile() {
     # Escape for sed
     esc_key="$(printf '%s' "${key}" | sed -e 's/[^^]/[&]/g; s/\\^/\\\\^/g')"
     esc_val="$(printf '%s' "${value}" | sed -e 's/[&/]/\\&/g')"
-    if grep -qE "^[[:space:]]*(${esc_key})=" "${ENV_FILE}"; then
-      sed -i -E "s|^[[:space:]]*(${esc_key})=.*|\1=${esc_val}|" "${ENV_FILE}"
+    if grep -qE "^[[:space:]]*(${esc_key})=" "${tmp_env}"; then
+      sed -i -E "s|^[[:space:]]*(${esc_key})=.*|\1=${esc_val}|" "${tmp_env}"
     else
-      printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+      printf '%s=%s\n' "${key}" "${value}" >> "${tmp_env}"
     fi
   done < "${profile_path}"
+  # Move into place (atomic on same filesystem)
+  mv -f "${tmp_env}" "${ENV_FILE}"
+  trap - EXIT
   echo "Profile '${profile_name}' applied."
   # Record last applied
   local data_root
@@ -55,6 +63,7 @@ apply_profile() {
   mkdir -p "${data_root}/ops"
   printf '{ "profile": "%s" }\n' "${profile_name}" > "${data_root}/ops/installer-profile.json"
   echo "Recorded last applied profile to ${data_root}/ops/installer-profile.json"
+  echo "Note: Restart the IGY6 stack to apply environment changes."
 }
 
 select_profile_wizard() {
