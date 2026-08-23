@@ -157,8 +157,7 @@ async function runChecks(page, baseURL) {
     { name: 'chat hub', sel: '[data-unified-chat]' },
     { name: 'chat input', sel: '[data-chat-input]' },
     { name: 'chat send', sel: '[data-chat-send]' },
-    { name: 'home panel', sel: '[data-tab-panel="home"]' },
-    { name: 'chat panel', sel: '[data-tab-panel="results"]' },
+    { name: 'chat panel', sel: '[data-tab-panel="chat"]' },
     { name: 'data panel', sel: '[data-tab-panel="add-data"]' }
   ];
   for (const { name, sel } of contractSelectors) {
@@ -252,8 +251,8 @@ async function main() {
           }
         }
 
-        // Light section presence via common text
-        const sectionNeedles = ['readiness', 'Chat', 'Add Data', 'Work', 'Settings'];
+        // Light section presence via common text / anchors
+        const sectionNeedles = ['id="chat-readiness"', 'Chat', 'Add Data', 'Work', 'Settings', 'label for="tab-chat"', 'htmlFor="tab-chat"'];
         for (const needle of sectionNeedles) {
           if (!html.includes(needle)) {
             fail(`section text (node): ${needle}`);

@@ -13,7 +13,9 @@ const info = await page.evaluate(() => ({
   chatWired: document.querySelector("[data-unified-chat]")?.getAttribute("data-chat-wired") ?? null,
   settingsEnv: Boolean(document.querySelector("[data-settings-env]")),
   clientScripts: document.querySelectorAll("body > script").length,
-  tabResults: document.getElementById("tab-results")?.checked ?? null
+  tabChat: document.getElementById("tab-chat")?.checked ?? null,
+  chatReadiness: Boolean(document.getElementById("chat-readiness")),
+  chatPanelPresent: Boolean(document.querySelector('[data-tab-panel="chat"]'))
 }));
 
 console.log(JSON.stringify({ info, errors }, null, 2));

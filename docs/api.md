@@ -3,10 +3,10 @@
 The API currently exposes local-first foundation endpoints for health checks,
 source registry records, work item intent records, approvals, artifact and
 collection metadata, evidence records, review records, vector and graph memory,
-retrieval preview, reports, improvement items, and experiment run metadata. It
-does not implement answer generation, autonomous collection dispatch,
-self-improvement execution, production method changes, or system-changing
-actions.
+retrieval preview, reports, improvement items, and experiment run metadata.
+It also implements deterministic, evidence-grounded answer packets over local
+retrieval. The API does not perform self-improvement execution, autonomous
+collection dispatch, production method changes, or other system-changing actions.
 
 ## Endpoints
 
@@ -95,6 +95,17 @@ POST /experiments
 POST /experiments/{experiment_run_id}/status
 GET /experiments/{experiment_run_id}
 ```
+
+## Next.js proxy routes (UI runtime)
+
+The Next.js runtime under `apps/web/` exposes proxy routes that forward to the
+Rust gateway for UI use:
+
+- POST `/api/chat/retrieval-preview` → Rust `/chat/retrieval-preview`
+- POST `/api/chat/evidence-answer` → Rust `/chat/evidence-answer`
+
+These exist to keep browser calls same-origin with the UI while delegating work
+to the Rust API gateway configured by `API_BASE_URL`.
 
 `/health/live` confirms the API process is running.
 
@@ -376,5 +387,6 @@ update run status plus recorded metrics/artifact metadata. They record audit
 events but do not execute experiments, dispatch workers, call MLflow or Optuna,
 alter methods, or change production behavior.
 
-Future endpoints for answer-generating chat and self-improvement execution are
-intentionally not implemented yet.
+Answer-generating chat is implemented as deterministic, evidence-grounded
+responses at `POST /chat/evidence-answer`. Self-improvement execution remains
+out of scope for the current runtime and is not implemented.
