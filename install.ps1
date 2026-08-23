@@ -4,11 +4,90 @@
 # Requires: Rust (cargo via rustup), Docker Desktop (with Compose v2), PowerShell.
 # DIFF-268: installs/notes local media extraction tools; worker image carries the full set.
 
+param(
+    [switch] $Restore,
+    [string] $Backup = "latest"
+)
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+function Get-EnvFile {
+    return (Join-Path $RepoRoot ".env")
+}
+
+function Get-BackupBase {
+    $envFile = Get-EnvFile
+    $dataRoot = $null
+    if (Test-Path $envFile) {
+        $lines = Get-Content -LiteralPath $envFile -ErrorAction SilentlyContinue
+        $match = $lines | Where-Object { $_ -match '^\s*(?:export\s+)?IGY6_DATA_ROOT\s*=' } | Select-Object -Last 1
+        if ($match) {
+            $val = ($match -replace '^\s*(?:export\s+)?IGY6_DATA_ROOT\s*=\s*', '').Trim('"')
+            if ($val) { $dataRoot = $val }
+        }
+    }
+    if ($dataRoot) {
+        return (Join-Path $dataRoot "ops\env-backups")
+    } else {
+        return (Join-Path $RepoRoot ".igy6-backups\env")
+    }
+}
+
+function Get-BackupsSorted {
+    param([string] $Base)
+    if (-not (Test-Path $Base)) { return @() }
+    return Get-ChildItem -LiteralPath $Base -Filter 'env-*.bak' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+}
+
+function Restore-EnvBackup {
+    param([string] $Which = "latest")
+    $base = Get-BackupBase
+    New-Item -ItemType Directory -Force -Path $base | Out-Null
+    $chosen = $null
+    if ([string]::IsNullOrWhiteSpace($Which) -or $Which -eq "latest") {
+        $chosen = (Get-BackupsSorted -Base $base | Select-Object -First 1)
+        if (-not $chosen) {
+            Write-Host "ERROR: No backups found in $base"
+            exit 1
+        }
+    } else {
+        if (Test-Path -LiteralPath $Which) {
+            $chosen = Get-Item -LiteralPath $Which
+        } else {
+            $candidate = Join-Path $base $Which
+            if (Test-Path -LiteralPath $candidate) {
+                $chosen = Get-Item -LiteralPath $candidate
+            }
+        }
+        if (-not $chosen) {
+            Write-Host "ERROR: Backup not found: $Which"
+            exit 1
+        }
+    }
+    Write-Host "Restoring from backup: $($chosen.FullName)"
+    $envFile = Get-EnvFile
+    if (Test-Path -LiteralPath $envFile) {
+        $ts = Get-Date -AsUTC -Format "yyyyMMddTHHmmssZ"
+        $safety = Join-Path $base ("env-{0}-pre-restore.bak" -f $ts)
+        Copy-Item -Force -LiteralPath $envFile -Destination $safety
+        Write-Host "Safety backup written: $safety"
+    }
+    $tmp = "$envFile.restore.$PID"
+    Copy-Item -Force -LiteralPath $chosen.FullName -Destination $tmp
+    Move-Item -Force -LiteralPath $tmp -Destination $envFile
+    Write-Host "Restore complete: $envFile"
+    Write-Host "Note: Restart the IGY6 stack to apply environment changes."
+}
+
 Write-Host "=== IGY6 Windows Installer ==="
 Write-Host "Repo: $RepoRoot"
+
+# Windows-native restore mode
+if ($Restore.IsPresent) {
+    Restore-EnvBackup -Which $Backup
+    exit 0
+}
 
 # Check prerequisites
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
