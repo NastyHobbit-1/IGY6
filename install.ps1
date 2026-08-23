@@ -18,8 +18,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Host "ERROR: docker not found. Please install Docker Desktop."
-    exit 1
+    Write-Host "NOTE: docker not found. You can still build/install the IGY6 CLI now."
+    Write-Host "      To run the stack later, install Docker Desktop (Compose v2)."
 }
 
 function Install-MediaTools {
@@ -82,6 +82,9 @@ Write-Host "Set IGY6_REPO=$RepoRoot (the binary will use this to locate the stac
 
 Write-Host ""
 Write-Host "=== Installation complete ==="
+Write-Host "Health summary:"
+Write-Host ("  cargo  : " + ($(Get-Command cargo -ErrorAction SilentlyContinue) ? "ok" : "missing"))
+Write-Host ("  docker : " + ($(Get-Command docker -ErrorAction SilentlyContinue) ? "ok" : "missing"))
 Write-Host "Restart your terminal (or open a new PowerShell window)."
 Write-Host ""
 Write-Host "To run:"

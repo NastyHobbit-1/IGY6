@@ -24,7 +24,7 @@ export function BrowserWebRouterCollectorMvp() {
   const writeStatus = () => {
     const type = selectedType();
     if (!statusText || !type) return;
-    statusText.textContent = type.label + " — paste-only preview below, or use Auto bypass / Fetch public web page / Bypass fetch above for automatic URL collection. " + type.excluded;
+    statusText.textContent = type.label + " — paste-only preview below, or use Automated deep fetch / Public page fetch / Session-assisted fetch above for automatic URL collection. " + type.excluded;
   };
   const looksSensitive = (text) => /(password|passwd|secret|token|cookie|authorization|bearer|private key|ssid|wpa|api[_ -]?key)/i.test(text);
   const renderResult = (payload) => {
@@ -315,7 +315,7 @@ export function BrowserWebRouterCollectorMvp() {
         <div className="guidedManualActions">
           <button type="submit">Preview paste plan</button>
           <button type="button" data-bwr-collect>Collect pasted text</button>
-          <span>Does not fetch URLs. For automatic URL collection, use Max reach / Auto bypass / Fetch public above.</span>
+          <span>Does not fetch URLs. For automatic URL collection, use Max reach / Automated deep / Public fetch above.</span>
         </div>
       </form>
       <div className="guidedManualResult" data-browser-web-router-result>

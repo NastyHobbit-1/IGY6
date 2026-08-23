@@ -100,6 +100,9 @@ done
 
 echo ""
 echo "=== Installation complete ==="
+echo "Health summary:"
+echo "  cargo  : $(command -v cargo >/dev/null 2>&1 && echo ok || echo missing)"
+echo "  docker : $(command -v docker >/dev/null 2>&1 && echo ok || echo missing)"
 echo "To use immediately:"
 echo "  source ~/.bashrc   # or your shell rc"
 echo "  igy6               # starts the stack (detached) and opens browser to UI"

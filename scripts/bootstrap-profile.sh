@@ -8,13 +8,14 @@ PROFILES_DIR="${REPO_ROOT}/configs/profiles"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/bootstrap-profile.sh [--wizard] [quick-start|standard|advanced|expert]
+  scripts/bootstrap-profile.sh [--wizard|--check] [quick-start|standard|advanced|expert]
 
 Applies a configuration profile to .env idempotently (adds or updates known keys).
 Profiles live under configs/profiles/*.env. Existing unrelated keys are preserved.
 
 Options:
   --wizard   Interactive selection (safe re-run; records last choice).
+  --check    Print environment readiness summary (no changes).
   --help     Show help.
 
 Profiles:
@@ -70,6 +71,14 @@ select_profile_wizard() {
 main() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     usage; exit 0
+  fi
+  if [[ "${1:-}" == "--check" ]]; then
+    echo "bootstrap-profile check:"
+    echo "  .env      : $([[ -f \"$ENV_FILE\" ]] && echo present || echo missing)"
+    echo "  docker    : $(command -v docker >/dev/null 2>&1 && echo ok || echo missing)"
+    echo "  cargo     : $(command -v cargo >/dev/null 2>&1 && echo ok || echo missing)"
+    echo "  profiles  : $(ls -1 \"$PROFILES_DIR\"/*.env 2>/dev/null | wc -l | tr -d ' ') available"
+    exit 0
   fi
   if [[ "${1:-}" == "--wizard" ]]; then
     select_profile_wizard; exit 0
