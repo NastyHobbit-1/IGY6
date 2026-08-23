@@ -32,6 +32,22 @@ apply_profile() {
   [[ -f "${profile_path}" ]] || { echo "ERROR: Unknown profile: ${profile_name}" >&2; exit 1; }
   [[ -f "${ENV_FILE}" ]] || { echo "ERROR: Missing .env at ${ENV_FILE}. Create it first (e.g. igy6 start)." >&2; exit 1; }
   echo "Applying profile '${profile_name}' to ${ENV_FILE} ..."
+  # Backup current .env (recoverable/rollback)
+  if [[ -f "${ENV_FILE}" ]]; then
+    local data_root
+    data_root="$(grep -E '^[[:space:]]*(export[[:space:]]+)?IGY6_DATA_ROOT=' "${ENV_FILE}" | tail -n1 | cut -d'=' -f2- | tr -d '\"')"
+    local backup_base
+    if [[ -n "${data_root}" ]]; then
+      backup_base="${data_root}/ops/env-backups"
+    else
+      backup_base="${REPO_ROOT}/.igy6-backups/env"
+    fi
+    mkdir -p "${backup_base}"
+    local ts
+    ts="$(date -u +"%Y%m%dT%H%M%SZ")"
+    cp -f "${ENV_FILE}" "${backup_base}/env-${ts}.bak"
+    echo "Backup written: ${backup_base}/env-${ts}.bak"
+  fi
   # Atomic apply: work on a temp copy, then move into place
   local tmp_env
   tmp_env="${ENV_FILE}.tmp.$$"
