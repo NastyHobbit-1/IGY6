@@ -6,11 +6,13 @@
     "dev": "node scripts/start-dynamic.mjs",
     "build": "next build",
     "start": "node scripts/start-dynamic.mjs --start",
-    "test": "npm run test:ui-smoke",
+    "test": "npm run test:ui-smoke && npm run test:ui-runtime-smoke && npm run test:ui-interaction-smoke",
     "test:ui-smoke": "node scripts/ui-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test:ui-runtime-smoke": "node scripts/ui-runtime-smoke.mjs",
-    "check": "npm run typecheck && npm run test:ui-smoke && npm run test:ui-runtime-smoke"
+    "test:ui-interaction-smoke": "node scripts/ui-interaction-smoke.mjs",
+    "test:api-proxy-smoke": "node scripts/api-proxy-smoke.mjs",
+    "check": "npm run typecheck && npm run test:ui-smoke && npm run test:ui-runtime-smoke && npm run test:ui-interaction-smoke && npm run test:api-proxy-smoke"
   },
   "dependencies": {
     "next": "15.5.15",

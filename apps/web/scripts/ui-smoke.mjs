@@ -171,8 +171,8 @@ includesAll("implemented collection panels", uiCorpus, [
   "Collect pasted text",
   "data-lp-collect",
   "Collect scoped import",
-  "data-media-collect-text",
-  "Collect extracted text",
+  // Verify approvals panel wiring instead of removed media text collector
+  "data-source-collection-approval-review",
   "PipelineOperationsPanel",
   "data-pipeline-operations",
   "data-hypothesis-create-form",
