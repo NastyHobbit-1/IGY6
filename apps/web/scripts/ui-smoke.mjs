@@ -75,7 +75,7 @@ check("HomePage component exists", existsSync(join(componentsDir, "HomePage.tsx"
 check("components directory is populated", componentFiles.length >= 40);
 
 includesAll("top-level tabs", uiCorpus, [
-  'htmlFor="tab-results">Chat',
+  'htmlFor="tab-chat">Chat',
   'htmlFor="tab-add-data">Data',
   'htmlFor="tab-work">Work',
   'htmlFor="tab-settings">Settings',
@@ -183,7 +183,7 @@ includesAll("implemented collection panels", uiCorpus, [
 ]);
 
 includesAll("workflow section anchors", uiCorpus, [
-  'id="home"',
+  'id="chat-readiness"',
   'id="assistant"',
   'id="chat-web-fetch"',
   'id="data-knowledge"',
@@ -217,10 +217,9 @@ includesAll("settings hub navigation", uiCorpus, [
 ]);
 
 includesAll("tab panel mapping", uiCorpus, [
-  'data-tab-panel="home"',
+  'data-tab-panel="chat"',
   'data-tab-panel="add-data"',
   'data-tab-panel="work"',
-  'data-tab-panel="results"',
   'data-tab-panel="settings"',
   'data-tab-panel="advanced"'
 ]);
