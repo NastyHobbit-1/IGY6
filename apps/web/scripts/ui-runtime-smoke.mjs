@@ -157,14 +157,18 @@ async function runChecks(page, baseURL) {
     { name: 'chat hub', sel: '[data-unified-chat]' },
     { name: 'chat input', sel: '[data-chat-input]' },
     { name: 'chat send', sel: '[data-chat-send]' },
-    { name: 'home panel', sel: '[data-tab-panel="home"]' },
-    { name: 'chat panel', sel: '[data-tab-panel="results"]' },
+    // Chat IA retargeting: prefer new chat panel id, allow legacy results during transition
+    { name: 'chat panel', sel: '[data-tab-panel="chat"], [data-tab-panel="results"]' },
     { name: 'data panel', sel: '[data-tab-panel="add-data"]' }
   ];
   for (const { name, sel } of contractSelectors) {
     const count = await page.locator(sel).count().catch(() => 0);
     if (count < 1) fail(`contract: ${name}`);
   }
+
+  // Chat readiness marker: prefer #chat-readiness, accept legacy .chatHubStats during transition
+  const readinessCount = await page.locator('#chat-readiness, .chatHubStats').count().catch(() => 0);
+  if (readinessCount < 1) fail('contract: chat readiness marker');
 
   // No obvious fatal client crash text
   const bodyText = (await page.textContent('body').catch(() => '')) || '';

@@ -120,6 +120,24 @@ async function main() {
       ).catch(() => null);
       result.chatWired = await page.locator('[data-unified-chat]').first().getAttribute('data-chat-wired').catch(() => null);
 
+      // Prefer new Chat tab id; do not fail if absent during transition
+      const hasTabChat = await page.locator('label[for="tab-chat"]').count().catch(() => 0);
+      if (hasTabChat > 0) {
+        await page.locator('label[for="tab-chat"]').first().click().catch(() => null);
+      }
+
+      // Prefer new chat panel id; allow legacy results during transition
+      const chatPanelCount = await page.locator('[data-tab-panel="chat"], [data-tab-panel="results"]').count().catch(() => 0);
+      if (chatPanelCount < 1) {
+        addError('chat panel missing');
+      }
+
+      // Chat readiness marker preference
+      const readiness = await page.locator('#chat-readiness, .chatHubStats').count().catch(() => 0);
+      if (readiness < 1) {
+        addError('chat readiness marker missing');
+      }
+
       // Open Settings
       await page.getByRole('tab', { name: 'Settings' }).first().click().catch(() => null);
       await page.waitForTimeout(500);
