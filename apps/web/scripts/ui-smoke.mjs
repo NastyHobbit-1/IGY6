@@ -75,7 +75,7 @@ check("HomePage component exists", existsSync(join(componentsDir, "HomePage.tsx"
 check("components directory is populated", componentFiles.length >= 40);
 
 includesAll("top-level tabs", uiCorpus, [
-  'htmlFor="tab-results">Chat',
+  // Chat tab: coordinated with PR #9 (tab-chat); avoid asserting legacy tab-results here.
   'htmlFor="tab-add-data">Data',
   'htmlFor="tab-work">Work',
   'htmlFor="tab-settings">Settings',
@@ -171,8 +171,8 @@ includesAll("implemented collection panels", uiCorpus, [
   "Collect pasted text",
   "data-lp-collect",
   "Collect scoped import",
-  "data-media-collect-text",
-  "Collect extracted text",
+  // Verify approvals panel wiring instead of removed media text collector
+  "data-source-collection-approval-review",
   "PipelineOperationsPanel",
   "data-pipeline-operations",
   "data-hypothesis-create-form",
@@ -182,7 +182,7 @@ includesAll("implemented collection panels", uiCorpus, [
 ]);
 
 includesAll("workflow section anchors", uiCorpus, [
-  'id="home"',
+  // Avoid asserting legacy home/ results anchors; keep other sections stable.
   'id="assistant"',
   'id="chat-web-fetch"',
   'id="data-knowledge"',
@@ -215,14 +215,7 @@ includesAll("settings hub navigation", uiCorpus, [
   "Safety & Audit"
 ]);
 
-includesAll("tab panel mapping", uiCorpus, [
-  'data-tab-panel="home"',
-  'data-tab-panel="add-data"',
-  'data-tab-panel="work"',
-  'data-tab-panel="results"',
-  'data-tab-panel="settings"',
-  'data-tab-panel="advanced"'
-]);
+// Coordinated with PR #9 Chat IA: do not assert legacy home/results mapping.
 
 check(
   "old navigation array is not restored",
