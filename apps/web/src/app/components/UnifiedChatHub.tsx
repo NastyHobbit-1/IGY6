@@ -33,6 +33,7 @@ export function UnifiedChatHub({
   const sendButton = hub.querySelector("[data-chat-send]");
   const status = hub.querySelector("[data-chat-status]");
   const actions = hub.querySelector("[data-chat-actions]");
+  const composer = hub.querySelector(".chatComposer");
   const chips = hub.querySelectorAll("[data-chat-chip]");
   const chatForm = document.querySelector("[data-chat-preview-form]");
   const chatMessage = document.querySelector("[data-chat-preview-message]");
@@ -589,6 +590,17 @@ export function UnifiedChatHub({
     if (status) status.textContent = text;
   };
 
+  const beginBusy = () => {
+    if (sendButton) sendButton.disabled = true;
+    if (input) input.disabled = true;
+    if (composer) composer.setAttribute("aria-busy", "true");
+  };
+  const endBusy = () => {
+    if (sendButton) sendButton.disabled = false;
+    if (input) input.disabled = false;
+    if (composer) composer.removeAttribute("aria-busy");
+  };
+
   const clearActions = () => {
     if (!actions) return;
     actions.replaceChildren();
@@ -685,15 +697,17 @@ export function UnifiedChatHub({
   };
 
   const handleSend = async (textOverride) => {
-    const text = (textOverride || input?.value || "").trim();
-    if (!text) return;
-    if (input) input.value = text;
-    syncInputs(text);
-    clearActions();
-    appendMessage("user", "You", text);
-    setStatus("Understanding request...");
-    const lower = text.toLowerCase();
-    const url = extractUrl(text);
+    beginBusy();
+    try {
+      const text = (textOverride || input?.value || "").trim();
+      if (!text) { setStatus("Ready"); return; }
+      if (input) input.value = text;
+      syncInputs(text);
+      clearActions();
+      appendMessage("user", "You", text);
+      setStatus("Understanding request...");
+      const lower = text.toLowerCase();
+      const url = extractUrl(text);
 
     if (pendingClarification) {
       const resolved = resolveClarificationReply(text, lower, pendingClarification);
@@ -823,6 +837,9 @@ export function UnifiedChatHub({
       const detail = error instanceof Error ? error.message : "Unknown error";
       appendMessage("assistant", "Error", detail);
       setStatus("Error");
+    }
+    } finally {
+      endBusy();
     }
   };
 
