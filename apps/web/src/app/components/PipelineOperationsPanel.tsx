@@ -14,6 +14,27 @@ export function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<Wo
   const queued = JSON.parse(root.querySelector("[data-pipeline-queued-json]")?.textContent || "[]");
   const result = root.querySelector("[data-pipeline-ops-result]");
   const show = (message) => { if (result) result.textContent = message; };
+  const addSkeleton = () => {
+    const skeleton = document.createElement("div");
+    skeleton.className = "skeletonBlock";
+    skeleton.setAttribute("aria-busy", "true");
+    result?.parentNode?.insertBefore(skeleton, result);
+    return skeleton;
+  };
+  const clearSkeleton = (skeleton) => {
+    if (skeleton && skeleton.parentNode) skeleton.parentNode.removeChild(skeleton);
+  };
+  const showRetry = (label, onClick) => {
+    const box = document.createElement("div");
+    box.className = "guidedManualActions";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label || "Retry";
+    btn.addEventListener("click", onClick);
+    box.appendChild(btn);
+    result?.parentNode?.insertBefore(box, result.nextSibling);
+    return box;
+  };
   const postJson = async (path, body) => {
     const response = await fetch(apiBaseUrl + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     const payload = await response.json().catch(() => ({}));
@@ -21,29 +42,51 @@ export function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<Wo
     return payload;
   };
   root.querySelector("[data-vector-ensure]")?.addEventListener("click", async () => {
+    const sk = addSkeleton();
     show("Ensuring vector chunks...");
-    try { show("Vector ensure: " + JSON.stringify(await postJson("/memory/vector/chunks/ensure", {}))); } catch (e) { show(String(e)); }
+    try {
+      const payload = await postJson("/memory/vector/chunks/ensure", {});
+      show("Vector ensure: " + JSON.stringify(payload));
+    } catch (e) {
+      show("Vector ensure failed. Try again when memory is ready.");
+      showRetry("Retry ensure vector", () => root.querySelector("[data-vector-ensure]")?.dispatchEvent(new Event("click", { bubbles: true })));
+    } finally {
+      clearSkeleton(sk);
+    }
   });
   root.querySelector("[data-retrieval-search]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = root.querySelector("[name='pipeline_search_message']")?.value?.trim() || "";
     const limit = Number(root.querySelector("[name='pipeline_search_limit']")?.value || 5);
     if (!message) return;
+    const sk = addSkeleton();
     show("Searching...");
-    try { show("Retrieval: " + JSON.stringify(await postJson("/chat/retrieval-preview", { message, limit }))); } catch (e) { show(String(e)); }
+    try {
+      const payload = await postJson("/chat/retrieval-preview", { message, limit });
+      show("Retrieval: " + JSON.stringify(payload));
+    } catch (e) {
+      show("Retrieval failed. Check that memory is ready, then retry.");
+      showRetry("Retry search", () => root.querySelector("[data-retrieval-search]")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    } finally {
+      clearSkeleton(sk);
+    }
   });
   root.querySelectorAll("[data-dispatch-work-item]").forEach((button) => {
     button.addEventListener("click", async () => {
       const workItemId = button.getAttribute("data-work-item-id");
       if (!workItemId) return;
       button.disabled = true;
+      const sk = addSkeleton();
       show("Dispatching " + workItemId + "...");
       try {
-        show("Dispatch: " + JSON.stringify(await postJson("/work-items/" + encodeURIComponent(workItemId) + "/dispatch", {})));
+        const payload = await postJson("/work-items/" + encodeURIComponent(workItemId) + "/dispatch", {});
+        show("Dispatch: " + JSON.stringify(payload));
       } catch (e) {
-        show(String(e));
+        show("Dispatch failed. Open Work for details, then retry.");
+        showRetry("Retry dispatch", () => button.click());
       } finally {
         button.disabled = false;
+        clearSkeleton(sk);
       }
     });
   });
