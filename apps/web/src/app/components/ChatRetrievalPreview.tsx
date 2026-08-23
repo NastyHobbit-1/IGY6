@@ -303,6 +303,7 @@ export function ChatRetrievalPreview() {
 
   const showIdle = () => {
     if (!results) return null;
+    if (results.querySelector("[data-chat-idle]")) return null;
     const idle = document.createElement("article");
     idle.className = "item evidenceItem";
     idle.setAttribute("data-chat-idle", "");
@@ -316,6 +317,11 @@ export function ChatRetrievalPreview() {
     results.appendChild(idle);
     return idle;
   };
+
+  // Initial idle guidance when page loads and no results are present
+  if (results.children.length === 0) {
+    showIdle();
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -466,26 +472,6 @@ export function ChatRetrievalPreview() {
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <ClientScript script={script} />
-      <ClientScript script={`
-      (() => {
-        const results = document.querySelector("[data-chat-preview-results]");
-        const wired = results?.getAttribute("data-idle-wired") === "true";
-        if (!results || wired) return;
-        results.setAttribute("data-idle-wired", "true");
-        if (results.children.length === 0) {
-          const idle = document.createElement("article");
-          idle.className = "item evidenceItem";
-          const body = document.createElement("div");
-          const title = document.createElement("strong");
-          title.textContent = "Idle";
-          const detail = document.createElement("span");
-          detail.textContent = "Ask a question, then click Ask over evidence. Your local data is used for retrieval; empty results mean insufficient evidence.";
-          body.append(title, detail);
-          idle.appendChild(body);
-          results.appendChild(idle);
-        }
-      })();
-      `} />
     </section>
   );
 }
