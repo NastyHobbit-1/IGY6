@@ -301,6 +301,22 @@ export function ChatRetrievalPreview() {
     return box;
   };
 
+  const showIdle = () => {
+    if (!results) return null;
+    const idle = document.createElement("article");
+    idle.className = "item evidenceItem";
+    idle.setAttribute("data-chat-idle", "");
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = "Ask over evidence";
+    const detail = document.createElement("span");
+    detail.textContent = "Type a question and click Ask over evidence to preview retrieval. Save the answer to keep a history record.";
+    body.append(title, detail);
+    idle.appendChild(body);
+    results.appendChild(idle);
+    return idle;
+  };
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     status.textContent = "Retrieving context";
@@ -450,6 +466,26 @@ export function ChatRetrievalPreview() {
       </div>
       <div className="stack previewResults" data-chat-preview-results />
       <ClientScript script={script} />
+      <ClientScript script={`
+      (() => {
+        const results = document.querySelector("[data-chat-preview-results]");
+        const wired = results?.getAttribute("data-idle-wired") === "true";
+        if (!results || wired) return;
+        results.setAttribute("data-idle-wired", "true");
+        if (results.children.length === 0) {
+          const idle = document.createElement("article");
+          idle.className = "item evidenceItem";
+          const body = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = "Idle";
+          const detail = document.createElement("span");
+          detail.textContent = "Ask a question, then click Ask over evidence. Your local data is used for retrieval; empty results mean insufficient evidence.";
+          body.append(title, detail);
+          idle.appendChild(body);
+          results.appendChild(idle);
+        }
+      })();
+      `} />
     </section>
   );
 }
