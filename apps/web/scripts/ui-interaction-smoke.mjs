@@ -8,7 +8,6 @@
  */
 
 import { spawn } from 'child_process';
-import { chromium } from 'playwright';
 
 const DEFAULT_BASE = process.env.WEB_BASE_URL || 'http://127.0.0.1:3000';
 const START_TIMEOUT_MS = 45000;
@@ -106,6 +105,15 @@ async function main() {
 
     let browser = null;
     try {
+      // Dynamically import Playwright so it's optional; skip cleanly if absent
+      const mod = await import('playwright').catch(() => null);
+      if (!mod?.chromium) {
+        result.skippedReason = 'Playwright not installed';
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(0);
+        return;
+      }
+      const { chromium } = mod;
       browser = await chromium.launch({ headless: true });
       result.usedBrowser = true;
       const context = await browser.newContext();

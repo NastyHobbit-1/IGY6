@@ -17,7 +17,6 @@
  */
 
 import { spawn } from 'child_process';
-import { chromium } from 'playwright';
 
 const DEFAULT_BASE = process.env.WEB_BASE_URL || 'http://127.0.0.1:3000';
 const START_TIMEOUT_MS = 45000;
@@ -203,6 +202,10 @@ async function main() {
 
     let usedBrowser = false;
     try {
+      // Dynamically import Playwright so it's optional in runtime environments
+      const mod = await import('playwright').catch(() => null);
+      if (!mod?.chromium) throw new Error('Playwright not installed');
+      const { chromium } = mod;
       browser = await chromium.launch({ headless: true });
       const context = await browser.newContext();
       const page = await context.newPage();
@@ -219,7 +222,7 @@ async function main() {
       await runChecks(page, baseURL);
       usedBrowser = true;
     } catch (launchErr) {
-      console.log('[ui-runtime-smoke] Playwright chromium launch failed (common when browser binaries are not pre-installed):', launchErr?.message || launchErr);
+      console.log('[ui-runtime-smoke] Browser path unavailable or Playwright not installed:', launchErr?.message || launchErr);
       console.log('[ui-runtime-smoke] Falling back to lightweight node fetch + HTML contract verification (still asserts the exact same data attributes, tab labels, sections, title, and successful load that the browser checks target).');
     }
 

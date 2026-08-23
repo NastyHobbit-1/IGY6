@@ -1,6 +1,6 @@
 {
   "name": "igy6-web",
-  "version": "0.0.0-phase0",
+  "version": "0.1.0-grok",
   "private": true,
   "scripts": {
     "dev": "node scripts/start-dynamic.mjs",
@@ -16,11 +16,11 @@
   },
   "dependencies": {
     "next": "15.5.15",
-    "playwright": "^1.51.1",
     "react": "19.0.2",
     "react-dom": "19.0.2"
   },
   "devDependencies": {
+    "playwright": "^1.51.1",
     "@types/node": "22.10.5",
     "@types/react": "19.0.4",
     "@types/react-dom": "19.0.2",
