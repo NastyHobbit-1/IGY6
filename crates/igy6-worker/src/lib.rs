@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use igy6_artifacts::ArtifactStore;
 use igy6_chunking::{plan_document_chunks, ChunkPlan, ChunkingError, EvidencePlan};
+use igy6_media_extract::extract_or_utf8;
 use igy6_normalization::{
     build_normalized_document_ref, NormalizedDocumentInput, NormalizedDocumentRef, RawArtifactRef,
 };
@@ -86,6 +88,7 @@ impl WorkerTaskKind {
             "collection_normalization" => Some(Self::CollectionNormalization),
             "document_chunking" => Some(Self::DocumentChunking),
             "chunk_vector_upsert" => Some(Self::ChunkVectorUpsert),
+            "report_generation" => Some(Self::ReportGeneration),
             _ => None,
         }
     }
@@ -95,6 +98,7 @@ impl WorkerTaskKind {
             Self::CollectionNormalization => "collection_normalization",
             Self::DocumentChunking => "document_chunking",
             Self::ChunkVectorUpsert => "chunk_vector_upsert",
+            Self::ReportGeneration => "report_generation",
         }
     }
 
@@ -103,6 +107,7 @@ impl WorkerTaskKind {
             Self::CollectionNormalization => "collection.normalize_collection_run",
             Self::DocumentChunking => "evidence.generate_document_chunks",
             Self::ChunkVectorUpsert => "memory.vector.upsert_chunks",
+            Self::ReportGeneration => "report.generate_markdown",
         }
     }
 }
@@ -182,6 +187,7 @@ pub fn queue_claim_query_plan(claim_limit: usize) -> Result<QueueClaimQueryPlan,
             WorkerTaskKind::CollectionNormalization.work_type(),
             WorkerTaskKind::DocumentChunking.work_type(),
             WorkerTaskKind::ChunkVectorUpsert.work_type(),
+            WorkerTaskKind::ReportGeneration.work_type(),
         ],
         claim_limit,
         select_sql: "SELECT id, work_type, status, requested_by_actor_id, payload_json FROM work_items WHERE status = 'queued' AND work_type = ANY($1) ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT $2",
@@ -1287,6 +1293,9 @@ fn execute_claimed_work_item(
         WorkerTaskKind::ChunkVectorUpsert => {
             execute_chunk_vector_upsert_canary(client, &claimed, config)
         }
+        WorkerTaskKind::ReportGeneration => {
+            execute_report_generation_canary(client, &claimed, config)
+        }
     };
 
     match execution {
@@ -1495,7 +1504,7 @@ fn execute_collection_normalization_canary(
         required_payload_string_array(&claimed.payload_json, "raw_artifact_ids")?;
     let rows = client
         .query(
-            "SELECT id, source_id, collection_run_id, content_hash, storage_path, metadata_json FROM raw_artifacts WHERE id = ANY($1)",
+            "SELECT id, source_id, collection_run_id, content_hash, storage_path, mime_type, metadata_json FROM raw_artifacts WHERE id = ANY($1)",
             &[&raw_artifact_ids],
         )
         .map_err(live_error)?;
@@ -1512,6 +1521,7 @@ fn execute_collection_normalization_canary(
                 .unwrap_or_default(),
             content_hash: row.get("content_hash"),
             storage_path: storage_path.clone(),
+            mime_type: row.get::<_, Option<String>>("mime_type"),
             metadata_json: row.get("metadata_json"),
             bytes: read_artifact_bytes_under_data_root(&config.igy6_data_root, &storage_path)?,
         });
@@ -1797,6 +1807,150 @@ fn execute_document_chunking_canary(
     ))
 }
 
+fn execute_report_generation_canary(
+    client: &mut Client,
+    claimed: &ClaimedWorkItem,
+    config: &WorkerRuntimeConfig,
+) -> Result<WorkerLiveCanaryResult, WorkerRuntimeError> {
+    let report_id = required_payload_string(&claimed.payload_json, "report_id")?;
+    let notes = claimed
+        .payload_json
+        .get("notes")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    // Load report basics
+    let row = client
+        .query_opt(
+            "SELECT id, title, report_type, status, requested_by_actor_id FROM reports WHERE id = $1",
+            &[&report_id],
+        )
+        .map_err(live_error)?
+        .ok_or_else(|| WorkerRuntimeError::LiveExecution("Report not found".to_string()))?;
+    let title: String = row.get(1);
+    let report_type: String = row.get(2);
+    let status_before: String = row.get(3);
+    let requested_by: String = row.get(4);
+
+    // Inventory counts
+    let work_items_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM work_items", &[])
+        .map_err(live_error)?
+        .get(0);
+    let approvals_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM approvals", &[])
+        .map_err(live_error)?
+        .get(0);
+    let sources_count: i64 = client
+        .query_one("SELECT COUNT(*) FROM sources", &[])
+        .map_err(live_error)?
+        .get(0);
+    let recent_source: Option<(String, String)> = client
+        .query_opt(
+            "SELECT name, id FROM sources ORDER BY created_at DESC LIMIT 1",
+            &[],
+        )
+        .map_err(live_error)?
+        .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)));
+
+    // Build markdown
+    let mut lines = vec![
+        format!("# {}", title),
+        String::new(),
+        format!("- Report ID: `{}`", report_id),
+        format!("- Report type: `{}`", report_type),
+        format!("- Requested by: `{}`", requested_by),
+        format!("- Status before render: `{}`", status_before),
+        String::new(),
+        "## Inventory Counts".to_string(),
+        String::new(),
+        format!("- work_items: {}", work_items_count),
+        format!("- approvals: {}", approvals_count),
+        format!("- sources: {}", sources_count),
+        String::new(),
+        "## Recent Records".to_string(),
+        String::new(),
+    ];
+    if let Some((name, id)) = recent_source {
+        lines.push(format!("- source: {} [{}]", name, id));
+    } else {
+        lines.push("- No recent records available.".to_string());
+    }
+    lines.extend([
+        String::new(),
+        "## Boundaries".to_string(),
+        String::new(),
+        "- This report is generated from local metadata records only.".to_string(),
+        "- It does not read raw artifact contents.".to_string(),
+        "- It does not call external models or services.".to_string(),
+    ]);
+    if !notes.trim().is_empty() {
+        lines.extend([String::new(), "## Notes".to_string(), String::new(), notes]);
+    }
+    lines.push(String::new());
+    let markdown = lines.join("\n");
+
+    // Write artifact to store under IGY6_DATA_ROOT
+    let store =
+        ArtifactStore::new(&config.igy6_data_root).map_err(|e| live_error(e.to_string()))?;
+    let stored = store
+        .write_bytes(markdown.as_bytes())
+        .map_err(|e| live_error(e.to_string()))?;
+    let artifact_id = generated_id("artifact");
+
+    // Persist: complete work, set report status/path, add audit
+    let mut transaction = client.transaction().map_err(live_error)?;
+    transaction
+        .execute(
+            "UPDATE work_items SET status = 'completed', error_message = NULL, updated_at = now() WHERE id = $1",
+            &[&claimed.work_item_id],
+        )
+        .map_err(live_error)?;
+    transaction
+        .execute(
+            "UPDATE reports SET status = 'ready', artifact_path = $2, updated_at = now() WHERE id = $1",
+            &[&report_id, &stored.storage_path],
+        )
+        .map_err(live_error)?;
+    insert_audit_event_tx(
+        &mut transaction,
+        &claimed.requested_by_actor_id,
+        "report.rendered",
+        "ready",
+        "report",
+        &report_id,
+        &artifact_id,
+        json!({
+            "artifact_id": artifact_id,
+            "artifact_path": stored.storage_path,
+            "content_hash": stored.content_hash,
+            "content_already_existed": stored.existed,
+        }),
+    )?;
+    transaction.commit().map_err(live_error)?;
+
+    Ok(make_live_canary_result(
+        claimed,
+        "completed",
+        vec![
+            "postgres_work_item_completed".to_string(),
+            "artifact_store_write".to_string(),
+            "postgres_report_updated".to_string(),
+            "audit_event_insert".to_string(),
+        ],
+        vec![],
+        None,
+        json!({
+            "artifact_id": artifact_id,
+            "artifact_path": stored.storage_path,
+            "content_hash": stored.content_hash,
+            "report_id": report_id,
+            "markdown_bytes": markdown.len(),
+        }),
+    ))
+}
+
 fn execute_chunk_vector_upsert_canary(
     client: &mut Client,
     claimed: &ClaimedWorkItem,
@@ -1951,6 +2105,7 @@ fn mark_canary_failed(
         WorkerTaskKind::CollectionNormalization => "collection_normalization.failed",
         WorkerTaskKind::DocumentChunking => "document_chunks.failed",
         WorkerTaskKind::ChunkVectorUpsert => "chunk_vectors.failed",
+        WorkerTaskKind::ReportGeneration => "report_generation.failed",
     };
     insert_audit_event_tx(
         &mut transaction,
@@ -2528,6 +2683,7 @@ pub struct RawArtifactRecord {
     pub collection_run_id: String,
     pub content_hash: String,
     pub storage_path: String,
+    pub mime_type: Option<String>,
     pub metadata_json: Value,
     pub bytes: Vec<u8>,
 }
@@ -3261,9 +3417,22 @@ pub fn plan_collection_normalization_execution(
             skipped_raw_artifact_ids.push(artifact_id.clone());
             continue;
         }
-        let text_content = std::str::from_utf8(&artifact.bytes)
-            .map_err(|_| CollectionNormalizationError::NonUtf8Artifact(artifact.id.clone()))?
-            .to_string();
+        // Prefer real media extraction when possible; else fall back to UTF-8 text.
+        let filename_hint = artifact
+            .metadata_json
+            .get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let extract = extract_or_utf8(
+            &artifact.bytes,
+            artifact.mime_type.as_deref(),
+            if filename_hint.is_empty() {
+                None
+            } else {
+                Some(filename_hint)
+            },
+        );
+        let text_content = extract.text;
         let document_id = generated_document_ids
             .get(artifact_id)
             .ok_or_else(|| {
@@ -3280,10 +3449,14 @@ pub fn plan_collection_normalization_execution(
             text_content,
             sensitivity: "internal".to_string(),
             metadata_json: json!({
-                "generated_by": "DIFF-051",
+                "generated_by": "DIFF-294",
                 "raw_content_hash": artifact.content_hash,
                 "raw_storage_path": artifact.storage_path,
                 "work_item_id": work_item.id,
+                "extraction_method": extract.method,
+                "extraction_tool": extract.tool,
+                "extraction_success": extract.success,
+                "extraction_mime_type": extract.mime_type,
             }),
         });
     }
@@ -4424,6 +4597,7 @@ mod tests {
             collection_run_id: collection_run_id.to_string(),
             content_hash: format!("hash-{id}"),
             storage_path: format!("sha256/{id}"),
+            mime_type: Some("application/octet-stream".to_string()),
             metadata_json: json!({"filename": format!("{id}.txt")}),
             bytes,
         }
@@ -4583,7 +4757,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_normalization_rejects_collection_mismatch_and_non_utf8() {
+    fn collection_normalization_handles_collection_mismatch_and_media_extraction() {
         let mut mismatch = normalization_input();
         mismatch.raw_artifacts[0] = raw_artifact_for_run("raw-1", "other-run", b"alpha".to_vec());
         assert_eq!(
@@ -4591,12 +4765,12 @@ mod tests {
             CollectionNormalizationError::RawArtifactCollectionMismatch("raw-1".to_string())
         );
 
+        // Non-UTF8 bytes should now be processed via media extraction fallback (lossy decode ok)
         let mut non_utf8 = normalization_input();
         non_utf8.raw_artifacts[0] = raw_artifact("raw-1", vec![0xff, b'a']);
-        assert_eq!(
-            plan_collection_normalization_execution(non_utf8).expect_err("utf8"),
-            CollectionNormalizationError::NonUtf8Artifact("raw-1".to_string())
-        );
+        let plan = plan_collection_normalization_execution(non_utf8).expect("extraction ok");
+        assert_eq!(plan.normalized_documents.len(), 1);
+        assert!(plan.normalized_documents[0].text_content.len() >= 1);
     }
 
     #[test]

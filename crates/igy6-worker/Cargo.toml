@@ -8,5 +8,7 @@ igy6-chunking = { path = "../igy6-chunking" }
 igy6-media-extract = { path = "../igy6-media-extract" }
 igy6-normalization = { path = "../igy6-normalization" }
 igy6-vector-memory = { path = "../igy6-vector-memory" }
+igy6-artifacts = { path = "../igy6-artifacts" }
+igy6-work-queue-reports = { path = "../igy6-work-queue-reports" }
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 serde_json = "1"

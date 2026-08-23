@@ -107,11 +107,7 @@ where
                 Ok(outcome) => {
                     log_startup_step(
                         &repo_root,
-                        outcome
-                            .stdout
-                            .lines()
-                            .next()
-                            .unwrap_or("start complete"),
+                        outcome.stdout.lines().next().unwrap_or("start complete"),
                     );
                     Ok(outcome)
                 }
@@ -468,11 +464,7 @@ pub fn append_ops_log(data_root: &Path, kind: &str, component: &str, level: &str
         "{} [{component}] [{level}] {sanitized}\n",
         ops_log_timestamp()
     );
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
     truncate_ops_log_file(&path);
@@ -927,7 +919,10 @@ pub fn start_stack_and_open_browser(repo_root: &Path) -> Result<CliOutcome, CliE
     println!("API is ready at {}", ports.api_url);
     log_startup_step(
         repo_root,
-        &format!("web UI ready at {} ; API at {}", ports.web_url, ports.api_url),
+        &format!(
+            "web UI ready at {} ; API at {}",
+            ports.web_url, ports.api_url
+        ),
     );
 
     match webbrowser::open(&ports.web_url) {
