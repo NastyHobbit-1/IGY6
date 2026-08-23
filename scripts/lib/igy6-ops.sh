@@ -31,7 +31,7 @@ igy6_require_repo_files() {
     cp -n "${IGY6_REPO_ROOT}/.env.example" "${IGY6_ENV_FILE}" || igy6_die "Failed to copy .env.example"
 
     # Grok-branch friendly defaults: absolute data dir under home (avoids docker bind issues),
-    # single-user protected mode with the branch password "ThatDog123", dynamic-UI friendly ports.
+    # single-user protected mode, dynamic-UI friendly ports.
     DATA_DIR="${HOME}/IGY6_Data"
     mkdir -p "${DATA_DIR}" || true
 
@@ -53,7 +53,7 @@ igy6_require_repo_files() {
       {
         echo ""
         echo "# GROK BRANCH NOTE (auto-added on first run)"
-        echo "# Default program password is ThatDog123 (change in UI User & Security after first unlock)."
+        echo "# Set a program password in Settings → User & Security after first start."
         echo "# All deep/safe collection, Media Library, TOTP linking, etc. is done from the web UI."
         echo "# Data lives under ${DATA_DIR} (including full-res images/videos from safe sources only)."
         echo "# Telemetry fully opted out (NEXT_TELEMETRY_DISABLED=1 + service disables for Neo4j/MLflow/Phoenix)."

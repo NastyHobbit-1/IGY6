@@ -21,11 +21,11 @@ Internal panel headings such as Home readiness, Add Data, Results/Evidence, and 
    Or `scripts/run.sh` for foreground logs. Both pick free ports when 3000/8000 are
    busy and print the exact `WEB_BASE_URL` to open.
 
-2. Open the URL in your browser. Use the password gate (default "ThatDog123"). If you have enabled TOTP, also supply a current code from your authenticator app for protected actions (deep collector, etc.).
+2. Open the URL in your browser. If prompted, set a program password in Settings → User & Security. If you enable TOTP, also supply a current code from your authenticator app for protected actions (deep collector, etc.).
 
 3. Use **Data** to register sources and bring in authorized information:
    - Guided text upload, conversation history, user observations.
-   - Web fetch: Public fetch, Deep fetch, Session fetch (host bridge may be required for strongest tiers).
+   - Web fetch: Public fetch, Automated deep fetch, Session-assisted fetch (host bridge may be required for strongest tiers).
    - Media import: upload PDF/image/audio/video; worker extracts text with local tools (pdftotext / tesseract / ffmpeg+whisper) when installed.
    - Local project / PC diagnostics (bounded paths only).
 

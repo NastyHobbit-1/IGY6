@@ -21,8 +21,8 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker not found. Please install Docker and Docker Compose."
-  exit 1
+  echo "NOTE: docker not found. You can still build/install the IGY6 CLI now."
+  echo "      To run the stack later, install Docker + Compose v2 first."
 fi
 
 install_media_tools() {
@@ -100,6 +100,9 @@ done
 
 echo ""
 echo "=== Installation complete ==="
+echo "Health summary:"
+echo "  cargo  : $(command -v cargo >/dev/null 2>&1 && echo ok || echo missing)"
+echo "  docker : $(command -v docker >/dev/null 2>&1 && echo ok || echo missing)"
 echo "To use immediately:"
 echo "  source ~/.bashrc   # or your shell rc"
 echo "  igy6               # starts the stack (detached) and opens browser to UI"
@@ -113,7 +116,7 @@ echo ""
 echo "Note: Keep this repo directory ($REPO_ROOT) - the binary auto-finds it."
 echo "Docker must be running. Rebuild worker after this install so media tools are in the image:"
 echo "  docker compose -f infra/docker-compose.yml build worker"
-echo "First run will bootstrap .env with password 'ThatDog123' etc."
+echo "First run will bootstrap .env; set a program password in the UI (Settings → User & Security)."
 echo "igy6 auto-picks WEB_PORT/APP_PORT if 3000/8000 are busy and verifies the IGY6 UI before opening the browser."
 echo ""
 echo "Optional local LLM (Ollama):"
@@ -122,3 +125,5 @@ echo "  scripts/ollama-local-setup.sh --install --yes   # Linux only"
 echo "If Ollama is already running, igy6 start auto-enables LLM_PROVIDER=ollama."
 echo ""
 echo "Full working guide: docs/WORKING.md"
+echo "Profile options: docs/config/PROFILES.md"
+echo "Config reference: docs/config/ENV_REFERENCE.md"
