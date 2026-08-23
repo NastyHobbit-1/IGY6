@@ -278,7 +278,7 @@ export async function HomePage() {
         <section className="panel workflowHero tabContent" id="chat-readiness" data-tab-panel="chat">
           <div className="panelHeader">
             <div>
-              <p className="eyebrow">Home</p>
+              <p className="eyebrow">Chat</p>
               <h2>System Ready</h2>
             </div>
             <StatusPill state={health.data.status} />
@@ -293,7 +293,7 @@ export async function HomePage() {
             ))}
           </section>
           <p className="readinessSummary">System ready. Background worker ready. {pendingApprovals.length > 0 ? "Review pending approvals before sensitive collection." : "No approval needs attention right now."}</p>
-          <section className="metrics compact" aria-label="Home overview">
+          <section className="metrics compact" aria-label="Chat overview">
             <article><span>Service readiness</span><strong>{Object.keys(checks).length ? `${Object.values(checks).filter((check) => check.status === "ok").length}/${Object.keys(checks).length}` : "Unknown"}</strong></article>
             <article><span>Recent data activity</span><strong>{recentRuns.length + recentArtifacts.length}</strong></article>
             <article><span>Recent work</span><strong>{recentWorkItems.length}</strong></article>
