@@ -52,6 +52,23 @@ pub const RUST_NATIVE_ROUTES: &[(&str, &str)] = &[
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("GET", "/rust-migration/status"),
+    // User/TOTP security routes (grok branch)
+    ("GET", "/user/status"),
+    ("POST", "/user/change-password"),
+    ("POST", "/user/generate-totp"),
+    ("POST", "/user/confirm-totp"),
+    ("POST", "/user/verify-unlock"),
+    // Full-access and local-scan collection (grok branch)
+    ("POST", "/collection-runs/full-access"),
+    ("POST", "/collection-runs/full-local-scan"),
+    // Host bridge reach probe (grok branch)
+    ("GET", "/host-bridge/status"),
+    ("POST", "/host-bridge/ensure-max-reach"),
+    // Bypass intel utilities (existing internal handlers)
+    ("GET", "/bypass-intel/status"),
+    ("GET", "/bypass-intel/playbook"),
+    ("POST", "/bypass-intel/harvest"),
+    ("POST", "/media/import"),
     ("GET", "/agent/capabilities"),
     ("GET", "/agent/task-plans"),
     ("GET", "/agent/task-plans/{task_plan_id}"),
@@ -383,6 +400,7 @@ pub fn handle_gateway_request_with_db(
         ("POST", "/collection-runs/manual-upload/ingest") => {
             manual_upload_ingest_response(&request.body, database_url)
         }
+        ("POST", "/media/import") => media_import_response(&request.body, database_url),
         // On grok branch: full power access collector (user directive: ingest ANYTHING the process can reach, store ONLY locally, no outbound info leakage beyond necessary fetches for collection itself)
         ("POST", "/collection-runs/full-access") => {
             full_access_collection_response(&request.body, database_url)
@@ -414,6 +432,10 @@ pub fn handle_gateway_request_with_db(
         },
         ("POST", "/user/confirm-totp") => {
             let resp_body = user_confirm_totp(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
+            json_response(200, "OK", resp_body, false)
+        },
+        ("POST", "/user/verify-unlock") => {
+            let resp_body = user_verify_unlock(&request.body).unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e));
             json_response(200, "OK", resp_body, false)
         },
         ("POST", "/evidence/documents") => {
@@ -1125,6 +1147,10 @@ fn manual_upload_ingest_response(body: &str, database_url: Option<&str>) -> Gate
     write_route_response(ingest_manual_upload_collection(body, database_url))
 }
 
+fn media_import_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
+    write_route_response(media_import(body, database_url))
+}
+
 fn local_project_collection_response(body: &str, database_url: Option<&str>) -> GatewayResponse {
     write_route_response(create_local_project_collection(body, database_url))
 }
@@ -1181,6 +1207,92 @@ fn action_route_response(result: Result<String, GatewayError>) -> GatewayRespons
             false,
         ),
     }
+}
+
+fn media_import(body: &str, database_url: Option<&str>) -> Result<String, GatewayError> {
+    let object = parse_json_object(body, "Media import request body")?;
+    let name = optional_string_field_with_max(&object, "name", "media-import", 255)?;
+    let media_label = optional_string_field_with_max(&object, "label", "media-import", 255)?;
+    let media_type = optional_string_field_with_max(&object, "media_type", "pdf", 32)?;
+    let filename = optional_string_field_with_max(&object, "filename", "upload.bin", 255)?;
+    let mime_type =
+        optional_string_field_with_max(&object, "mime_type", "application/octet-stream", 255)?;
+    let content_base64 = optional_nullable_string_field(&object, "content_base64")?;
+    let requested_by_actor_id =
+        optional_string_field_with_max(&object, "requested_by_actor_id", "local-owner", 128)?;
+    let database_url = database_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(GatewayError::MissingDatabaseUrl)?;
+
+    // 1) Create a media source with collect permission
+    let source_body = serde_json::json!({
+        "name": name,
+        "source_type": "media_file",
+        "location": filename,
+        "sensitivity": "internal",
+        "metadata_json": { "created_from": "media_import", "media_type": media_type },
+        "permission": {
+            "scope_json": { "media_label": media_label, "media_type": media_type },
+            "allowed_operations": ["dry_run","read","collect","normalize","extract_metadata"],
+            "external_model_policy": "blocked",
+            "approval_required": false,
+            "created_by_actor_id": requested_by_actor_id
+        }
+    })
+    .to_string();
+    let created_source_json = create_source(&source_body, Some(database_url))?;
+    let created_source: Value = serde_json::from_str(&created_source_json)
+        .map_err(|e| GatewayError::Conflict(e.to_string()))?;
+    let source_id = created_source
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::Conflict("media source creation failed".to_string()))?
+        .to_string();
+    let permission_id = created_source
+        .get("permissions")
+        .and_then(Value::as_array)
+        .and_then(|arr| {
+            arr.iter().find(|p| {
+                p.get("allowed_operations")
+                    .and_then(Value::as_array)
+                    .map(|ops| ops.iter().any(|op| op.as_str() == Some("collect")))
+                    .unwrap_or(false)
+            })
+        })
+        .and_then(|p| p.get("id").and_then(Value::as_str))
+        .ok_or_else(|| GatewayError::Conflict("collect permission was not created".to_string()))?
+        .to_string();
+
+    // 2) If content provided, enqueue normalization via manual upload
+    let upload_response = if let Some(content_b64) = content_base64 {
+        let manual_upload_body = serde_json::json!({
+            "source_id": source_id,
+            "source_permission_id": permission_id,
+            "filename": filename,
+            "mime_type": mime_type,
+            "content_base64": content_b64,
+            "metadata_json": {
+              "submitted_from": "media_import",
+              "media_type": media_type,
+              "original_filename": filename,
+              "extract_pipeline": "local_tools"
+            },
+            "requested_by_actor_id": requested_by_actor_id
+        })
+        .to_string();
+        Some(create_manual_upload_collection(
+            &manual_upload_body,
+            Some(database_url),
+        )?)
+    } else {
+        None
+    };
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "source": serde_json::from_str::<Value>(&created_source_json).unwrap_or(serde_json::json!({})),
+        "upload": upload_response.and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    }).to_string())
 }
 
 fn settings_env_verify_response(body: &str) -> GatewayResponse {
@@ -4200,7 +4312,8 @@ fn create_report_work_item(
         "status": "queued",
         "report_id": report_id,
         "report_type": report_type,
-        "scaffold_only": true
+        "scaffold_only": false,
+        "executes_report_generation": true
     });
     transaction
         .execute(
@@ -6567,6 +6680,18 @@ fn dispatch_task_name(work_item: &WorkItemDispatchRecord) -> Result<String, Gate
                 ));
             }
             Ok("evidence.generate_document_chunks".to_string())
+        }
+        "report_generation" => {
+            if !work_item
+                .payload_json
+                .get("report_id")
+                .is_some_and(Value::is_string)
+            {
+                return Err(GatewayError::Validation(
+                    "Invalid report generation payload".to_string(),
+                ));
+            }
+            Ok("report.generate_markdown".to_string())
         }
         "chunk_vector_upsert" => Ok("memory.vector.upsert_chunks".to_string()),
         _ => Err(GatewayError::Validation(
@@ -12198,11 +12323,7 @@ pub fn append_runtime_ops_log(kind: &str, component: &str, level: &str, message:
         "{} [{component}] [{level}] {sanitized}\n",
         ops_log_timestamp()
     );
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
     truncate_ops_log_file(&path);
@@ -12451,6 +12572,27 @@ fn user_change_password(body: &str) -> Result<String, GatewayError> {
     cfg.password = new_pass.to_string();
     save_user_config(&cfg)?;
     Ok(serde_json::json!({"status": "password changed"}).to_string())
+}
+
+fn user_verify_unlock(body: &str) -> Result<String, GatewayError> {
+    let obj: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| GatewayError::Validation("invalid json".into()))?;
+    let current = obj
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let totp_code = obj.get("totp_code").and_then(|v| v.as_str()).unwrap_or("");
+
+    let cfg = load_user_config();
+    if current != cfg.password {
+        return Ok(serde_json::json!({"status":"unauthorized"}).to_string());
+    }
+    if cfg.totp_enabled {
+        if !verify_totp(cfg.totp_secret.as_deref().unwrap_or(""), totp_code) {
+            return Ok(serde_json::json!({"status":"unauthorized"}).to_string());
+        }
+    }
+    Ok(serde_json::json!({"status":"ok","totp_enabled":cfg.totp_enabled}).to_string())
 }
 
 fn user_generate_totp(body: &str) -> Result<String, GatewayError> {
@@ -12881,8 +13023,8 @@ fn report_work_item_payload(
         "report_title": report_title,
         "report_type": report_type,
         "report_status": report_status,
-        "scaffold_only": true,
-        "executes_report_generation": false,
+        "scaffold_only": false,
+        "executes_report_generation": true,
         "notes": notes,
         "intent_verification_recorded": true,
         "intent_verification": {
@@ -16172,11 +16314,18 @@ mod tests {
             "evidence.generate_document_chunks"
         );
 
-        let unsupported = WorkItemDispatchRecord {
+        let report_item = WorkItemDispatchRecord {
             work_type: "report_generation".to_string(),
+            payload_json: serde_json::json!({
+                "report_id": "report-1",
+                "intent_verification": {"recorded_by": "test"}
+            }),
             ..work_item
         };
-        assert!(dispatch_task_name(&unsupported).is_err());
+        assert_eq!(
+            dispatch_task_name(&report_item).expect("task"),
+            "report.generate_markdown"
+        );
     }
 
     #[test]
@@ -17205,6 +17354,26 @@ mod tests {
             host_port_from_url("bolt://neo4j:7687"),
             Some(("neo4j".to_string(), 7687))
         );
+    }
+
+    #[test]
+    fn native_route_table_includes_security_full_access_host_bridge_and_bypass_intel() {
+        for expected in [
+            ("GET", "/user/status"),
+            ("POST", "/user/change-password"),
+            ("POST", "/user/generate-totp"),
+            ("POST", "/user/confirm-totp"),
+            ("POST", "/user/verify-unlock"),
+            ("POST", "/collection-runs/full-access"),
+            ("POST", "/collection-runs/full-local-scan"),
+            ("GET", "/host-bridge/status"),
+            ("POST", "/host-bridge/ensure-max-reach"),
+            ("GET", "/bypass-intel/status"),
+            ("GET", "/bypass-intel/playbook"),
+            ("POST", "/bypass-intel/harvest"),
+        ] {
+            assert!(RUST_NATIVE_ROUTES.contains(&expected), "{expected:?}");
+        }
     }
 
     fn request(method: &str, path: &str, body: &str) -> GatewayRequest {

@@ -136,8 +136,7 @@ pub fn normalize_raw_artifact(
     title: Option<String>,
     sensitivity: Option<String>,
 ) -> NormalizedDocumentRef {
-    let (text_norm, extract) =
-        normalize_artifact_bytes(bytes, raw.mime_type.as_deref(), filename);
+    let (text_norm, extract) = normalize_artifact_bytes(bytes, raw.mime_type.as_deref(), filename);
     let document_type = match extract.method.as_str() {
         "pdf_text_layer" => "pdf_extracted",
         "image_ocr" => "image_ocr",
