@@ -93,4 +93,26 @@
 - No remaining blockers for this audit.
 - Next: Continue nightly RITR exclusively on grok; owner may advance DIFF-294 production-readiness when ready; local re-run verification matrix when possible.
 
+## 2026-08-23
+- Branch: grok
+- Full sync/inspection of grok branch (fresh tree + commits via GitHub tools, head SHA 36f2835dd2b510d4fb1a54256ce13ca4dbbd0b74 including DIFF-294 landings PR #7 and #8).
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref="grok" or branch="grok".
+- Inspected: AGENTS.md, BRANCH_POLICY, README, WORKING.md, ui/README.md, user-guide, security-policy, DIFF-294, DIFF-295, nightly_tasks.md, apps/web API proxies (including /api/user/verify-unlock, /api/media/import, /api/host-bridge/*), UI components tree, recent PR #7/#8 file diffs, installer scripts, configs/profiles, bootstrap-profile.sh.
+- Recent DIFF-294 landings verified present and coherent:
+  - No default password: `ThatDog123` **0 hits** repo-wide; first-run set-password path in Settings; `/user/verify-unlock` non-mutating route + web proxy present.
+  - Fetch terminology: "Automated deep fetch" / "Public fetch" / "Session-assisted fetch" aligned in UI + docs; old "Deep Fetch"/"Session Fetch" labels **0 hits** under apps/web.
+  - Host-bridge: `/host-bridge/status` + improved ensure-max-reach messaging; UI deep-scan prepares bridge then runs full-access with user password/TOTP.
+  - Installer profiles: configs/profiles/{quick-start,standard,advanced,expert}.env; scripts/bootstrap-profile.sh (apply/check/restore/wizard); install.sh / install.ps1 health summary + no default-password messaging; docs/config/PROFILES.md + ENV_REFERENCE.md.
+  - Media import path + report_generation worker work landed via PR #7.
+- Full Functionality Audit: Code searches for TODO|FIXME|placeholder|"not implemented"|stub|unfinished|HACK|XXX|"coming soon"|"not yet"|"partial fix": **0 hits**. location.reload under apps/web: **0 hits**. ThatDog123: **0 hits**. Backend routes (gateway + apps/web/src/app/api/*), frontend panels, processing pipelines, collection (full-access, host-bridge, media, browser, local, manual, bypass-intel), security (password/TOTP first-run), reports/experiments/predictions/agent/task-plans, graph/lineage, backups/diagnostics, settings/env/ops logs, chat/retrieval/evidence-answer all present and wired. Intentional partial connector statuses remain documented as bounded, not bugs. Open draft PRs #6/#10/#11 under DIFF-294 noted (not defects; intentional unfinished productization work).
+- **No issues found.** No code or documentation defects requiring repair this cycle.
+- Repair Loop: N/A (clean).
+- Maintenance/Completion/Improvement: End-user friendliness verified solid after password/host-bridge/profile landings; core design and architecture preserved; no new product enhancements from this nightly.
+- UI Verification: Every visible control has clear purpose; labels match docs and tab bar (Chat/Data/Work/Settings/More); residual internal headings intentional and documented in ui/README.md; media tools use program password + verify-unlock (no hardcoded secrets); no unnecessary duplication; features grouped correctly; no unfinished or non-functional controls exposed.
+- Testing: Static inspections + code searches + recent PR diff review + verify-unlock proxy read passed. Agent sandbox blocks live execution (no reliable full Rust/Node/Docker runtime for this monorepo). Exact local commands: `git checkout grok && cp .env.example .env && ./install.sh && igy6 start && npm --prefix apps/web run check && cargo test --workspace && scripts/post-cutover-smoke.sh --check` (rebuild worker if media tools needed).
+- Documentation: this nightly_tasks.md entry; created DIFF-296-nightly-audit-2026-08-23.md.
+- Files changed: nightly_tasks.md, docs/diffs/DIFF-296-nightly-audit-2026-08-23.md
+- No remaining blockers for this audit.
+- Next: Continue nightly RITR exclusively on grok; owner may land remaining open DIFF-294 draft PRs (#6 docs/API alignment, #10 local_project text-only normalization, #11 phase0 Playwright smokes) when ready; local re-run verification matrix when possible.
+
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
