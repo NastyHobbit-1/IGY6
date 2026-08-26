@@ -55,3 +55,25 @@
 - Next: Continue nightly RITR exclusively on grok; owner may land remaining DIFF-294 draft PRs when ready; local re-run full verification matrix when possible.
 
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
+
+## 2026-08-25
+- Branch: grok
+- Full sync/inspection of grok branch (shallow clone + recursive tree via GitHub tools, head SHA ad0ad4d807ed57b2f9760d21e17e810202c95558 including DIFF-297).
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref/branch="grok".
+- Inspected: AGENTS.md, BRANCH_POLICY, README, WORKING.md, ui/README.md, nightly_tasks.md, DIFF-294, DIFF-297, apps/web package.json + scripts, MediaImportMvp, collection panels, open draft PRs #6/#9/#10/#11 under DIFF-294.
+- Full Functionality Audit:
+  - Code searches for TODO/FIXME/placeholder/"not implemented"/stub/unfinished/HACK/XXX/"coming soon"/"not yet"/"partial fix" in product code: only intentional HTML placeholders, historical cutover-manifest notes, honest UI warnings (forecasting/rollback), and gateway status string — **no unfinished feature markers requiring repair**.
+  - location.reload under apps/web: **0 hits**. ThatDog123: **0 hits**.
+  - Tabs Chat/Data/Work/Settings/More confirmed; residual internal ids documented.
+  - Media smoke markers from DIFF-297 remain aligned with binary import UI.
+  - Known intentional gaps under DIFF-294 (NEXT_PUBLIC_API_BASE_URL usage, phase0 version, local_project text filter, docs alignment) remain in open draft PRs — not nightly defects.
+- Repair Loop: **No new defects found.**
+- Maintenance/Improvement: No product behavior change.
+- UI Verification: Visible controls purposeful; media import button and attributes match docs; labels match tab bar; no fake/dead controls exposed by this audit.
+- Testing: typecheck PASS; ui-smoke PASS (53 component files). cargo test blocked (sandbox lockfile v4 / edition2024 toolchain). ui-runtime-smoke needs live stack + Playwright browsers (documented). Recommended local matrix unchanged.
+- Documentation: this nightly_tasks.md entry; created DIFF-298-nightly-audit-2026-08-25.md.
+- Files changed: nightly_tasks.md, docs/diffs/DIFF-298-nightly-audit-2026-08-25.md
+- No remaining blockers for this audit beyond intentional open DIFF-294 draft PRs.
+- Next: Continue nightly RITR exclusively on grok; owner may land remaining DIFF-294 draft PRs when ready; local re-run full verification matrix when possible.
+
+**All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
