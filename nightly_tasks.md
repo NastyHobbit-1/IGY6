@@ -77,3 +77,28 @@
 - Next: Continue nightly RITR exclusively on grok; owner may land remaining DIFF-294 draft PRs when ready; local re-run full verification matrix when possible.
 
 **All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
+
+## 2026-08-26
+- Branch: grok
+- Full sync/inspection of grok branch (shallow clone + recursive tree via GitHub tools, head SHA 59d2fb6a7e8c180a982ed90b1625f3da0428c6a1 including DIFF-298; 787 tree items).
+- Confirmed active/only working on exactly lowercase "grok" branch exclusively; never touched main, dev, Grok, or any other branch. All inspections and updates via GitHub tools with explicit ref/branch="grok".
+- Inspected: AGENTS.md, BRANCH_POLICY, README, WORKING.md, ui/README.md, nightly_tasks.md, DIFF-294, DIFF-298, apps/web package.json + scripts, MediaImportMvp, collection panels, route-parity guard, open draft PRs #6/#9/#10/#11 under DIFF-294.
+- Full Functionality Audit:
+  - Product-code TODO/FIXME/unfinished markers: none requiring repair (historical cutover-manifest notes, honest UI warnings for forecasting/rollback, gateway 404 detail string, provenance stubs).
+  - location.reload under apps/web: **0 hits**. ThatDog123: **0 hits**.
+  - Tabs Chat/Data/Work/Settings/More confirmed; residual internal ids documented.
+  - Media smoke markers from DIFF-297 remain aligned with binary import UI.
+  - **Issue found:** `python3 scripts/test-rust-route-parity.py` failed. Guard treated Next proxy `GET /ops/runtime-logs?limit=120` as a distinct FastAPI-fallback route even though Rust implements `GET /ops/runtime-logs`. Classification/manifest route counts were also stale (118/79 vs live 123/81).
+- Repair Loop:
+  - Root cause: parity scanner compared full request URLs (query string included) to gateway path patterns; recorded counts were not refreshed after later native routes (including ops logs).
+  - Fixed `scripts/rust-route-parity.py` to strip `?`/`#` from discovered web paths. Updated `configs/legacy-fastapi-route-classification.json` and `configs/rust-cutover-manifest.json` route_parity counts to live values.
+  - Verified: `python3 scripts/test-rust-route-parity.py` → **PASS** (4 tests). `python3 scripts/rust-route-parity.py --check` → fastapi=91 rust_native=123 web_used=81 missing=0 fallback=0. `test:ui-smoke` **PASS**. `typecheck` **PASS**.
+- Maintenance/Improvement: No product UI/API behavior change. Open DIFF-294 draft PRs (#6/#9/#10/#11) remain intentional productization work, not nightly defects.
+- UI Verification: Visible controls purposeful; media import markers match docs; labels match tab bar; no fake/dead controls exposed by this audit.
+- Testing: typecheck PASS; ui-smoke PASS (53 component files); route-parity tests PASS after fix. cargo test blocked (sandbox rustc 1.75 / lockfile edition2024). docker compose not installed. ui-runtime-smoke / dom-check need Playwright browsers (documented).
+- Documentation: this nightly_tasks.md entry; created DIFF-299-nightly-audit-2026-08-26.md.
+- Files changed: scripts/rust-route-parity.py, configs/legacy-fastapi-route-classification.json, configs/rust-cutover-manifest.json, nightly_tasks.md, docs/diffs/DIFF-299-nightly-audit-2026-08-26.md
+- No remaining blockers for this audit beyond intentional open DIFF-294 draft PRs.
+- Next: Continue nightly RITR exclusively on grok; owner may land remaining DIFF-294 draft PRs when ready; local re-run full verification matrix when possible.
+
+**All hard rules followed strictly: only grok, no functionality removed, no partials left, every repair completed fully, small focused commits, never assumed works — always verified via tools.**
