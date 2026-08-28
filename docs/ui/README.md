@@ -146,3 +146,7 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 - Host bridge is required for the strongest web tiers.
 - No external exfil; empty states are honest.
 - Refer to DIFF-249 capability table and DIFF-268 for exact status per item.
+
+## Browser API calls
+
+Client-side buttons post to same-origin `/api/*` Next.js proxies. Those proxies forward to the Rust gateway using container `API_BASE_URL`. Guided upload, media import, local project, reports, approvals, and Advanced console actions all use `/api`, not `http://127.0.0.1:8000`.
