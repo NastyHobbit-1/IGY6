@@ -1,5 +1,21 @@
 export const apiBaseUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
 
+/** Browser-side UI must call Next `/api` proxies, never the Rust origin directly. */
+export const browserApiBaseUrl = "/api";
+
+export async function proxyJsonPost(path: string, request: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ detail: "Invalid JSON body" }, { status: 400 });
+  }
+  return proxyToRust(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function proxyToRust(
   path: string,
   init?: RequestInit,
