@@ -2,7 +2,7 @@ import type { WorkItemRecord, ApiResult } from "./types";
 import { ClientScript, DomJsonScript } from "@/lib/use-dom-script";
 
 export function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<WorkItemRecord[]> }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const queuedWorkItems = workItems.data.filter((item) => item.status === "queued" || item.status === "pending_intent_verification").slice(0, 8);
   const queuedJson = JSON.stringify(queuedWorkItems.map((item) => ({ id: item.id, work_type: item.work_type, status: item.status }))).replace(/</g, "\\u003c");
   const script = `
@@ -77,4 +77,3 @@ export function PipelineOperationsPanel({ workItems }: { workItems: ApiResult<Wo
     </section>
   );
 }
-
