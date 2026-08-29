@@ -120,7 +120,7 @@ export function GraphLineageExplanationPanel({
         ))}
       </div>
       {lineageRows.length === 0 ? <EmptyState label="No sources are available for lineage explanation yet." /> : null}
-      <section className="guidedManualActions" data-graph-lineage-ops data-api-base-url={process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}>
+      <section className="guidedManualActions" data-graph-lineage-ops data-api-base-url="/api">
         <button type="button" data-graph-ensure-schema>Ensure Neo4j schema</button>
         <button type="button" data-graph-sync-lineage>Sync lineage to graph</button>
         <span data-graph-lineage-ops-result>Run when vector/graph memory needs schema or lineage refresh.</span>
@@ -154,4 +154,3 @@ export function GraphLineageExplanationPanel({
     </section>
   );
 }
-
