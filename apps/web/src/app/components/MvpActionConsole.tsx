@@ -3,7 +3,7 @@ import { TermHelp } from "./ui/TermHelp";
 import { HelpHeading } from "./ui/HelpHeading";
 
 export function MvpActionConsole() {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const script = `
 (() => {
   const root = document.querySelector("[data-mvp-actions]");
