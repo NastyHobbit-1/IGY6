@@ -170,7 +170,6 @@ services:
       context: ../apps/web
     environment:
       API_BASE_URL: http://api:8000
-      NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL}
       PORT: "3000"
       NEXT_TELEMETRY_DISABLED: 1
     ports:
