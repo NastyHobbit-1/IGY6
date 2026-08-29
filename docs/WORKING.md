@@ -150,7 +150,7 @@ Chat quick chips and natural language (`add data`, `check processing`, `open set
 
 ## API proxy layer (browser → Rust)
 
-The UI server-fetches most data via `API_BASE_URL`. Client-side buttons use `/api/*` proxies:
+The UI server-fetches most data via `API_BASE_URL`. Every client `data-api-base-url` / `browserApiBaseUrl` surface uses `/api` (never `NEXT_PUBLIC_API_BASE_URL` or `http://127.0.0.1:8000`). Client-side buttons use `/api/*` proxies:
 
 | Browser path | Rust route |
 |--------------|------------|
