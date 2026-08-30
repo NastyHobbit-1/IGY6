@@ -104,6 +104,19 @@ includesAll("browser api proxies", uiCorpus, [
   "/api/chat/evidence-answer"
 ]);
 
+check(
+  "browser surfaces do not compile NEXT_PUBLIC_API_BASE_URL",
+  !uiCorpus.includes("NEXT_PUBLIC_API_BASE_URL")
+);
+check(
+  "browser surfaces do not hardcode gateway origin 127.0.0.1:8000",
+  !uiCorpus.includes("http://127.0.0.1:8000")
+);
+check(
+  "hypothesis form uses same-origin /api proxy",
+  uiCorpus.includes('data-hypothesis-create-form data-api-base-url="/api"')
+);
+
 const requiredApiRoutes = [
   "user/status/route.ts",
   "user/change-password/route.ts",
@@ -121,7 +134,16 @@ const requiredApiRoutes = [
   "settings/env/verify/route.ts",
   "settings/env/apply/route.ts",
   "ops/runtime-logs/route.ts",
-  "ops/runtime-logs/append/route.ts"
+  "ops/runtime-logs/append/route.ts",
+  "analysis/hypotheses/route.ts",
+  "analysis/patterns/route.ts",
+  "analysis/patterns/detect-baseline/route.ts",
+  "approvals/route.ts",
+  "collection-runs/manual-upload/route.ts",
+  "collection-runs/local-project/route.ts",
+  "feedback/route.ts",
+  "outcomes/route.ts",
+  "reports/route.ts"
 ];
 
 for (const route of requiredApiRoutes) {
