@@ -164,6 +164,13 @@ The UI server-fetches most data via `API_BASE_URL`. Every client `data-api-base-
 | `/api/artifacts/{id}/content` | `/artifacts/{id}/content` |
 | `/api/collection-runs/full-access` | `/collection-runs/full-access` |
 | `/api/agent/*`, `/api/settings/env/*`, … | Same path on gateway |
+| `/api/collection-runs/manual-upload` | `/collection-runs/manual-upload` |
+| `/api/collection-runs/local-project` | `/collection-runs/local-project` |
+| `/api/feedback` | `/feedback` |
+| `/api/outcomes` | `/outcomes` |
+| `/api/analysis/patterns` | `/analysis/patterns` |
+| `/api/analysis/patterns/detect-baseline` | `/analysis/patterns/detect-baseline` |
+| `/api/analysis/hypotheses` | `/analysis/hypotheses` |
 
 ---
 
