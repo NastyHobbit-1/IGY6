@@ -76,6 +76,17 @@ Text summary: User → Next.js UI → Rust API Gateway → Worker Daemon → (Po
 - Run `cargo test`, `cargo clippy`, `npm --prefix apps/web run build`.
 - See `docs/BRANCH_POLICY.md` and `docs/agents/`.
 
+Operator path is `igy6 start` / `igy6 stop`. Direct Compose equivalents (used by lifecycle checks):
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env up --build
+docker compose -f infra/docker-compose.yml --env-file .env down
+docker compose -f infra/docker-compose.yml --env-file .env config
+scripts/runtime-lifecycle-check.sh --check
+```
+
+Rollback of the archived Python worker is documented under `archive/legacy-python/services-worker`. Validate Compose with the `config` command above before any restore.
+
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE).
