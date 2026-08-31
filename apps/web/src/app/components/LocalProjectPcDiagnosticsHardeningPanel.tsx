@@ -9,7 +9,7 @@ export function LocalProjectPcDiagnosticsHardeningPanel({
   sources: ApiResult<SourceRecord[]>;
   approvals: ApiResult<ApprovalRecord[]>;
 }) {
-  const browserApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const browserApiBaseUrl = "/api";
   const localProjectSources = sources.data
     .filter((source) => source.enabled && source.source_type === "local_project")
     .map((source) => ({
