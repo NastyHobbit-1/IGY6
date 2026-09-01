@@ -90,7 +90,7 @@ Find blue-raven-117 in my uploaded evidence.
 
 - Approval required: create an approval with request payload matching source ID,
   permission ID, and operation `manual_upload_collection`, then approve it.
-- Work item stuck queued: inspect worker logs and Redis status.
+- Work item stuck queued: inspect worker logs and PostgreSQL `work_items` status. Redis is not part of the active worker queue.
 - No evidence yet: verify the worker is running and check whether the work item
   has moved from queued to completed or failed.
 - Chat cannot find `blue-raven-117`: confirm chunks/evidence exist first.
