@@ -85,7 +85,7 @@ The Rust root identity, `/health/live`, `/health/ready`, and
   `archive/legacy-python/services-api` after DIFF-139.
 - No FastAPI routes are missing from Rust after DIFF-139.
 - Rust-only application API/worker runtime is claimed after DIFF-165. The claim
-  does not mean Next.js web, PostgreSQL, Redis, Qdrant, Neo4j, MLflow, or
-  Phoenix were rewritten in Rust.
+  does not mean Next.js web, PostgreSQL, Qdrant, Neo4j, MLflow, or
+  Phoenix were rewritten in Rust. Redis is retired from active Compose.
 - Legacy Python/Celery worker source is archived at
   `archive/legacy-python/services-worker` after DIFF-165.
