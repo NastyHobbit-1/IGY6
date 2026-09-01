@@ -81,8 +81,7 @@ export function LifecycleAuditStatusPanel({
     { label: "permissions/approvals", count: approvals.data.length, backup: "metadata export MVP", export: "audit metadata", restore: "dry-run validation only", deletion: "restricted" },
     { label: "raw artifacts", count: artifacts.data.length, backup: "not in MVP", export: "metadata only", restore: "future", deletion: "dangerous" },
     { label: "documents/chunks", count: documents.data.length + chunks.data.length, backup: "metadata export MVP", export: "content excluded", restore: "dry-run validation only", deletion: "dangerous" },
-    { label: "evidence/claims/answers", count: evidenceItems.data.length + claims.data.length + evidenceAnswers.data.length, backup: "metadata export MVP", export: "content excluded", restore: "dry-run validation only", deletion: "dangerous" },
-    { label: "feedback/outcomes", count: feedback.data.length + outcomes.data.length, backup: "metadata export MVP", export: "review metadata", restore: "dry-run validation only", deletion: "restricted" },
+    { label: "evidence/claims/answers", count: evidenceItems.data.length + claims.data.length + evidenceAnswers.data.length, backup: "metadata export MVP", export: "content excluded", restore: "dry-run validation only", deletion: "restricted" },
     { label: "work/task records", count: workItems.data.length + taskPlans.data.length, backup: "metadata export MVP", export: "metadata", restore: "dry-run validation only", deletion: "restricted" },
     { label: "reports", count: reports.data.length, backup: "metadata export MVP", export: "metadata; raw markdown excluded", restore: "dry-run validation only", deletion: "future explicit DIFF" },
     { label: "patterns/predictions/recommendations", count: patterns.data.length + hypotheses.data.length + predictions.data.length + recommendations.data.length, backup: "metadata export MVP", export: "analysis metadata", restore: "dry-run validation only", deletion: "restricted" },
@@ -171,7 +170,7 @@ export function LifecycleAuditStatusPanel({
           <div className="stack">
             <article className="item evidenceItem"><div><strong>Secrets and `.env`</strong><span>Excluded from product exports; settings backups are separate and controlled.</span></div><StatusPill state="excluded" /></article>
             <article className="item evidenceItem"><div><strong>Raw private artifacts</strong><span>Include only in future owner-selected backup/export flows with explicit warnings.</span></div><StatusPill state="sensitive" /></article>
-            <article className="item evidenceItem"><div><strong>Runtime databases</strong><span>PostgreSQL, Qdrant, Neo4j, MLflow, Phoenix, and Redis need service-specific future procedures.</span></div><StatusPill state="future-diff" /></article>
+            <article className="item evidenceItem"><div><strong>Runtime databases</strong><span>PostgreSQL, Qdrant, Neo4j, MLflow, and Phoenix need service-specific future procedures. Redis is retired from active Compose.</span></div><StatusPill state="future-diff" /></article>
           </div>
         </div>
         <div>
@@ -186,4 +185,3 @@ export function LifecycleAuditStatusPanel({
     </section>
   );
 }
-
