@@ -1,6 +1,6 @@
 # IGY6 Working Guide (grok branch)
 
-This is the single reference for **install → run → use → verify → develop** on the Grok6 repo. If you only run the installer and `igy6 start`, everything below still applies — but you can skip the development sections.
+This is the single reference for **install → run → use → verify → develop** on the IGY6 repo. If you only run the installer and `igy6 start`, everything below still applies — but you can skip the development sections.
 
 ## One-command operator path
 
@@ -255,7 +255,7 @@ cargo build -p igy6-cli --release
 
 | Item | Default |
 |------|---------|
-| Repo | Where you cloned Grok6 |
+| Repo | Where you cloned IGY6 |
 | User data | `IGY6_DATA_ROOT` in `.env` (e.g. `C:\Users\you\IGY6_Data`) |
 | Artifacts / media | `{IGY6_DATA_ROOT}/artifacts` (via container mount) |
 | Runtime URLs | `.env` + `storage/.runtime-url` after port auto-pick |
