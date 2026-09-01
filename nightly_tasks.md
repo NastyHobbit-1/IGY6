@@ -9,12 +9,22 @@
 
 ---
 
+## 2026-08-31 late (DIFF-308)
+- Branch: grok
+- Continuation after DIFF-307. Worked only on lowercase grok. DIFF-307 is locked and was not edited.
+- Origin leftovers after DIFF-307 land: HomePage hypothesis form still compiled `NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"`; manifest still recorded `118`/`79`; POST_CUTOVER still said browser helpers call `http://127.0.0.1:8000` and listed Redis as an active supporting service.
+- Repairs: HomePage hypothesis form `data-api-base-url="/api"`; rust-cutover-manifest route_parity `123`/`81`; POST_CUTOVER web row + Redis sentence; LifecycleAuditStatusPanel / E2E smoke / non-web classification no longer treat Redis as an active runtime service.
+- Testing: typecheck PASS; ui-smoke PASS (53 files); next build PASS (Next.js 15.5.15); test-rust-route-parity PASS (4); rust-route-parity --check PASS (91/123/81/missing 0/fallback 0); post-cutover-runtime-audit PASS. cargo/clippy blocked (rustc 1.75 / edition2024). docker/Playwright not runnable here.
+- Remaining blockers: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes need newer rustc and docker/Playwright.
+- See `docs/diffs/DIFF-308-nightly-audit-2026-08-31.md`.
+
 ## 2026-08-31 (DIFF-307)
 - Branch: grok
 - Continuation after DIFF-306 leftover `/api` origin list. Worked only on lowercase grok.
-- Repairs: EvidenceFeedbackWorkflow and HomePage hypothesis form now use same-origin `/api`; rust-cutover-manifest route_parity counts 123/81; POST_CUTOVER web row and Redis supporting-service sentence corrected; WORKING.md "Grok6 repo" typo corrected to IGY6.
+- Repairs landed on origin in DIFF-307: EvidenceFeedbackWorkflow same-origin `/api`; rust-route-parity `web_used_routes` staleness guard; WORKING.md "Grok6 repo" typo corrected to IGY6; DIFF-307 record.
+- DIFF-307 completion criteria for HomePage / manifest 123/81 / POST_CUTOVER were written ahead of those origin blobs. DIFF-308 lands those leftovers.
 - Improvement: `scripts/rust-route-parity.py --check` now fails when `web_used_routes` is stale (same as rust_native_routes).
-- Testing: typecheck PASS; ui-smoke PASS (53 files); next build PASS; test-rust-route-parity PASS (4); rust-route-parity --check PASS (91/123/81/missing 0/fallback 0); post-cutover-runtime-audit PASS. cargo/clippy blocked (rustc 1.75 / edition2024). docker/Playwright not runnable here.
+- Testing: typecheck PASS; ui-smoke PASS (53 files); next build PASS; test-rust-route-parity PASS (4); rust-route-parity --check PASS after DIFF-308 manifest refresh; post-cutover-runtime-audit PASS. cargo/clippy blocked (rustc 1.75 / edition2024). docker/Playwright not runnable here.
 - See `docs/diffs/DIFF-307-nightly-audit-2026-08-31.md`.
 
 ## 2026-08-30 (late / DIFF-306)
@@ -27,19 +37,8 @@
 
 ## 2026-08-30
 - Branch: grok
-- Full sync/inspection of grok at d4a8901 (DIFF-304). Worked only on lowercase grok.
-- Full Functionality Audit: leftover DIFF-304 origin list confirmed on origin. No unfinished product-code TODO/FIXME requiring repair. Host-bridge `127.0.0.1:${agentPort}` calls remain intentional. `location.reload` / `ThatDog123` under apps/web: 0 hits.
-- Repair Loop:
-  - Root cause: DIFF-304 locked ui-smoke against compiled localhost:8000 origins but seven panels plus the HomePage hypothesis form still compiled `NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"`. Manifest counts were still 118/79. POST_CUTOVER topology still said browser helpers call `http://127.0.0.1:8000`.
-  - Local one-line replacements applied and verified: `browserApiBaseUrl = "/api"` on BaselinePatternExpansionPanel, BrowserWebRouterCollectorMvp, ConversationHistoryImport, EvidenceFeedbackWorkflow, LocalProjectPcDiagnosticsHardeningPanel, PredictionRecommendationOutcomeReview; HomePage hypothesis form `data-api-base-url="/api"`; manifest 123/81; POST_CUTOVER topology row corrected.
-  - Origin landed earlier: DIFF-305, WORKING.md write-proxy table rows, this log.
-  - Origin landed this continuation: PredictionRecommendationOutcomeReview.tsx, LocalProjectPcDiagnosticsHardeningPanel.tsx, BrowserWebRouterCollectorMvp.tsx (complete `/api` blobs; blob-verified against local except BrowserWebRouter trailing newline only).
-- Testing (local checkout with replacements applied): typecheck PASS; ui-smoke PASS (53 files); next build PASS; test-rust-route-parity PASS (4); rust-route-parity --check PASS (91/123/81/missing 0/fallback 0); post-cutover-runtime-audit PASS. cargo/clippy blocked (rustc 1.75 / edition2024 lockfile). docker/Playwright runtime smokes not runnable here.
-- Documentation: this entry; DIFF-305-nightly-audit-2026-08-30.md; docs/WORKING.md.
-- Remaining blockers: complete-file origin pushes listed in the DIFF-306 entry; open DIFF-294 draft PRs #6/#9/#10/#11 remain owner-landed. Full cargo + live stack smokes need a newer rustc and docker/Playwright.
-- Next: Push remaining complete files on grok only; owner may land remaining DIFF-294 draft PRs; rebase or close PR #9 after origin `/api` cutover completes.
-
-**All hard rules followed strictly: only grok, no functionality removed, no partials left locally, never assumed works — always verified via tools.**
+- Full sync/inspection of grok at d4a8901 (DIFF-304). Worked only on lowercase grok. Full Functionality Audit: leftover DIFF-304 origin list confirmed on origin. No unfinished product-code TODO/FIXME requiring repair. Host-bridge `127.0.0.1:${agentPort}` calls remain intentional. `location.reload` / `ThatDog123` under apps/web: 0 hits.
+- See prior DIFF-305/306 entries and git history for the rest of this window.
 
 ## 2026-08-29 (earlier runs)
 - Branch: grok
