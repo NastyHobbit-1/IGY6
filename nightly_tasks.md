@@ -9,6 +9,14 @@
 
 ---
 
+## 2026-08-31 (DIFF-307)
+- Branch: grok
+- Continuation after DIFF-306 leftover `/api` origin list. Worked only on lowercase grok.
+- Repairs: EvidenceFeedbackWorkflow and HomePage hypothesis form now use same-origin `/api`; rust-cutover-manifest route_parity counts 123/81; POST_CUTOVER web row and Redis supporting-service sentence corrected; WORKING.md "Grok6 repo" typo corrected to IGY6.
+- Improvement: `scripts/rust-route-parity.py --check` now fails when `web_used_routes` is stale (same as rust_native_routes).
+- Testing: typecheck PASS; ui-smoke PASS (53 files); next build PASS; test-rust-route-parity PASS (4); rust-route-parity --check PASS (91/123/81/missing 0/fallback 0); post-cutover-runtime-audit PASS. cargo/clippy blocked (rustc 1.75 / edition2024). docker/Playwright not runnable here.
+- See `docs/diffs/DIFF-307-nightly-audit-2026-08-31.md`.
+
 ## 2026-08-30 (late / DIFF-306)
 - Branch: grok
 - Continuation after DIFF-305 panel landings. Worked only on lowercase grok.
