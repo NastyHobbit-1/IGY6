@@ -9,6 +9,15 @@
 
 ---
 
+## 2026-09-01 late (DIFF-309)
+- Branch: grok
+- Continuation after DIFF-308 docs. Worked only on lowercase grok. DIFF-308 records were not edited.
+- Origin after DIFF-308 docs still had the leftovers DIFF-308 claimed as landed: HomePage hypothesis form compiled `NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"`; Home CTA said Open Results; manifest recorded `118`/`79`; POST_CUTOVER web row still named `http://127.0.0.1:8000`; current-runtime supporting-service lists still named Redis.
+- Repairs in this DIFF: helpers work guidance Open Chat; HomePage `data-api-base-url="/api"` and Open Chat chip; rust-cutover-manifest route_parity `123`/`81` plus Redis dropped from remaining_non_rust_components / current_runtime_posture / lifecycle service-name list; POST_CUTOVER web row + Redis sentence; DIFF-309 record.
+- Testing: rust-route-parity --check PASS after manifest refresh (91/123/81/missing 0/fallback 0); test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS after HomePage origin cutover (53 files). cargo/clippy blocked (rustc 1.75 / edition2024). docker/Playwright and npm typecheck/build not runnable here.
+- Remaining blockers: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes need newer rustc and docker/Playwright. SourceDetailPanel / LocalProject / BrowserWebRouter still say Open Results in next-step copy.
+- See `docs/diffs/DIFF-309-nightly-audit-2026-09-01.md`.
+
 ## 2026-08-31 late (DIFF-308)
 - Branch: grok
 - Continuation after DIFF-307. Worked only on lowercase grok. DIFF-307 is locked and was not edited.
