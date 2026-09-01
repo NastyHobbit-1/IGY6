@@ -279,6 +279,8 @@ def _classification_errors(
         errors.append("manifest fastapi_fallback_required does not match route parity")
     if route_parity.get("rust_native_routes") != summary["rust_native_routes"]:
         errors.append("manifest rust_native_routes is stale")
+    if route_parity.get("web_used_routes") != summary["web_used_routes"]:
+        errors.append("manifest web_used_routes is stale")
     if route_parity.get("fastapi_routes_missing_from_rust") != summary["fastapi_routes_missing_from_rust"]:
         errors.append("manifest fastapi_routes_missing_from_rust is stale")
     if route_parity.get("web_routes_requiring_fallback") != summary["web_routes_requiring_fallback"]:
