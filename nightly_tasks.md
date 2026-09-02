@@ -12,9 +12,11 @@
 ## 2026-09-01 late-2 (DIFF-310)
 - Branch: grok
 - Continuation after DIFF-309. Worked only on lowercase grok. DIFF-309 is locked and was not edited.
-- Landed the four origin leftovers DIFF-309 could not safely push: HomePage hypothesis form same-origin `/api` + Open Chat chip; rust-cutover-manifest `123`/`81` and Redis drop from current-runtime supporting lists; POST_CUTOVER web row same-origin `/api` + Redis retired; LocalProject/BrowserWebRouter next-step copy Open Chat.
-- Testing: local string/JSON checks on patched blobs. Full rust-route-parity / ui-smoke / typecheck / cargo / docker require a complete worktree and newer rustc; those commands are recorded in DIFF-310.
-- Remaining blockers: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes need newer rustc and docker/Playwright.
+- Landed: collector next-step Open Chat on BrowserWebRouterCollectorMvp and LocalProjectPcDiagnosticsHardeningPanel; DIFF-310 record.
+- Incident: `7cb757f` briefly wrote PLACEHOLDER into those two panels; restored in `6a6fe75` and `2cd40a8`.
+- Not landed (large-blob update risk): HomePage hypothesis `/api` + Open Chat chip; manifest `123`/`81` and Redis drop; POST_CUTOVER web row.
+- Testing: panel restore verified by reading origin blobs. rust-route-parity --check and ui-smoke still fail on stale HomePage/manifest origin. cargo/clippy blocked. docker/Playwright and npm typecheck/build not runnable here.
+- Next: DIFF-311 land HomePage `/api`, manifest 123/81, POST_CUTOVER Redis/origin wording.
 - See `docs/diffs/DIFF-310-nightly-audit-2026-09-01.md`.
 
 ## 2026-09-01 late (DIFF-309)
