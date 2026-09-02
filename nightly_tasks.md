@@ -9,6 +9,14 @@
 
 ---
 
+## 2026-09-01 late-2 (DIFF-310)
+- Branch: grok
+- Continuation after DIFF-309. Worked only on lowercase grok. DIFF-309 is locked and was not edited.
+- Landed the four origin leftovers DIFF-309 could not safely push: HomePage hypothesis form same-origin `/api` + Open Chat chip; rust-cutover-manifest `123`/`81` and Redis drop from current-runtime supporting lists; POST_CUTOVER web row same-origin `/api` + Redis retired; LocalProject/BrowserWebRouter next-step copy Open Chat.
+- Testing: local string/JSON checks on patched blobs. Full rust-route-parity / ui-smoke / typecheck / cargo / docker require a complete worktree and newer rustc; those commands are recorded in DIFF-310.
+- Remaining blockers: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes need newer rustc and docker/Playwright.
+- See `docs/diffs/DIFF-310-nightly-audit-2026-09-01.md`.
+
 ## 2026-09-01 late (DIFF-309)
 - Branch: grok
 - Continuation after DIFF-308 docs. Worked only on lowercase grok. DIFF-308 records were not edited.
