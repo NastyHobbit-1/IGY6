@@ -9,6 +9,14 @@
 
 ---
 
+## 2026-09-02 (DIFF-311)
+- Branch: grok
+- Continuation after DIFF-310. Worked only on lowercase grok. DIFF-310 is locked and was not edited.
+- Landed origin leftovers DIFF-310 could not replace: HomePage hypothesis `data-api-base-url="/api"`; start-here chip Open Chat; MissingEvidencePromptPanel Return to Chat; manifest `rust_native_routes=123` / `web_used_routes=81`; Redis dropped from current-runtime supporting-service lists; POST_CUTOVER web row same-origin `/api` and Redis retired; NORMAL_USER_PRODUCT_SMOKE Open Chat.
+- Testing: rust-route-parity --check, test-rust-route-parity, post-cutover-runtime-audit, ui-smoke recorded in DIFF-311. cargo/clippy blocked on rustc 1.75 / edition2024 unless a newer toolchain is present. docker/Playwright live smokes not run here.
+- Next: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes.
+- See `docs/diffs/DIFF-311-nightly-audit-2026-09-02.md`.
+
 ## 2026-09-01 late-2 (DIFF-310)
 - Branch: grok
 - Continuation after DIFF-309. Worked only on lowercase grok. DIFF-309 is locked and was not edited.
