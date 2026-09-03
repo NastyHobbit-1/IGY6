@@ -110,10 +110,9 @@ export function MissingEvidencePromptPanel({
       </div>
       <div className="guidedManualActions">
         <label htmlFor="tab-add-data">Open Add Data</label>
-        <label htmlFor="tab-results">Return to Results</label>
+        <label htmlFor="tab-results">Return to Chat</label>
         <span>No data is collected automatically. Browser/account/connector collection is not part of this prompt.</span>
       </div>
     </section>
   );
 }
-
