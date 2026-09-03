@@ -82,9 +82,9 @@ What did the DIFF-232 smoke note say needs review? Cite the evidence.
    Open Work and verify a processing item is visible. Wait for processing to
    complete or record the failure honestly.
 
-3. Results
+3. Chat / evidence results
 
-   Open Results and verify collection runs, artifact metadata, documents,
+   Open Chat and verify collection runs, artifact metadata, documents,
    chunks, and evidence records are visible where processing completed.
 
 4. Answer
