@@ -67,7 +67,7 @@ Current active runtime posture:
 - Legacy Python/Celery worker is archived and inactive.
 - Celery beat is inactive/retired from active Compose runtime.
 
-Supporting services include PostgreSQL, Redis, Qdrant, Neo4j, MLflow, and Phoenix.
+Supporting services include PostgreSQL, Qdrant, Neo4j, MLflow, and Phoenix. Redis and Celery are retired from the active Compose runtime.
 
 Do not claim unsupported capabilities. The strongest current product path is UTF-8 text-oriented workflows: source/upload, artifact/document/chunk/evidence/vector processing, evidence answers, reports, audit records, approvals, and local diagnostics where implemented.
 
