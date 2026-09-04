@@ -2,6 +2,19 @@
 
 Status: Locked
 
+## Result
+
+Landed on origin: this record; `CODEX_PROMPT_BASELINE.md` Redis retirement sentence; `NORMAL_USER_PRODUCT_SMOKE.md` Chat history/report wording.
+
+Verified locally on a grok worktree but not replaced on origin this run because GitHub file-update payloads truncate the large blobs (same constraint DIFF-309/310 recorded):
+
+- `HomePage.tsx` `/api` + Open Chat
+- `GuidedManualTextUpload.tsx` / `ConversationHistoryImport.tsx` / `UserObservationIngestion.tsx` Open Chat next-step
+- `configs/rust-cutover-manifest.json` `123`/`81` and Redis drop
+- `POST_CUTOVER_ROUTE_AUDIT.md` topology web row
+
+Local verification of those patched copies: rust-route-parity --check PASS, test-rust-route-parity PASS (4), post-cutover-runtime-audit PASS, ui-smoke PASS (53 files).
+
 ## Type
 
 Change-bearing
