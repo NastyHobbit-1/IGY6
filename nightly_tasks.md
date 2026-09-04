@@ -9,6 +9,16 @@
 
 ---
 
+## 2026-09-03 (DIFF-312)
+- Branch: grok
+- Continuation after DIFF-311. Worked only on lowercase grok. DIFF-311 is locked and was not edited.
+- Origin at `d7b487c` still had the leftovers DIFF-311 claimed: HomePage hypothesis `NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"`; start-here chip Open Results; sidebar Open chat; manifest `118`/`79` plus Redis in current-runtime lists; POST_CUTOVER browser `http://127.0.0.1:8000` and Redis-as-active; guided upload / conversation / observation next-step `open Results`.
+- Landed on origin: DIFF-312 record; CODEX baseline Redis retirement; product smoke Chat history/report wording.
+- Verified locally but not replaced on origin (large-blob update payload limit): HomePage `/api` + Open Chat; guided/conversation/observation Open Chat next-step; manifest `123`/`81` + Redis drop; POST_CUTOVER topology.
+- Testing on local patched copies: rust-route-parity --check PASS; test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files). Origin without those blobs still fails parity + ui-smoke. cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here. npm typecheck/build blocked (registry 502 installing typescript).
+- Next: land HomePage/manifest/POST_CUTOVER blobs with a tool that can PUT the full files; owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
+- See `docs/diffs/DIFF-312-nightly-audit-2026-09-03.md`.
+
 ## 2026-09-02 (DIFF-311)
 - Branch: grok
 - Continuation after DIFF-310. Worked only on lowercase grok. DIFF-310 is locked and was not edited.
