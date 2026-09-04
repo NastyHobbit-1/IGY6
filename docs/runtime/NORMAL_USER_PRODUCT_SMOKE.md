@@ -96,12 +96,12 @@ What did the DIFF-232 smoke note say needs review? Cite the evidence.
 
 5. Persisted Answer
 
-   Save the answer record. Verify the saved answer appears in Results/history
+   Save the answer record. Verify the saved answer appears in Chat history
    after reload.
 
 6. Report
 
-   Create an evidence brief or decision note report from the Results report
+   Create an evidence brief or decision note report from the Chat report
    workflow. Render markdown only if the UI/API path supports it. Do not claim
    PDF export.
 
