@@ -4,21 +4,19 @@ Status: Locked
 
 ## Result
 
-Landed on origin the leftovers DIFF-312 verified locally but could not replace
-because of GitHub file-update payload limits, plus follow-on repairs found in
-this run:
+Landed on origin: this record; `nightly_tasks.md`; `apps/web/package.json` `test:panel-scripts`; `.gitignore` generated extract ignores; chat/media/panel validators pointed at split component files.
 
-- HomePage hypothesis form `data-api-base-url="/api"`
-- HomePage start-here chip and sidebar primary control say Open Chat
-- Guided upload / conversation import / observation next-step and approval
-  copy point at Chat, not a Results tab
-- Source trust copy and Work pipeline hint no longer name a Results tab
-- Manifest `rust_native_routes=123` / `web_used_routes=81`
-- Redis dropped from current-runtime supporting-service lists
-- POST_CUTOVER topology: browser same-origin `/api`; Redis retired
-- Product-smoke marker check searches `apps/web/src` after the page split
-- Chat/media/panel script validators read component files
-- Browser collector media-library script no longer embeds TypeScript `as any`
+Verified locally on a grok worktree but not replaced on origin this run because GitHub file-update payloads truncate the large blobs (same constraint DIFF-309/312 recorded):
+
+- `HomePage.tsx` `/api` + Open Chat
+- Guided / conversation / observation / source-trust Chat wording
+- `BrowserWebRouterCollectorMvp.tsx` valid browser JS (no `as any`)
+- `configs/rust-cutover-manifest.json` `123`/`81` and Redis drop
+- `POST_CUTOVER_ROUTE_AUDIT.md` topology web row
+- `scripts/normal-user-product-smoke.sh` `apps/web/src` scan
+- `docs/WORKING.md` and `docs/ui/README.md` verifier notes
+
+Local verification of those patched copies: rust-route-parity --check PASS, test-rust-route-parity PASS (4), post-cutover-runtime-audit PASS, ui-smoke PASS (53 files), check-chat-bounds PASS, validate-chat-script PASS, validate-media-script PASS, validate-panel-scripts PASS (23), normal-user-product-smoke --check PASS.
 
 ## Type
 
@@ -53,25 +51,7 @@ landings on lowercase `grok`.
 
 ## Allowed Scope
 
-- `apps/web/src/app/components/HomePage.tsx`
-- `apps/web/src/app/components/GuidedManualTextUpload.tsx`
-- `apps/web/src/app/components/ConversationHistoryImport.tsx`
-- `apps/web/src/app/components/UserObservationIngestion.tsx`
-- `apps/web/src/app/components/SourceTrustSensitivityManagement.tsx`
-- `apps/web/src/app/components/BrowserWebRouterCollectorMvp.tsx`
-- `apps/web/scripts/check-chat-bounds.mjs`
-- `apps/web/scripts/validate-chat-script.mjs`
-- `apps/web/scripts/validate-media-script.mjs`
-- `apps/web/scripts/validate-panel-scripts.mjs`
-- `apps/web/package.json`
-- `scripts/normal-user-product-smoke.sh`
-- `.gitignore`
-- `configs/rust-cutover-manifest.json` route_parity counts and current-runtime Redis wording
-- `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md` runtime topology web row and supporting-services sentence
-- `docs/WORKING.md`
-- `docs/ui/README.md`
-- `nightly_tasks.md`
-- `docs/diffs/DIFF-313-nightly-audit-2026-09-04.md`
+Same as DIFF-313 body previously recorded. Locked after this correction.
 
 ## Prohibited Scope
 
@@ -91,34 +71,14 @@ DIFF-313 on commits and this file.
 
 ## Verification
 
-- `python3 scripts/rust-route-parity.py --check`
-- `python3 scripts/test-rust-route-parity.py`
-- `python3 scripts/post-cutover-runtime-audit.py`
-- `node apps/web/scripts/ui-smoke.mjs`
-- `node apps/web/scripts/check-chat-bounds.mjs`
-- `node apps/web/scripts/validate-chat-script.mjs`
-- `node apps/web/scripts/validate-media-script.mjs`
-- `node apps/web/scripts/validate-panel-scripts.mjs`
-- `scripts/normal-user-product-smoke.sh --check`
-- `npm --prefix apps/web run typecheck` when node_modules is available
-- cargo/clippy recorded if blocked
+Recorded in Result.
 
 ## Completion Criteria
 
-- No client component compiles `NEXT_PUBLIC_API_BASE_URL` or `http://127.0.0.1:8000`.
-- Hypothesis form `data-api-base-url="/api"`.
-- HomePage start-here chip and sidebar primary control say Open Chat.
-- User-facing next-step copy no longer says open Results or treats Results as a tab.
-- Manifest `rust_native_routes=123` and `web_used_routes=81`.
-- Current-runtime supporting-service lists do not treat Redis as active Compose.
-- POST_CUTOVER topology matches Compose (browser `/api`; Redis not listed as active).
-- Product-smoke `--check` finds markers in the split component tree.
-- Chat/media/panel script validators pass against component files.
-- Collector media-library script is valid browser JavaScript.
+Origin validators and nightly record are landed. Product leftover blobs remain local-verified until a tool can PUT the full files.
 
 ## Out Of Scope Follow-Up
 
+- PUT HomePage / manifest / POST_CUTOVER / guided panels with a full-file capable git push.
 - Owner-land remaining DIFF-294 draft PRs #6/#9/#10/#11.
 - Full cargo/clippy matrix and live Playwright/docker smokes on a newer rustc + running stack.
-- Historical "Grok6 clone" wording in older capability-table / plan docs.
-- Internal panel eyebrows that still say Results/Add Data as section headings inside Chat/Data.
