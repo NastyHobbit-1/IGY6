@@ -10,7 +10,8 @@
     "test:ui-smoke": "node scripts/ui-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test:ui-runtime-smoke": "node scripts/ui-runtime-smoke.mjs",
-    "check": "npm run typecheck && npm run test:ui-smoke && npm run test:ui-runtime-smoke"
+    "test:panel-scripts": "node scripts/validate-panel-scripts.mjs && node scripts/validate-chat-script.mjs && node scripts/validate-media-script.mjs && node scripts/check-chat-bounds.mjs",
+    "check": "npm run typecheck && npm run test:ui-smoke && npm run test:panel-scripts && npm run test:ui-runtime-smoke"
   },
   "dependencies": {
     "next": "15.5.15",

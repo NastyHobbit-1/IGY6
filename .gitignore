@@ -12,6 +12,8 @@ node_modules/
 .next/
 out/
 npm-debug.log*
+apps/web/scripts/_chat-check.js
+apps/web/scripts/_media-check.js
 
 .DS_Store
 
