@@ -9,6 +9,15 @@
 
 ---
 
+## 2026-09-06 (DIFF-314)
+- Branch: grok
+- Continuation after DIFF-313. Worked only on lowercase grok. DIFF-313 is locked and was not edited.
+- Landed on origin the leftovers DIFF-313 could not PUT: HomePage `/api` + Open Chat; guided/conversation/observation/source-trust/saved-answer Chat wording; collector valid browser JS (no `as any`); manifest `123`/`81` + Redis drop from current-runtime lists; POST_CUTOVER web `/api` row + Redis retirement sentence; product-smoke `apps/web/src` scan; WORKING.md / ui README verifier notes.
+- Testing on the landed tree: rust-route-parity --check PASS; test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files); check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS; validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS.
+- cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here (`docker` missing). npm typecheck/build blocked (`tsc` / node_modules not installed).
+- Next: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
+- See `docs/diffs/DIFF-314-nightly-audit-2026-09-06.md`.
+
 ## 2026-09-04 (DIFF-313)
 - Branch: grok
 - Continuation after DIFF-312. Worked only on lowercase grok. DIFF-312 is locked and was not edited.
