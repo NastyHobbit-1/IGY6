@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PAGE_FILE="${REPO_ROOT}/apps/web/src/app/page.tsx"
+SRC_ROOT="${REPO_ROOT}/apps/web/src"
 
 usage() {
   cat <<'EOF'
@@ -36,7 +37,7 @@ EOF
 require_marker() {
   local label="$1"
   local marker="$2"
-  if grep -Fq "${marker}" "${PAGE_FILE}"; then
+  if grep -RFq --include='*.tsx' --include='*.ts' --include='*.js' --include='*.mjs' "${marker}" "${SRC_ROOT}"; then
     printf 'PASS %s marker present: %s\n' "${label}" "${marker}"
   else
     printf 'FAIL %s marker missing: %s\n' "${label}" "${marker}" >&2
@@ -48,6 +49,10 @@ check_markers() {
   local failures=0
   [[ -f "${PAGE_FILE}" ]] || {
     printf 'FAIL missing UI source file: apps/web/src/app/page.tsx\n' >&2
+    return 1
+  }
+  [[ -d "${SRC_ROOT}" ]] || {
+    printf 'FAIL missing UI source tree: apps/web/src\n' >&2
     return 1
   }
 
