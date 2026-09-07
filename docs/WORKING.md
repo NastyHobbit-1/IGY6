@@ -210,7 +210,10 @@ npm --prefix apps/web run build
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run test:ui-smoke
 npm --prefix apps/web run test:ui-runtime-smoke
+npm --prefix apps/web run test:panel-scripts
 # (or the combined) npm --prefix apps/web run check
+scripts/normal-user-product-smoke.sh --check
+# Product-smoke scans apps/web/src (page.tsx is a HomePage re-export).
 
 # 6. Evidence answer (expect insufficient_evidence if no data yet)
 $body = '{"message":"test","limit":5}'
