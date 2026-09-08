@@ -12,9 +12,10 @@
 ## 2026-09-07 (DIFF-315)
 - Branch: grok
 - Continuation after DIFF-314. Worked only on lowercase grok. DIFF-314 is locked and was not edited.
-- Landed the leftover origin blobs DIFF-314 could only verify locally: HomePage hypothesis `data-api-base-url="/api"` and Open Chat CTAs; guided / conversation / observation / source-trust / saved-answer Chat wording; BrowserWebRouterCollectorMvp browser JS without `as any`; rust-cutover-manifest `rust_native_routes=123` / `web_used_routes=81` and Redis dropped from current-runtime lists; POST_CUTOVER web row same-origin `/api` and Redis retired from supporting services.
-- Testing on origin-equivalent worktree: rust-route-parity --check PASS (91/123/81/missing 0/fallback 0); test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files); check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS; validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS. cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here (`docker` missing). npm typecheck/build blocked (`tsc` / node_modules not installed).
-- Next: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
+- Landed on origin: DIFF-315 record; WORKING.md / ui README verifier notes.
+- Verified locally but not replaced on origin (large-blob update payload limit): HomePage `/api` + Open Chat; guided/conversation/observation/source-trust/saved-answer Chat wording; collector `as any` removal; manifest `123`/`81` + Redis drop; POST_CUTOVER topology.
+- Testing on local patched copies: rust-route-parity --check PASS; test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files); check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS; validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS. Origin without the leftover blobs still fails parity + ui-smoke. cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here (`docker` missing). npm typecheck/build blocked (`tsc` / node_modules not installed).
+- Next: land HomePage/manifest/POST_CUTOVER/guided-panel blobs with a tool that can PUT the full files; owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
 - See `docs/diffs/DIFF-315-nightly-audit-2026-09-07.md`.
 
 ## 2026-09-06 (DIFF-314)
