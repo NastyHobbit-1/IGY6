@@ -151,4 +151,4 @@ More is for diagnostics and the advanced route console. Normal users usually do 
 
 Client-side buttons post to same-origin `/api/*` Next.js proxies. Those proxies forward to the Rust gateway using container `API_BASE_URL`. Guided upload, media import, local project, reports, approvals, hypothesis create, and Advanced console actions all use `/api`, not `http://127.0.0.1:8000` and not `NEXT_PUBLIC_API_BASE_URL`.
 
-Static verifiers: `apps/web` `test:ui-smoke` / `test:panel-scripts` and `scripts/normal-user-product-smoke.sh --check` scan `apps/web/src` (including split components). `apps/web/src/app/page.tsx` is a two-line `HomePage` re-export.
+Static verifiers: `apps/web` `test:ui-smoke` / `test:panel-scripts` and `scripts/normal-user-product-smoke.sh --check` scan `apps/web/src` (including split components). `apps/web/src/app/page.tsx` is a two-line `HomePage` re-export. As of DIFF-315 those origin scanners pass on `grok` (same-origin `/api`, Open Chat wording, no client `as any`).
