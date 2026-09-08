@@ -214,6 +214,7 @@ npm --prefix apps/web run test:panel-scripts
 # (or the combined) npm --prefix apps/web run check
 scripts/normal-user-product-smoke.sh --check
 # Product-smoke scans apps/web/src (page.tsx is a HomePage re-export).
+# Origin grok now matches those scanners: hypothesis form data-api-base-url="/api", Open Chat CTAs, manifest 123/81.
 
 # 6. Evidence answer (expect insufficient_evidence if no data yet)
 $body = '{"message":"test","limit":5}'
