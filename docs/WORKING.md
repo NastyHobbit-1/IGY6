@@ -214,7 +214,7 @@ npm --prefix apps/web run test:panel-scripts
 # (or the combined) npm --prefix apps/web run check
 scripts/normal-user-product-smoke.sh --check
 # Product-smoke scans apps/web/src (page.tsx is a HomePage re-export).
-# Origin grok now matches those scanners: hypothesis form data-api-base-url="/api", Open Chat CTAs, manifest 123/81.
+# Origin grok (DIFF-316) matches those scanners: hypothesis form data-api-base-url="/api", Open Chat CTAs, manifest 123/81, Redis retired from current-runtime lists.
 
 # 6. Evidence answer (expect insufficient_evidence if no data yet)
 $body = '{"message":"test","limit":5}'
@@ -260,7 +260,7 @@ cargo build -p igy6-cli --release
 | Item | Default |
 |------|---------|
 | Repo | Where you cloned IGY6 |
-| User data | `IGY6_DATA_ROOT` in `.env` (e.g. `C:\Users\you\IGY6_Data`) |
+| User data | `IGY6_DATA_ROOT` in `.env` (e.g. `C:\\Users\\you\\IGY6_Data`) |
 | Artifacts / media | `{IGY6_DATA_ROOT}/artifacts` (via container mount) |
 | Runtime URLs | `.env` + `storage/.runtime-url` after port auto-pick |
 
