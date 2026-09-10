@@ -58,6 +58,8 @@ check_markers() {
 
   require_marker "Add Data guided source/upload" "data-guided-manual-upload" || failures=$((failures + 1))
   require_marker "Work processing status" "data-work-status-item" || failures=$((failures + 1))
+  require_marker "Ask-with-evidence Chat CTA" 'htmlFor="tab-results">Open Chat' || failures=$((failures + 1))
+  require_marker "Hypothesis form same-origin /api proxy" 'data-hypothesis-create-form data-api-base-url="/api"' || failures=$((failures + 1))
   require_marker "Results evidence answer" "data-chat-preview-results" || failures=$((failures + 1))
   require_marker "Persisted answer save" "data-chat-save-answer" || failures=$((failures + 1))
   require_marker "Report workflow" "data-basic-report-workflow" || failures=$((failures + 1))
