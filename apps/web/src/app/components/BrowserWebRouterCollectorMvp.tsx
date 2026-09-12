@@ -215,7 +215,7 @@ export function BrowserWebRouterCollectorMvp() {
           totp = prompt("Enter current TOTP code:") || "";
           if (!totp) return false;
         }
-        const body = { current_password: current } as any;
+        const body = { current_password: current };
         if (totp) body.totp_code = totp;
         const verify = await fetch("/api/user/verify-unlock", {
           method: "POST",
@@ -276,7 +276,7 @@ export function BrowserWebRouterCollectorMvp() {
       const ensurePayload = await ensure.json().catch(()=>({}));
       if (!ensure.ok) { alert("Host bridge not ready: " + (ensurePayload?.detail || ensure.status)); return; }
       const body = { requested_by_actor_id: "ui", password: current, scope: ["everything"], media_focus: true };
-      if (totp) (body as any).totp_code = totp;
+      if (totp) body.totp_code = totp;
       const resp = await fetch("/api/collection-runs/full-access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
