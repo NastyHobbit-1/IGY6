@@ -12,9 +12,10 @@
 ## 2026-09-11 (DIFF-319)
 - Branch: grok
 - Continuation after DIFF-318. Worked only on lowercase grok. DIFF-318 is locked and was not edited.
-- Landed on origin: leftover product blobs from DIFF-309/318 (HomePage `/api` + Open Chat; guided/conversation/observation Chat next-steps; collector valid JS; manifest 123/81 + Redis drop from current-runtime lists; POST_CUTOVER `/api` web row); product-smoke Open Chat and hypothesis `/api` guards; this nightly log; DIFF-319 record; WORKING/ui verifier notes.
-- Testing: rust-route-parity --check PASS; test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files); check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS; validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS. cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here (`docker` missing). npm typecheck/build blocked (`node_modules` not installed).
-- Next: owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
+- Landed on origin: DIFF-319 record; this nightly log; collector valid browser JS (no `as any`); product-smoke extra Open Chat/`/api` markers were not left on origin because HomePage is still the leftover blob.
+- Verified locally but not replaced on origin (GitHub file-update payload size for remaining product blobs): HomePage `/api` + Open Chat; guided/conversation/observation Chat next-steps; manifest `123`/`81` + Redis drop; POST_CUTOVER topology.
+- Testing on local patched copies: rust-route-parity --check PASS; test-rust-route-parity PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files); check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS; validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS. Origin without the leftover HomePage/manifest blobs still fails parity + ui-smoke. cargo/clippy blocked on rustc 1.75 / lockfile v4 / edition2024. docker/Playwright live smokes not runnable here (`docker` missing).
+- Next: land HomePage/manifest/POST_CUTOVER/guided-panel blobs with a tool that can PUT the full files; owner-land DIFF-294 draft PRs #6/#9/#10/#11; full cargo + live stack smokes on newer rustc + docker.
 - See `docs/diffs/DIFF-319-nightly-audit-2026-09-11.md`.
 
 ## 2026-09-10 (DIFF-318)
