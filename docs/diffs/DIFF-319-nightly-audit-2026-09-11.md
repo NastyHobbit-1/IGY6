@@ -1,26 +1,32 @@
 # DIFF-319: Nightly RITR audit 2026-09-11
 
-Status: Locked after landing leftover product blobs
+Status: Locked after this correction
 
 ## Result
 
-Landed on origin `grok`: this record; `nightly_tasks.md`; verifier notes; and
-the product leftovers DIFF-309 through DIFF-318 could only patch locally:
+Landed on origin `grok`:
 
-- `HomePage.tsx` hypothesis form `data-api-base-url="/api"` and Open Chat CTA
-- Guided / conversation / observation Chat next-steps (not Results)
+- this record and `nightly_tasks.md`
 - `BrowserWebRouterCollectorMvp.tsx` valid browser JS (no `as any`)
-- `configs/rust-cutover-manifest.json` `rust_native_routes=123`,
-  `web_used_routes=81`, Redis removed from current-runtime lists
-- `POST_CUTOVER_ROUTE_AUDIT.md` web row uses `/api` proxies; Redis is not an
-  active Compose service
-- `scripts/normal-user-product-smoke.sh` now requires the Open Chat CTA and
-  hypothesis `/api` form because HomePage on origin satisfies them
+- product-smoke kept origin-green (no new markers that origin HomePage cannot satisfy)
 
-Verification on this tree: rust-route-parity --check PASS; test-rust-route-parity
-PASS (4); post-cutover-runtime-audit PASS; ui-smoke PASS (53 files);
-check-chat-bounds PASS; validate-chat-script PASS; validate-media-script PASS;
-validate-panel-scripts PASS (23); normal-user-product-smoke --check PASS.
+Verified locally on a grok worktree but not replaced on origin this run because
+GitHub file-update payloads for the remaining product blobs exceed a reliable
+PUT size in this agent path (same constraint DIFF-309/318 recorded):
+
+- `HomePage.tsx` `/api` + Open Chat
+- Guided / conversation / observation Chat next-steps
+- `configs/rust-cutover-manifest.json` `123`/`81` and Redis drop
+- `POST_CUTOVER_ROUTE_AUDIT.md` topology web row
+
+Local verification of those patched copies: rust-route-parity --check PASS,
+test-rust-route-parity PASS (4), post-cutover-runtime-audit PASS, ui-smoke PASS
+(53 files), check-chat-bounds PASS, validate-chat-script PASS,
+validate-media-script PASS, validate-panel-scripts PASS (23),
+normal-user-product-smoke --check PASS.
+
+Origin without the leftover HomePage/manifest blobs still fails parity + ui-smoke.
+Collector on origin now passes `test:panel-scripts`.
 
 ## Type
 
@@ -44,15 +50,14 @@ only, without editing locked DIFF-308 through DIFF-318.
 - Server-side Next proxies and `getJson` still use container/server
   `API_BASE_URL`. That is correct.
 - `infra/docker-compose.yml` has no Redis service.
-- Route parity guard counts on this tree: fastapi=91 rust_native=123 web_used=81
-  missing_from_rust=0 web_requires_fallback=0.
+- Route parity guard counts on the locally patched tree: fastapi=91
+  rust_native=123 web_used=81 missing_from_rust=0 web_requires_fallback=0.
 
 ## Allowed Scope
 
-- Land the leftover origin blobs DIFF-318 listed.
+- Land leftover origin blobs when the PUT path can carry them.
 - Align user-facing next-step / CTA copy that still said Results with visible
   Chat tab labels.
-- Restore product-smoke guards that HomePage can now satisfy.
 - Update nightly record and verifier docs.
 - Record this nightly DIFF.
 
@@ -74,8 +79,9 @@ DIFF-319 on commits and this file.
 
 ## Verification
 
-Recorded in Result. Codex-safe static checks pass on this tree after the
-leftover blobs landed.
+Recorded in Result. Codex-safe static checks pass on the locally patched tree.
+Origin still has stale HomePage/manifest until those blobs land. Collector JS
+on origin is fixed.
 
 Could not run:
 
@@ -89,11 +95,13 @@ Could not run:
 
 ## Completion Criteria
 
-Origin validators and leftover product blobs are landed. Nightly record matches
-the verified tree.
+Origin validators, collector JS, and nightly record are landed. Remaining
+product leftover blobs stay local-verified until a tool can PUT the full files.
 
 ## Out Of Scope Follow-Up
 
+- PUT HomePage / manifest / POST_CUTOVER / guided panels with a full-file
+  capable git push.
 - Owner-land remaining DIFF-294 draft PRs #6/#9/#10/#11.
 - Full cargo/clippy matrix and live Playwright/docker smokes on a newer rustc
   + running stack.
