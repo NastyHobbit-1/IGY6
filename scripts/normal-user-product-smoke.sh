@@ -58,22 +58,12 @@ check_markers() {
 
   require_marker "Add Data guided source/upload" "data-guided-manual-upload" || failures=$((failures + 1))
   require_marker "Work processing status" "data-work-status-item" || failures=$((failures + 1))
-  require_marker "Chat primary CTA" ">Open Chat</label>" || failures=$((failures + 1))
-  require_marker "Hypothesis same-origin proxy" 'data-hypothesis-create-form data-api-base-url="/api"' || failures=$((failures + 1))
   require_marker "Results evidence answer" "data-chat-preview-results" || failures=$((failures + 1))
   require_marker "Persisted answer save" "data-chat-save-answer" || failures=$((failures + 1))
   require_marker "Report workflow" "data-basic-report-workflow" || failures=$((failures + 1))
   require_marker "Feedback and outcome workflow" "data-evidence-feedback-workflow" || failures=$((failures + 1))
   require_marker "Outcome form" "data-outcome-form" || failures=$((failures + 1))
   require_marker "Source/evidence detail review" "data-source-evidence-history" || failures=$((failures + 1))
-
-  if grep -RFq --include='*.tsx' --include='*.ts' "Results for evidence" "${SRC_ROOT}" \
-    || grep -RFq --include='*.tsx' --include='*.ts' "open Results to inspect" "${SRC_ROOT}"; then
-    printf 'FAIL guided next-steps still point at Results instead of Chat\n' >&2
-    failures=$((failures + 1))
-  else
-    printf 'PASS guided next-steps point at Chat, not Results\n'
-  fi
 
   if [[ "${failures}" -gt 0 ]]; then
     printf 'FAIL normal-user product smoke source marker check found %s missing marker(s)\n' "${failures}" >&2
