@@ -1,26 +1,35 @@
 # DIFF-320: Nightly RITR audit 2026-09-12
 
-Status: Locked after this landing
+Status: Locked after this correction
 
 ## Result
 
-Landed on origin `grok` the leftover product blobs DIFF-319 recorded as
-local-only:
+Landed on origin `grok`:
 
-- `HomePage.tsx` hypothesis form uses same-origin `/api` (no
-  `NEXT_PUBLIC_API_BASE_URL`, no `http://127.0.0.1:8000` in browser markup)
-- Home readiness CTA label is **Open Chat** (internal radio id remains
-  `tab-results`)
-- Guided manual upload, conversation import, and observation ingestion
-  next-steps point at Chat, not Results
-- `configs/rust-cutover-manifest.json` route counts `123` / `81`; Redis
-  removed from current-runtime supporting-component lists; lifecycle service
-  list matches Compose (no Redis)
-- `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md` documents browser
-  helpers as same-origin `/api` and Redis as retired from active Compose
-- ui-smoke and product-smoke now guard the Open Chat CTA, `/api` hypothesis
-  form, and "Results for evidence" regression
-- WORKING.md / ui README verifier notes updated to origin-landed truth
+- this record
+- product-smoke kept origin-green (extra Open Chat / `/api` / Results-regression
+  markers were not left on origin because HomePage is still the leftover blob)
+
+Verified locally on a grok worktree but not replaced on origin this run because
+GitHub file-update payloads for the remaining product blobs exceed a reliable
+PUT size in this agent path (same constraint DIFF-309/319 recorded):
+
+- `HomePage.tsx` `/api` + Open Chat
+- Guided / conversation / observation Chat next-steps
+- `configs/rust-cutover-manifest.json` `123`/`81` and Redis drop
+- `POST_CUTOVER_ROUTE_AUDIT.md` topology web row
+- ui-smoke extra Open Chat / Results-regression guards
+- WORKING.md / ui README origin-landed wording
+
+Local verification of those patched copies: rust-route-parity --check PASS,
+test-rust-route-parity PASS (4), post-cutover-runtime-audit PASS, ui-smoke PASS
+(53 files, including new Chat CTA guards), check-chat-bounds PASS,
+validate-chat-script PASS, validate-media-script PASS, validate-panel-scripts
+PASS (23), normal-user-product-smoke --check PASS (including extra markers on
+the local tree).
+
+Origin without the leftover HomePage/manifest blobs still fails parity +
+ui-smoke. Collector JS on origin still passes `test:panel-scripts`.
 
 DIFF-319 is locked and was not edited.
 
@@ -46,15 +55,14 @@ only, without editing locked DIFF-308 through DIFF-319.
 - Server-side Next proxies and `getJson` still use container/server
   `API_BASE_URL`. That is correct.
 - `infra/docker-compose.yml` has no Redis service.
-- Route parity guard counts: fastapi=91 rust_native=123 web_used=81
-  missing_from_rust=0 web_requires_fallback=0.
+- Route parity guard counts on the locally patched tree: fastapi=91
+  rust_native=123 web_used=81 missing_from_rust=0 web_requires_fallback=0.
 
 ## Allowed Scope
 
-- Land leftover origin product blobs.
+- Land leftover origin blobs when the PUT path can carry them.
 - Align user-facing next-step / CTA copy that still said Results with visible
   Chat tab labels.
-- Add regression guards to static smokes now that origin can satisfy them.
 - Update nightly record and verifier docs.
 - Record this nightly DIFF.
 
@@ -76,15 +84,9 @@ DIFF-320 on commits and this file.
 
 ## Verification
 
-- `python3 scripts/rust-route-parity.py --check` PASS
-- `python3 scripts/test-rust-route-parity.py` PASS (4)
-- `python3 scripts/post-cutover-runtime-audit.py` PASS
-- `node apps/web/scripts/ui-smoke.mjs` PASS (53 files)
-- `node apps/web/scripts/validate-panel-scripts.mjs` PASS (23)
-- `node apps/web/scripts/validate-chat-script.mjs` PASS
-- `node apps/web/scripts/validate-media-script.mjs` PASS
-- `node apps/web/scripts/check-chat-bounds.mjs` PASS
-- `bash scripts/normal-user-product-smoke.sh --check` PASS
+Recorded in Result. Codex-safe static checks pass on the locally patched tree.
+Origin still has stale HomePage/manifest until those blobs land. Product-smoke
+on origin stays green without the extra HomePage-dependent markers.
 
 Could not run:
 
@@ -98,12 +100,13 @@ Could not run:
 
 ## Completion Criteria
 
-Origin HomePage `/api` + Open Chat, guided Chat next-steps, manifest 123/81,
-POST_CUTOVER topology wording, smoke guards, and nightly record are landed
-and the listed Codex-safe static checks pass on that tree.
+Nightly record is landed. Remaining product leftover blobs stay local-verified
+until a tool can PUT the full files.
 
 ## Out Of Scope Follow-Up
 
+- PUT HomePage / manifest / POST_CUTOVER / guided panels with a full-file
+  capable git push.
 - Owner-land remaining DIFF-294 draft PRs #6/#9/#10/#11.
 - Full cargo/clippy matrix and live Playwright/docker smokes on a newer rustc
   + running stack.
