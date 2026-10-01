@@ -1,30 +1,30 @@
 # DIFF-321 — Nightly RITR audit 2026-09-30
 
-Status: complete (documentation + leftover product wiring on origin `grok`)
+Status: complete for this audit environment; leftover product blobs still need a full-file PUT
 Branch: grok
 Date: 2026-09-30
 
 ## Scope
 
-Continue the locked DIFF-320 leftover-blob work. Land the origin-safe product wiring that previous nightlies verified locally but could not PUT:
+Continue the locked DIFF-320 leftover-blob work. Worked only on lowercase `grok`. Locked DIFFs were not edited.
 
-- HomePage hypothesis create uses same-origin `/api` (no `NEXT_PUBLIC_API_BASE_URL`, no hardcoded `http://127.0.0.1:8000`)
-- `configs/rust-cutover-manifest.json` route counts `rust_native_routes=123`, `web_used_routes=81`
-- Redis removed from current-runtime supporting-component lists in the manifest and POST_CUTOVER route audit
+## Landed on origin
 
-Locked DIFFs were not edited.
-
-## Files changed
-
-- `apps/web/src/app/components/HomePage.tsx`
-- `configs/rust-cutover-manifest.json`
-- `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md`
-- `docs/WORKING.md`
-- `docs/ui/README.md`
-- `nightly_tasks.md`
 - `docs/diffs/DIFF-321-nightly-audit-2026-09-30.md`
+- `nightly_tasks.md`
 
-## Verification run
+## Verified locally, not replaced on origin
+
+GitHub file-update payload size blocked replacing these product blobs in this environment:
+
+- `apps/web/src/app/components/HomePage.tsx` — hypothesis form `data-api-base-url="/api"` (remove `NEXT_PUBLIC_API_BASE_URL` and `http://127.0.0.1:8000`)
+- `configs/rust-cutover-manifest.json` — `rust_native_routes=123`, `web_used_routes=81`; drop Redis from current-runtime supporting lists
+- `docs/rust-migration/POST_CUTOVER_ROUTE_AUDIT.md` — Redis removed from current-runtime supporting-service wording
+- `docs/WORKING.md` / `docs/ui/README.md` — verifier notes pointing at DIFF-321
+
+Local patched copies pass the static suite below. Origin without those blobs still fails `rust-route-parity --check` (stale 118/79) and `ui-smoke` (hypothesis form still compiles `NEXT_PUBLIC_API_BASE_URL` / `127.0.0.1:8000`).
+
+## Verification run (local patched worktree)
 
 - `python3 scripts/rust-route-parity.py --check` PASS
 - `python3 scripts/test-rust-route-parity.py` PASS (4)
@@ -38,12 +38,10 @@ Locked DIFFs were not edited.
 
 ## Verification not run
 
-- `cargo test` / `cargo clippy`: environment rustc/lockfile may not match edition2024 workspace
-- Docker Compose / Playwright live smokes: docker not available in this audit environment
-- `npm --prefix apps/web run build` / `typecheck`: node_modules not installed in this audit environment
+- `cargo test` / `cargo clippy`
+- Docker Compose / Playwright live smokes (`docker` missing)
+- `npm --prefix apps/web run build` / `typecheck` (no `apps/web/node_modules`)
 
-## Out of scope
+## Next
 
-- Owner-land DIFF-294 draft PRs
-- Live stack smokes on a full operator machine
-- Merging to `main`
+Land the leftover blobs with a tool that can PUT the full files. Then owner-land DIFF-294 draft PRs if still open; full cargo + live stack smokes on newer rustc + docker.
