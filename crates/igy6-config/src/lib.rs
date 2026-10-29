@@ -83,7 +83,32 @@ pub const ENV_REQUIRED_KEYS: &[&str] = &[
     "APPROVAL_REQUIRED_DEFAULT",
 ];
 
-const BOOLEAN_KEYS: &[&str] = &["SINGLE_USER_MODE", "APPROVAL_REQUIRED_DEFAULT"];
+/// Optional settings already used by the gateway, CLI, worker, and web app.
+/// They are valid in `.env.example` and are not required for a minimal stack.
+const OPTIONAL_KEYS: &[&str] = &[
+    "LLM_PROVIDER",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "LLM_TIMEOUT_SECONDS",
+    "LLM_EVIDENCE_REQUIRED",
+    "IGY6_HOST_BRIDGE_HOST",
+    "IGY6_HOST_BRIDGE_PORT",
+    "IGY6_HOST_BRIDGE_TOKEN",
+    "IGY6_HOST_BRIDGE_TOKEN_FILE",
+    "IGY6_HOST_BRIDGE_AGENT_PORT",
+    "MAX_REACH_HEADED",
+    "MAX_REACH_CDP_PORT",
+    "MAX_REACH_PROXY",
+    "NEXT_TELEMETRY_DISABLED",
+];
+const LLM_PROVIDERS: &[&str] = &["none", "ollama"];
+const BOOLEAN_KEYS: &[&str] = &[
+    "SINGLE_USER_MODE",
+    "APPROVAL_REQUIRED_DEFAULT",
+    "LLM_EVIDENCE_REQUIRED",
+    "MAX_REACH_HEADED",
+    "NEXT_TELEMETRY_DISABLED",
+];
 const PORT_KEYS: &[&str] = &[
     "APP_PORT",
     "POSTGRES_PORT",
@@ -92,6 +117,9 @@ const PORT_KEYS: &[&str] = &[
     "NEO4J_HTTP_PORT",
     "NEO4J_BOLT_PORT",
     "PHOENIX_PORT",
+    "IGY6_HOST_BRIDGE_PORT",
+    "IGY6_HOST_BRIDGE_AGENT_PORT",
+    "MAX_REACH_CDP_PORT",
 ];
 const URL_KEYS: &[&str] = &[
     "API_BASE_URL",
@@ -101,6 +129,8 @@ const URL_KEYS: &[&str] = &[
     "NEO4J_URI",
     "MLFLOW_TRACKING_URI",
     "PHOENIX_COLLECTOR_ENDPOINT",
+    "OLLAMA_BASE_URL",
+    "MAX_REACH_PROXY",
 ];
 const STORAGE_PATH_KEYS: &[&str] = &[
     "ARTIFACT_STORE_PATH",
@@ -564,6 +594,32 @@ fn validate_values(
         }
     }
 
+    if let Some(value) = parsed.values.get("LLM_PROVIDER") {
+        if !LLM_PROVIDERS.contains(&value.trim()) {
+            errors.push(ConfigFinding::error(
+                source,
+                Some("LLM_PROVIDER".to_string()),
+                None,
+                "LLM provider must be none or ollama.",
+            ));
+        }
+    }
+
+    if let Some(value) = parsed.values.get("LLM_TIMEOUT_SECONDS") {
+        if value
+            .trim()
+            .parse::<u64>()
+            .map_or(true, |seconds| seconds == 0)
+        {
+            errors.push(ConfigFinding::error(
+                source,
+                Some("LLM_TIMEOUT_SECONDS".to_string()),
+                None,
+                "LLM timeout must be a positive number of seconds.",
+            ));
+        }
+    }
+
     for key in STORAGE_PATH_KEYS {
         if let Some(value) = parsed.values.get(*key) {
             if !storage_path_string_is_safe(value) {
@@ -591,7 +647,7 @@ fn validate_values(
     }
 
     for key in parsed.values.keys() {
-        if !REQUIRED_KEYS.contains(&key.as_str()) {
+        if !is_known_key(key) {
             warnings.push(ConfigFinding::warning(
                 source,
                 Some(key.clone()),
@@ -600,6 +656,10 @@ fn validate_values(
             ));
         }
     }
+}
+
+fn is_known_key(key: &str) -> bool {
+    REQUIRED_KEYS.contains(&key) || OPTIONAL_KEYS.contains(&key)
 }
 
 fn is_plausible_url(key: &str, value: &str) -> bool {
@@ -865,6 +925,36 @@ APPROVAL_REQUIRED_DEFAULT=true
         assert!(output.contains("values redacted"));
         assert!(!output.contains("change-me-local-only"));
         assert!(!output.contains("postgresql+psycopg"));
+    }
+
+    #[test]
+    fn optional_product_keys_are_managed() {
+        let extra = "
+LLM_PROVIDER=none
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen2.5-coder:7b
+LLM_TIMEOUT_SECONDS=60
+LLM_EVIDENCE_REQUIRED=true
+IGY6_HOST_BRIDGE_HOST=host.docker.internal
+IGY6_HOST_BRIDGE_PORT=8765
+IGY6_HOST_BRIDGE_TOKEN_FILE=../IGY6_Data/ops/host-bridge.token
+IGY6_HOST_BRIDGE_AGENT_PORT=8770
+MAX_REACH_HEADED=0
+MAX_REACH_CDP_PORT=9222
+NEXT_TELEMETRY_DISABLED=1
+";
+        let report = validate_env_content(
+            &format!("{VALID_ENV}{extra}"),
+            ".env.example",
+            Path::new(".env.example"),
+            true,
+        );
+        assert!(report.passed(), "{:?}", report.errors);
+        assert!(
+            report.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            report.warnings
+        );
     }
 
     #[test]

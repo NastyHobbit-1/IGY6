@@ -958,8 +958,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "igy6-media-extract"
+version = "0.1.0"
+
+[[package]]
 name = "igy6-normalization"
 version = "0.1.0"
+dependencies = [
+ "igy6-media-extract",
+]
 
 [[package]]
 name = "igy6-policy"
@@ -992,6 +999,7 @@ name = "igy6-worker"
 version = "0.1.0"
 dependencies = [
  "igy6-chunking",
+ "igy6-media-extract",
  "igy6-normalization",
  "igy6-vector-memory",
  "postgres",

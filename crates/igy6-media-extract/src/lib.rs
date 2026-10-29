@@ -129,7 +129,7 @@ fn extract_pdf(path: &Path) -> MediaExtractResult {
     let mut cmd = Command::new("pdftotext");
     cmd.arg("-layout").arg(path.as_os_str()).arg("-");
     match run_capture(&mut cmd) {
-        Ok((stdout, stderr, ok)) if ok && !stdout.trim().is_empty() => MediaExtractResult {
+        Ok((stdout, _stderr, ok)) if ok && !stdout.trim().is_empty() => MediaExtractResult {
             text: stdout,
             method: "pdf_text_layer".to_string(),
             mime_type: "application/pdf".to_string(),
@@ -180,18 +180,21 @@ fn extract_image_ocr(path: &Path, mime: &str) -> MediaExtractResult {
     let mut cmd = Command::new("tesseract");
     cmd.arg(path.as_os_str()).arg("stdout").arg("-l").arg("eng");
     match run_capture(&mut cmd) {
-        Ok((stdout, stderr, ok)) if ok => MediaExtractResult {
-            text: stdout,
-            method: "image_ocr".to_string(),
-            mime_type: mime.to_string(),
-            tool: "tesseract".to_string(),
-            success: true,
-            detail: if stdout.trim().is_empty() {
-                "OCR completed with empty text".to_string()
-            } else {
-                "OCR completed".to_string()
-            },
-        },
+        Ok((stdout, _stderr, ok)) if ok => {
+            let empty = stdout.trim().is_empty();
+            MediaExtractResult {
+                text: stdout,
+                method: "image_ocr".to_string(),
+                mime_type: mime.to_string(),
+                tool: "tesseract".to_string(),
+                success: true,
+                detail: if empty {
+                    "OCR completed with empty text".to_string()
+                } else {
+                    "OCR completed".to_string()
+                },
+            }
+        }
         Ok((_, stderr, _)) => MediaExtractResult {
             text: String::new(),
             method: "image_ocr".to_string(),
