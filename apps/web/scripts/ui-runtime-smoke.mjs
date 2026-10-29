@@ -60,7 +60,8 @@ async function startWebAppAndGetURL() {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: true,
-    env: { ...process.env, FORCE_COLOR: '0' },
+    detached: true,
+    env: { ...process.env, FORCE_COLOR: '0', NEXT_TELEMETRY_DISABLED: '1' },
   });
 
   let resolvedURL = null;
@@ -153,13 +154,15 @@ async function runChecks(page, baseURL) {
   }
 
   // Core UI contract: verify stable DOM/data hooks instead of requiring hidden tab panels to be visible.
+  // Chat-first shell uses tab-chat / data-tab-panel="chat" (home and results were folded into Chat).
   const contractSelectors = [
     { name: 'chat hub', sel: '[data-unified-chat]' },
     { name: 'chat input', sel: '[data-chat-input]' },
     { name: 'chat send', sel: '[data-chat-send]' },
-    { name: 'home panel', sel: '[data-tab-panel="home"]' },
-    { name: 'chat panel', sel: '[data-tab-panel="results"]' },
-    { name: 'data panel', sel: '[data-tab-panel="add-data"]' }
+    { name: 'chat panel', sel: '[data-tab-panel="chat"]' },
+    { name: 'data panel', sel: '[data-tab-panel="add-data"]' },
+    { name: 'work panel', sel: '[data-tab-panel="work"]' },
+    { name: 'settings panel', sel: '[data-tab-panel="settings"]' }
   ];
   for (const { name, sel } of contractSelectors) {
     const count = await page.locator(sel).count().catch(() => 0);
@@ -283,12 +286,16 @@ async function main() {
     if (browser) {
       await browser.close().catch(() => {});
     }
-    if (serverChild && !serverChild.killed) {
+    if (serverChild && serverChild.pid) {
       try {
-        serverChild.kill('SIGTERM');
-        // Give it a moment
-        await new Promise((r) => setTimeout(r, 800));
-      } catch {}
+        // shell:true + detached puts npm and next in this process group.
+        process.kill(-serverChild.pid, 'SIGTERM');
+      } catch {
+        try {
+          serverChild.kill('SIGTERM');
+        } catch {}
+      }
+      await new Promise((r) => setTimeout(r, 800));
     }
   }
 }
